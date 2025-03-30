@@ -2,7 +2,6 @@ import logging
 import subprocess
 
 from omegaconf import DictConfig
-from slurm_utils import submit_cmd_to_slurm
 from typing import List, Tuple
 
 logger = logging.getLogger(__name__)

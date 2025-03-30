@@ -7,7 +7,7 @@ import tempfile
 import time
 import uuid
 
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 
 @contextlib.contextmanager
@@ -81,13 +81,15 @@ def submit_sbatch_job(
 @rm_slurm_env()
 def submit_cmd_to_slurm(
     py_cmd: str,
-    conda_env: str,
     dump_dir: str,
     blocking: bool = False,
     setup_str: str = "",  # setup  that goes between sbatch args and running the py_cmd
+    path_to_repo: Optional[str]=None,
     **slurm_kwargs,
 ) -> Tuple[subprocess.Popen, str]:
-    sbatch_str = f"source ~/.bashrc\ncd ~/llome\nsource .venv/bin/activate\n{py_cmd}"
+    if path_to_repo is None:
+        path_to_repo = "~/llome"
+    sbatch_str = f"source ~/.bashrc\ncd {path_to_repo}\nsource .venv/bin/activate\n{py_cmd}"
     # add #SBATCH commands on top
     if "output" not in slurm_kwargs:
         slurm_kwargs["output"] = f"{dump_dir}/%x_%j.logs"

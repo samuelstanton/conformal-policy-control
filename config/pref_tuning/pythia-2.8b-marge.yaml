@@ -63,7 +63,7 @@ generation_config:
 
 # instrumentation
 log_level: "info"
-wandb_host: "https://genentech.wandb.io"
+wandb_host: null
 wandb_mode: "online"
 project_name: "marge"
 exp_name: "marge_pythia-2.8b"

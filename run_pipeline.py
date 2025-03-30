@@ -60,7 +60,7 @@ def generate_ga_dataset(cfg: DictConfig, fs: LocalOrS3Client) -> str:
         slurm_kwargs = OmegaConf.to_container(cfg.evol_dataset_gen.slurm_args)
         slurm_kwargs["job_name"] = "ga_seeds"
         submit_cmd_to_slurm(
-            python_cmd_str, cfg.conda_env, slurm_dump_dir, blocking=True, **slurm_kwargs
+            python_cmd_str, slurm_dump_dir, blocking=True, path_to_repo=cfg.path_to_repo, **slurm_kwargs
         )
 
     return output_dir
@@ -106,7 +106,7 @@ def create_propen_sft_dataset(
         )
         slurm_kwargs["job_name"] = "propen_sft_formatting"
         submit_cmd_to_slurm(
-            python_cmd_str, cfg.conda_env, slurm_dump_dir, blocking=True, **slurm_kwargs
+            python_cmd_str, slurm_dump_dir, blocking=True, path_to_repo=cfg.path_to_repo, **slurm_kwargs
         )
     return output_fp
 
@@ -152,7 +152,7 @@ def create_propen_preference_dataset(
         )
         slurm_kwargs["job_name"] = "propen_dpo_formatting"
         submit_cmd_to_slurm(
-            python_cmd_str, cfg.conda_env, slurm_dump_dir, blocking=True, **slurm_kwargs
+            python_cmd_str, slurm_dump_dir, blocking=True, path_to_repo=cfg.path_to_repo, **slurm_kwargs
         )
     return output_fp
 
@@ -202,7 +202,8 @@ def train_sft(
     if cfg.run_sft:
         slurm_cfg = cfg.sft.slurm_args
         # run with ddp (TODO: switch to fsdp)
-        py_cmd = f"torchrun --standalone --nnodes={slurm_cfg.nodes} --nproc-per-node={slurm_cfg.gpus_per_node} "
+        gpus_per_node = slurm_cfg.gpus_per_node if hasattr(slurm_cfg, "gpus_per_node") else int(slurm_cfg.gres.split(":")[-1])
+        py_cmd = f"torchrun --standalone --nnodes={slurm_cfg.nodes} --nproc-per-node={gpus_per_node} "
         py_cmd += f"-m finetune_ehrlich {args} training_args.output_dir={output_dir}\n"
 
         # store return code for the finetuning job so that we can return it later
@@ -221,7 +222,7 @@ def train_sft(
         slurm_kwargs = OmegaConf.to_container(cfg.sft.slurm_args)
         slurm_kwargs["job_name"] = "sft"
         submit_cmd_to_slurm(
-            py_cmd, cfg.conda_env, slurm_dump_dir, blocking=True, **slurm_kwargs
+            py_cmd, slurm_dump_dir, blocking=True, path_to_repo=cfg.path_to_repo, **slurm_kwargs
         )
     return_path = s3_output_dir if cfg.parent_output_dir is not None else output_dir
     return return_path
@@ -264,7 +265,8 @@ def train_dpo(
     os.makedirs(slurm_dump_dir, exist_ok=True)
     slurm_cfg = cfg.dpo.slurm_args
     # run with ddp (TODO: switch to fsdp)
-    py_cmd = f"torchrun --standalone --nnodes={slurm_cfg.nodes} --nproc-per-node={slurm_cfg.gpus_per_node} "
+    gpus_per_node = slurm_cfg.gpus_per_node if hasattr(slurm_cfg, "gpus_per_node") else int(slurm_cfg.gres.split(":")[-1])
+    py_cmd = f"torchrun --standalone --nnodes={slurm_cfg.nodes} --nproc-per-node={gpus_per_node} "
     py_cmd += f"-m dpo {args} dpo_config.output_dir={output_dir}\n"
 
     # store return code for the training job so that we can return it later
@@ -283,7 +285,7 @@ def train_dpo(
     slurm_kwargs = OmegaConf.to_container(cfg.dpo.slurm_args)
     slurm_kwargs["job_name"] = "dpo"
     submit_cmd_to_slurm(
-        py_cmd, cfg.conda_env, slurm_dump_dir, blocking=True, **slurm_kwargs
+        py_cmd, slurm_dump_dir, blocking=True, path_to_repo=cfg.path_to_repo, **slurm_kwargs
     )
     return_path = s3_output_dir if cfg.parent_output_dir is not None else output_dir
     return return_path
@@ -326,7 +328,8 @@ def train_marge(
     os.makedirs(slurm_dump_dir, exist_ok=True)
     slurm_cfg = cfg.marge.slurm_args
     # run with ddp (TODO: switch to fsdp)
-    py_cmd = f"torchrun --standalone --nnodes={slurm_cfg.nodes} --nproc-per-node={slurm_cfg.gpus_per_node} "
+    gpus_per_node = slurm_cfg.gpus_per_node if hasattr(slurm_cfg, "gpus_per_node") else int(slurm_cfg.gres.split(":")[-1])
+    py_cmd = f"torchrun --standalone --nnodes={slurm_cfg.nodes} --nproc-per-node={gpus_per_node} "
     py_cmd += f"-m marge {args} marge_config.output_dir={output_dir}\n"
 
     # store return code for the training job so that we can return it later
@@ -345,7 +348,7 @@ def train_marge(
     slurm_kwargs = OmegaConf.to_container(cfg.marge.slurm_args)
     slurm_kwargs["job_name"] = "marge"
     submit_cmd_to_slurm(
-        py_cmd, cfg.conda_env, slurm_dump_dir, blocking=True, **slurm_kwargs
+        py_cmd, slurm_dump_dir, blocking=True, path_to_repo=cfg.path_to_repo, **slurm_kwargs
     )
     return_path = s3_output_dir if cfg.parent_output_dir is not None else output_dir
     return return_path
@@ -469,7 +472,7 @@ def run_iterative_generation(
         slurm_kwargs["job_name"] = "iter_gen"
         job_submissions = [
             submit_cmd_to_slurm(
-                py_cmd, cfg.conda_env, slurm_dump_dir, blocking=False, **slurm_kwargs
+                py_cmd, slurm_dump_dir, blocking=False, path_to_repo=cfg.path_to_repo, **slurm_kwargs
             )
             for py_cmd in all_python_commands
         ]

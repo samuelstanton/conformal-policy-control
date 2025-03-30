@@ -54,7 +54,7 @@ max_eval_size: 100 # evaluation takes a long time, so we set a max. size on the 
 
 # instrumentation
 log_level: "info"
-wandb_host: "https://genentech.wandb.io"
+wandb_host: null
 wandb_mode: "online"
 project_name: "pref_tuning"
 exp_name: "dpo_pythia-2.8b"

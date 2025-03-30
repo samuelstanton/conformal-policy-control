@@ -17,8 +17,8 @@ job_submission_system: slurm
 greedy_gen_batch_size: 8
 sampling_gen_batch_size: 1
 initial_model: "EleutherAI/pythia-2.8b"
-conda_env: "sherpa"
 sanity_check: False  # will be propagated to all training + generation jobs
+path_to_repo: null # will be set to "~/llome" if null
 
 num_dpo_rounds: 9
 num_sft_rounds: 1
