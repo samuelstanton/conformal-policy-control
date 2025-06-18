@@ -1,0 +1,54 @@
+
+\documentclass{article} % For LaTeX2e
+\usepackage{iclr2025_conference,times}
+
+% Optional math commands from https://github.com/goodfeli/dlbook_notation.
+\input{math_commands.tex}
+
+\usepackage{hyperref}
+\usepackage{url}
+
+
+\title{Conformal Decision Theory for AI Agents}
+
+\author{
+    Drew Prinster \& Samuel Stanton \\
+    Genentech \\
+    1 DNA Way, San Francisco, CA \\
+    \texttt{\{prinster.drew,stanton.samuel\}@gene.com}
+}
+
+\newcommand{\fix}{\marginpar{FIX}}
+\newcommand{\new}{\marginpar{NEW}}
+
+% \iclrfinalcopy % Uncomment for camera-ready version, but NOT for submission.
+\begin{document}
+
+
+\maketitle
+
+\begin{abstract}
+Enabling AI agents to automate or inform high-stakes decision making inevitably involves risks, but it is often precisely in real-world, high-stakes settings where those risks are most difficult to control or quantify. Prime examples include iterative biomolecular design and active learning, where merely enabling an AI system to generate or query its next datapoint induces feedback-loop shifts in the data distribution that can cause standard uncertainty- and risk-quantification methods to deteriorate or break down entirely. The aim of this proposal is to develop Conformal Decision Theory for AI Agents: a practical and statistically-principled methodological framework for enabling black-box AI agents to automatically determine their own “zone of competence” based on their available training data, to design experiments with a (marginal) guarantee on the hit rate (or on some other user-specified criteria of interest). 
+\end{abstract}
+
+\section{Introduction}
+
+\section{Background}
+
+\section{Related Work}
+
+\section{Theory}
+
+\section{Experiments}
+
+\section{Discussion}
+
+\bibliography{references}
+\bibliographystyle{iclr2025_conference}
+
+\appendix
+\section{Appendix}
+You may include other additional sections here.
+
+
+\end{document}
