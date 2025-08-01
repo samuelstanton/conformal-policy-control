@@ -84,12 +84,14 @@ def submit_cmd_to_slurm(
     dump_dir: str,
     blocking: bool = False,
     setup_str: str = "",  # setup  that goes between sbatch args and running the py_cmd
-    path_to_repo: Optional[str]=None,
+    path_to_repo: Optional[str] = None,
     **slurm_kwargs,
 ) -> Tuple[subprocess.Popen, str]:
     if path_to_repo is None:
         path_to_repo = "~/llome"
-    sbatch_str = f"source ~/.bashrc\ncd {path_to_repo}\nsource .venv/bin/activate\n{py_cmd}"
+    sbatch_str = (
+        f"source ~/.bashrc\ncd {path_to_repo}\nsource .venv/bin/activate\n{py_cmd}"
+    )
     # add #SBATCH commands on top
     if "output" not in slurm_kwargs:
         slurm_kwargs["output"] = f"{dump_dir}/%x_%j.logs"

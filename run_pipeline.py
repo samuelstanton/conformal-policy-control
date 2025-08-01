@@ -60,7 +60,11 @@ def generate_ga_dataset(cfg: DictConfig, fs: LocalOrS3Client) -> str:
         slurm_kwargs = OmegaConf.to_container(cfg.evol_dataset_gen.slurm_args)
         slurm_kwargs["job_name"] = "ga_seeds"
         submit_cmd_to_slurm(
-            python_cmd_str, slurm_dump_dir, blocking=True, path_to_repo=cfg.path_to_repo, **slurm_kwargs
+            python_cmd_str,
+            slurm_dump_dir,
+            blocking=True,
+            path_to_repo=cfg.path_to_repo,
+            **slurm_kwargs,
         )
 
     return output_dir
@@ -106,7 +110,11 @@ def create_propen_sft_dataset(
         )
         slurm_kwargs["job_name"] = "propen_sft_formatting"
         submit_cmd_to_slurm(
-            python_cmd_str, slurm_dump_dir, blocking=True, path_to_repo=cfg.path_to_repo, **slurm_kwargs
+            python_cmd_str,
+            slurm_dump_dir,
+            blocking=True,
+            path_to_repo=cfg.path_to_repo,
+            **slurm_kwargs,
         )
     return output_fp
 
@@ -152,9 +160,27 @@ def create_propen_preference_dataset(
         )
         slurm_kwargs["job_name"] = "propen_dpo_formatting"
         submit_cmd_to_slurm(
-            python_cmd_str, slurm_dump_dir, blocking=True, path_to_repo=cfg.path_to_repo, **slurm_kwargs
+            python_cmd_str,
+            slurm_dump_dir,
+            blocking=True,
+            path_to_repo=cfg.path_to_repo,
+            **slurm_kwargs,
         )
     return output_fp
+
+
+def model_already_trained(
+    cfg: DictConfig, fs: LocalOrS3Client, s3_output_dir: str, local_output_dir: str
+) -> Optional[str]:
+    if cfg.overwrite:
+        return None
+    model_fp_names = ["model.safetensors.index.json", "model.safetensors"]
+    model_dir = s3_output_dir if cfg.parent_output_dir is not None else local_output_dir
+    for model_fn in model_fp_names:
+        fp = f"{model_dir}/{model_fn}"
+        if fs.exists(fp):
+            return model_dir
+    return None
 
 
 def train_sft(
@@ -187,22 +213,22 @@ def train_sft(
         for k, v in cfg.initial_model_config.items():
             args += f"+init_model_config.{k}={v} "
 
-    model_index_fp = (
-        f"{s3_output_dir}/model.safetensors.index.json"
-        if cfg.parent_output_dir is not None
-        else f"{output_dir}/model.safetensors.index.json"
-    )
-    if not cfg.overwrite and fs.exists(model_index_fp):
-        logger.info(f"{model_index_fp} already exists. Skipping...")
-        return os.path.dirname(model_index_fp)
+    trained_model_dir = model_already_trained(cfg, fs, s3_output_dir, output_dir)
+    if trained_model_dir is not None:
+        logger.info(f"Trained model already exists in {trained_model_dir}. Skipping...")
+        return trained_model_dir
     else:
-        logger.info(f"Did not find {model_index_fp}. Continuing to train...")
+        logger.info(f"Did not find trained model. Continuing to train...")
     slurm_dump_dir = f"{cfg.local_output_dir}/slurm_logs"
     os.makedirs(slurm_dump_dir, exist_ok=True)
     if cfg.run_sft:
         slurm_cfg = cfg.sft.slurm_args
         # run with ddp (TODO: switch to fsdp)
-        gpus_per_node = slurm_cfg.gpus_per_node if hasattr(slurm_cfg, "gpus_per_node") else int(slurm_cfg.gres.split(":")[-1])
+        gpus_per_node = (
+            slurm_cfg.gpus_per_node
+            if hasattr(slurm_cfg, "gpus_per_node")
+            else int(slurm_cfg.gres.split(":")[-1])
+        )
         py_cmd = f"torchrun --standalone --nnodes={slurm_cfg.nodes} --nproc-per-node={gpus_per_node} "
         py_cmd += f"-m finetune_ehrlich {args} training_args.output_dir={output_dir}\n"
 
@@ -222,7 +248,11 @@ def train_sft(
         slurm_kwargs = OmegaConf.to_container(cfg.sft.slurm_args)
         slurm_kwargs["job_name"] = "sft"
         submit_cmd_to_slurm(
-            py_cmd, slurm_dump_dir, blocking=True, path_to_repo=cfg.path_to_repo, **slurm_kwargs
+            py_cmd,
+            slurm_dump_dir,
+            blocking=True,
+            path_to_repo=cfg.path_to_repo,
+            **slurm_kwargs,
         )
     return_path = s3_output_dir if cfg.parent_output_dir is not None else output_dir
     return return_path
@@ -243,14 +273,10 @@ def train_dpo(
         if cfg.parent_output_dir is not None
         else "null"
     )
-    model_index_fp = (
-        f"{s3_output_dir}/model.safetensors.index.json"
-        if cfg.parent_output_dir is not None
-        else f"{output_dir}/model.safetensors.index.json"
-    )
-    if not cfg.overwrite and fs.exists(model_index_fp):
-        logger.info(f"{model_index_fp} already exists. Skipping...")
-        return os.path.dirname(model_index_fp)
+    trained_model_dir = model_already_trained(cfg, fs, s3_output_dir, output_dir)
+    if trained_model_dir is not None:
+        logger.info(f"Trained model already exists in {trained_model_dir}. Skipping...")
+        return trained_model_dir
     args = f"--config-name=pythia-2.8b-dpo "
     args += " ".join(get_all_strs_from_nested_dict(cfg["dpo"]["args"])) + " "
     args += f"data_fp={data_fp} "
@@ -265,7 +291,11 @@ def train_dpo(
     os.makedirs(slurm_dump_dir, exist_ok=True)
     slurm_cfg = cfg.dpo.slurm_args
     # run with ddp (TODO: switch to fsdp)
-    gpus_per_node = slurm_cfg.gpus_per_node if hasattr(slurm_cfg, "gpus_per_node") else int(slurm_cfg.gres.split(":")[-1])
+    gpus_per_node = (
+        slurm_cfg.gpus_per_node
+        if hasattr(slurm_cfg, "gpus_per_node")
+        else int(slurm_cfg.gres.split(":")[-1])
+    )
     py_cmd = f"torchrun --standalone --nnodes={slurm_cfg.nodes} --nproc-per-node={gpus_per_node} "
     py_cmd += f"-m dpo {args} dpo_config.output_dir={output_dir}\n"
 
@@ -285,7 +315,11 @@ def train_dpo(
     slurm_kwargs = OmegaConf.to_container(cfg.dpo.slurm_args)
     slurm_kwargs["job_name"] = "dpo"
     submit_cmd_to_slurm(
-        py_cmd, slurm_dump_dir, blocking=True, path_to_repo=cfg.path_to_repo, **slurm_kwargs
+        py_cmd,
+        slurm_dump_dir,
+        blocking=True,
+        path_to_repo=cfg.path_to_repo,
+        **slurm_kwargs,
     )
     return_path = s3_output_dir if cfg.parent_output_dir is not None else output_dir
     return return_path
@@ -306,14 +340,10 @@ def train_marge(
         if cfg.parent_output_dir is not None
         else "null"
     )
-    model_index_fp = (
-        f"{s3_output_dir}/model.safetensors.index.json"
-        if cfg.parent_output_dir is not None
-        else f"{output_dir}/model.safetensors.index.json"
-    )
-    if not cfg.overwrite and fs.exists(model_index_fp):
-        logger.info(f"{model_index_fp} already exists. Skipping...")
-        return os.path.dirname(model_index_fp)
+    trained_model_dir = model_already_trained(cfg, fs, s3_output_dir, output_dir)
+    if trained_model_dir is not None:
+        logger.info(f"Trained model already exists in {trained_model_dir}. Skipping...")
+        return trained_model_dir
     args = f"--config-name=pythia-2.8b-marge "
     args += " ".join(get_all_strs_from_nested_dict(cfg["marge"]["args"])) + " "
     args += f"data_fp={data_fp} "
@@ -328,7 +358,11 @@ def train_marge(
     os.makedirs(slurm_dump_dir, exist_ok=True)
     slurm_cfg = cfg.marge.slurm_args
     # run with ddp (TODO: switch to fsdp)
-    gpus_per_node = slurm_cfg.gpus_per_node if hasattr(slurm_cfg, "gpus_per_node") else int(slurm_cfg.gres.split(":")[-1])
+    gpus_per_node = (
+        slurm_cfg.gpus_per_node
+        if hasattr(slurm_cfg, "gpus_per_node")
+        else int(slurm_cfg.gres.split(":")[-1])
+    )
     py_cmd = f"torchrun --standalone --nnodes={slurm_cfg.nodes} --nproc-per-node={gpus_per_node} "
     py_cmd += f"-m marge {args} marge_config.output_dir={output_dir}\n"
 
@@ -348,7 +382,11 @@ def train_marge(
     slurm_kwargs = OmegaConf.to_container(cfg.marge.slurm_args)
     slurm_kwargs["job_name"] = "marge"
     submit_cmd_to_slurm(
-        py_cmd, slurm_dump_dir, blocking=True, path_to_repo=cfg.path_to_repo, **slurm_kwargs
+        py_cmd,
+        slurm_dump_dir,
+        blocking=True,
+        path_to_repo=cfg.path_to_repo,
+        **slurm_kwargs,
     )
     return_path = s3_output_dir if cfg.parent_output_dir is not None else output_dir
     return return_path
@@ -460,6 +498,7 @@ def run_iterative_generation(
     combined_outputs_fp = f"{model_dir}/{output_filename_prefix}.jsonl"
     slurm_dump_dir = f"{cfg.local_output_dir}/slurm_logs"
     os.makedirs(slurm_dump_dir, exist_ok=True)
+    hd = None
     if cfg.run_iter_gen:
         all_args = []
         for gen_args, output_fn in zip(all_gen_args, output_filenames):
@@ -472,7 +511,11 @@ def run_iterative_generation(
         slurm_kwargs["job_name"] = "iter_gen"
         job_submissions = [
             submit_cmd_to_slurm(
-                py_cmd, slurm_dump_dir, blocking=False, path_to_repo=cfg.path_to_repo, **slurm_kwargs
+                py_cmd,
+                slurm_dump_dir,
+                blocking=False,
+                path_to_repo=cfg.path_to_repo,
+                **slurm_kwargs,
             )
             for py_cmd in all_python_commands
         ]

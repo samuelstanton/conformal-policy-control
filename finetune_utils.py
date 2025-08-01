@@ -52,16 +52,16 @@ def wandb_setup(cfg: DictConfig):
     Runs `wandb.init` and `wandb.login`.
     The values in `cfg` are logged to the wandb run.
     """
-    if not hasattr(cfg, "wandb_host"):
+    if not hasattr(cfg, "wandb_host") or cfg.wandb_host is None:
         cfg["wandb_host"] = "https://api.wandb.ai"
 
-    if not hasattr(cfg, "wandb_mode"):
+    if not hasattr(cfg, "wandb_mode") or cfg.wandb_mode is None:
         cfg["wandb_mode"] = "online"
 
-    if not hasattr(cfg, "project_name"):
+    if not hasattr(cfg, "project_name") or cfg.project_name is None:
         cfg["project_name"] = "finetune_ehrlich"
 
-    if not hasattr(cfg, "exp_name"):
+    if not hasattr(cfg, "exp_name") or cfg.exp_name is None:
         cfg["exp_name"] = "default_group"
 
     wandb.login(host=cfg.wandb_host)
