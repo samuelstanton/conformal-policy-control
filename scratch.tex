@@ -1,0 +1,41 @@
+
+\documentclass{article} % For LaTeX2e
+\usepackage{iclr2025_conference,times}
+
+% Optional math commands from https://github.com/goodfeli/dlbook_notation.
+\input{math_commands.tex}
+
+\usepackage{hyperref}
+\usepackage{url}
+
+
+\title{SCRATCH space for `Conformal Decision Theory for AI Agents'}
+
+\author{
+    Drew Prinster \& Samuel Stanton \\
+    Genentech \\
+    1 DNA Way, San Francisco, CA \\
+    \texttt{\{prinster.drew,stanton.samuel\}@gene.com}
+}
+
+\newcommand{\fix}{\marginpar{FIX}}
+\newcommand{\new}{\marginpar{NEW}}
+\newcommand{\drew}[1]{\textcolor{blue}{[Dr: #1]}}
+
+
+% \iclrfinalcopy % Uncomment for camera-ready version, but NOT for submission.
+\begin{document}
+
+
+\maketitle
+
+
+\textbf{Problem formulation:} \drew{Given that we're targeting ICLR/AIStats, I think it will be a good idea to have a general formulation of the problem that is not limited to protein design, but then to make sure that we cover protein design as a main instance. This should allow us to develop novelty in the direction of online conformal risk control (CRC), but not limiting ourselves fully to whether CRC is really the types of risks we want to control.}
+
+\drew{Maybe would be good to focus on controlling loss on actions, as we did in our proposal: $\mathbb{E}[l(A_{n+1}, Y_{n+1})]$; however, can consider two cases, one where the actions are a function of the point prediction (corresponding to expectation-maximizing agents): $\mathbb{E}[l(A_{n+1}(\hat{f}(x)), Y_{n+1})]$; and a second where the actions are a function of a set prediction (corresponding to risk-averse agents): $\mathbb{E}[l(A_{n+1}(\hat{C}(x)), Y_{n+1})]$.}
+
+\bibliography{references}
+\bibliographystyle{iclr2025_conference}
+
+
+\end{document}
