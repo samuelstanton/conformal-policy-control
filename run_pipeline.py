@@ -973,10 +973,13 @@ def main(cfg: DictConfig):
         cfg_dicts = pd.DataFrame([OmegaConf.to_container(cfg)])
         cfg_dicts.to_json(cfg_fp, orient="records", lines=True)
 
+
+    ## Genetic algorithm to gather initial training data
     ga_data_dir = generate_ga_dataset(cfg, file_client)
     logger.info(f"GA dataset dir: {ga_data_dir}")
 
-    ## Pretrain model on unpaired sequences from genetic algorithm
+
+    '''If run_gpt: Pretrain model on unpaired sequences from genetic algorithm'''
     train_from_scratch = hasattr(cfg, "initial_model_config")
     if cfg.run_gpt:
         gpt_dir = train_gpt(
@@ -1007,104 +1010,83 @@ def main(cfg: DictConfig):
     #     score_field="score",
     #     temps=[1.0],
     # )
-    
+
+
+
+
+    '''Initialization: SFT pre-training, where generation has uniformly selected seeds to improve pretrained model'''
     all_prev_sft_datasets = []
     prev_round_outputs_fp = f"{ga_data_dir}/plain_pairs.jsonl" ## TO DO: Update this to samples from GPT model
     prev_hd = None
     # temps = [1.0]
+    temps = [0.6, 0.8, 1.0, 1.2, 1.4, 1.6]
 
+    for i in tqdm(range(cfg.num_init_sft_rounds), desc="SFT iterations"):
+        n = cfg.num_labels_after_first_round if i > 0 else None
+        sft_dataset_fp = create_propen_sft_dataset(
+            cfg, file_client, prev_round_outputs_fp, filename_prefix=f"sft_init_r{i}_", n=n
+        )
+        combined_sft_dataset_fp = combine_new_with_old_datasets(
+            cfg, file_client, all_prev_sft_datasets, sft_dataset_fp
+        )
+        logger.info(f"SFT dataset path: {combined_sft_dataset_fp}")
+        all_prev_sft_datasets.append(sft_dataset_fp)
 
-    # '''Initial SFT and generation with uniformly selected seeds to improve pretrained model'''
-    # for i in tqdm(range(cfg.num_init_sft_rounds), desc="SFT iterations"):
-    #     n = cfg.num_labels_after_first_round if i > 0 else None
-    #     sft_dataset_fp = create_propen_sft_dataset(
-    #         cfg, file_client, prev_round_outputs_fp, filename_prefix=f"sft_init_r{i}_", n=n
-    #     )
-    #     combined_sft_dataset_fp = combine_new_with_old_datasets(
-    #         cfg, file_client, all_prev_sft_datasets, sft_dataset_fp
-    #     )
-    #     logger.info(f"SFT dataset path: {combined_sft_dataset_fp}")
-    #     all_prev_sft_datasets.append(sft_dataset_fp)
-
-    #     train_from_scratch = curr_model == cfg.initial_model and hasattr(
-    #         cfg, "initial_model_config"
-    #     )
-    #     sft_dir = train_initial_sft(
-    #         cfg,
-    #         file_client,
-    #         combined_sft_dataset_fp,
-    #         ga_data_dir,
-    #         initial_sft_run_name=f"{cfg.run_name}_sft_init_r{i}",
-    #         model_dir=curr_model,
-    #         train_from_scratch=train_from_scratch,
-    #     )
+        train_from_scratch = curr_model == cfg.initial_model and hasattr(
+            cfg, "initial_model_config"
+        )
+        sft_dir = train_initial_sft(
+            cfg,
+            file_client,
+            combined_sft_dataset_fp,
+            ga_data_dir,
+            initial_sft_run_name=f"{cfg.run_name}_sft_init_r{i}",
+            model_dir=curr_model,
+            train_from_scratch=train_from_scratch,
+        )
         
 
-    #     logger.info(f"Trained initial SFT model: {sft_dir}")
-    #     curr_model = sft_dir
+        logger.info(f"Trained initial SFT model: {sft_dir}")
+        curr_model = sft_dir
 
-    #     # Take best checkpoint of trained model and get calibrated best likelihood range
+        # Take best checkpoint of trained model and get calibrated best likelihood range
 
-    #     if cfg.temperature_scaling:
-    #         temps = get_temperatures(cfg, file_client, sft_dir, prev_hd)
-    #     else:
-    #         temps = [1.0]
-    #     # breakpoint()
-    #     iter_gen_outputs, hd = run_initial_generation(
-    #         cfg,
-    #         file_client,
-    #         combined_sft_dataset_fp,
-    #         ga_data_dir,
-    #         sft_dir,
-    #         higher_score_particle_field="higher_score_particle",
-    #         lower_score_particle_field="lower_score_particle",
-    #         higher_score_field="higher_score",
-    #         lower_score_field="lower_score",
-    #         temps=temps,
-    #     )
-    #     prev_hd = hd
-    #     logger.info(f"Iterative generations output path: {iter_gen_outputs}")
-    #     prev_round_outputs_fp = iter_gen_outputs
-    
-    # sft_dataset_fp = create_propen_sft_dataset(
-    #     cfg, file_client, prev_round_outputs_fp, filename_prefix=f"sft_init_", n=cfg.num_labels_after_first_round
-    # )
-    # combined_sft_dataset_fp = combine_new_with_old_datasets(
-    #     cfg, file_client, all_prev_sft_datasets, sft_dataset_fp
-    # )
-    # logger.info(f"SFT dataset path: {combined_sft_dataset_fp}")
-    # all_prev_sft_datasets.append(sft_dataset_fp)
-
-    # train_from_scratch = False
-    # sft_dir = train_sft(
-    #     cfg,
-    #     file_client,
-    #     combined_sft_dataset_fp,
-    #     ga_data_dir,
-    #     sft_run_name=f"{cfg.run_name}_sft_init",
-    #     model_dir=curr_model,
-    #     train_from_scratch=train_from_scratch,
-    # )
+        if cfg.temperature_scaling:
+            temps = get_temperatures(cfg, file_client, sft_dir, prev_hd)
+        elif i < cfg.num_init_sft_rounds - 1:
+            ## At all iterations except the last, use a range of temperatures to stabilize pre-training
+            temps = [0.6, 0.8, 1.0, 1.2, 1.4, 1.6]
+        else:
+            ## At last init iteration, use only temp=1.0 for sampling initial calibration data
+            temps = [1.0]
+        iter_gen_outputs, hd = run_initial_generation(
+            cfg,
+            file_client,
+            combined_sft_dataset_fp,
+            ga_data_dir,
+            sft_dir,
+            higher_score_particle_field="higher_score_particle",
+            lower_score_particle_field="lower_score_particle",
+            higher_score_field="higher_score",
+            lower_score_field="lower_score",
+            temps=temps,
+        )
+        breakpoint()
+        
+        if i < cfg.num_init_sft_rounds - 1:
+            prev_hd = hd
+            logger.info(f"Iterative generations output path: {iter_gen_outputs}")
+            prev_round_outputs_fp = iter_gen_outputs
     
 
-    # logger.info(f"Trained SFT model: {sft_dir}")
-    # curr_model = sft_dir
-    # iter_gen_outputs, hd = run_initial_generation(
-    #     cfg,
-    #     file_client,
-    #     combined_sft_dataset_fp,
-    #     ga_data_dir,
-    #     gpt_dir,
-    #     higher_score_particle_field="higher_score_particle",
-    #     lower_score_particle_field="lower_score_particle",
-    #     higher_score_field="higher_score",
-    #     lower_score_field="lower_score",
-    #     temps=temps,
-    # )
-    # # breakpoint()
+    # '''Split last batch of generated outputs into training and calibration data'''
+    # iter_gen_outputs_pd = pd.read_json(iter_gen_outputs)
 
 
 
+    
+
+    '''Policy Improvement Outer Loop, with Policy Control Inner Loop'''
     for i in tqdm(range(cfg.num_sft_rounds), desc="SFT iterations"):
         n = cfg.num_labels_after_first_round if i > 0 else None
         # n = cfg.num_labels_after_first_round
@@ -1141,7 +1123,8 @@ def main(cfg: DictConfig):
         if cfg.temperature_scaling:
             temps = get_temperatures(cfg, file_client, sft_dir, prev_hd)
         else:
-            temps = [0.6, 0.8, 1.0, 1.2, 1.4, 1.6]
+            # temps = [0.6, 0.8, 1.0, 1.2, 1.4, 1.6]
+            temps = [1.0]
         # breakpoint()
         logger.info(f"temps: {temps}")
         iter_gen_outputs, hd = run_iterative_generation(
