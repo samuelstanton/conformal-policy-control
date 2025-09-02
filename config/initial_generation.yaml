@@ -1,7 +1,7 @@
 # data
 data_path: s3://prescient-data-dev/sandbox/chena78/ehrlich_datasets_no_dupes/c4_k4_l32_n1000_pm0.005/dense_neighborhood_pairs_scoreabove-0.5_xthres0.125_30nn.jsonl
-sample_size: 100
-sampling_method: "best_scoring" # "uniform", "combination"
+sample_size: 1000
+init_sampling_method: "uniform" #"best_scoring" # "uniform", "combination"
 
 # script args
 sanity_check: False

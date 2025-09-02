@@ -411,7 +411,8 @@ class Seq2SeqSFTTrainer(SFTTrainer):
                 prediction_loss_only=prediction_loss_only,
                 ignore_keys=ignore_keys,
             )
-
+        # breakpoint()
+        print(f'inputs : {inputs}')
         has_labels = "labels" in inputs
         inputs = self._prepare_inputs(inputs)
 

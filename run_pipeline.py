@@ -51,7 +51,7 @@ def generate_ga_dataset(cfg: DictConfig, fs: LocalOrS3Client) -> str:
         os.makedirs(output_dir, exist_ok=True)
     python_cmd_str += f"output_dir={output_dir} "
     output_fp = f"{output_dir}/plain_pairs.jsonl"
-    if not cfg.overwrite and fs.exists(output_fp):
+    if not cfg.overwrite_ga and fs.exists(output_fp):
         logger.info(f"{output_fp} already exists. Skipping...")
         return output_dir
     slurm_dump_dir = f"{cfg.local_output_dir}/slurm_logs"
@@ -172,8 +172,6 @@ def create_propen_preference_dataset(
 def model_already_trained(
     cfg: DictConfig, fs: LocalOrS3Client, s3_output_dir: str, local_output_dir: str
 ) -> Optional[str]:
-    if cfg.overwrite:
-        return None
     model_fp_names = ["model.safetensors.index.json", "model.safetensors"]
     model_dir = s3_output_dir if cfg.parent_output_dir is not None else local_output_dir
     for model_fn in model_fp_names:
@@ -181,6 +179,208 @@ def model_already_trained(
         if fs.exists(fp):
             return model_dir
     return None
+
+def gpt_model_already_trained(
+    cfg: DictConfig, fs: LocalOrS3Client, s3_output_dir: str, local_output_dir: str
+) -> Optional[str]:
+    # if cfg.overwrite_gpt:
+    #     return None
+    model_fp_names = ["model.safetensors.index.json", "model.safetensors"]
+    model_dir = s3_output_dir if cfg.parent_output_dir is not None else local_output_dir
+    for model_fn in model_fp_names:
+        fp = f"{model_dir}/{model_fn}"
+        if fs.exists(fp):
+            return model_dir
+    return None
+
+
+def train_gpt(
+    cfg: DictConfig,
+    fs: LocalOrS3Client,
+    #data_fp: str,
+    ga_data_dir: str, ## For GPT pretraining, will use ga_data_dir as main data directory
+    gpt_run_name: str,
+    model_dir: str = "EleutherAI/pythia-14m",
+    train_from_scratch: bool = False,
+) -> str:
+    
+
+    ## Creating/Getting Output Directories
+    test_fn_fp = f"{ga_data_dir}/ehrlich.jsonl" ## Path to Ehrlich function parameters
+    os.makedirs(f"{cfg.local_output_dir}/{cfg.run_name}", exist_ok=True)
+    output_dir = f"{cfg.local_output_dir}/{cfg.run_name}/{gpt_run_name}"
+    s3_output_dir = (
+        f"{cfg.parent_output_dir}/{cfg.run_name}/{gpt_run_name}"
+        if cfg.parent_output_dir is not None
+        else "null"
+    )
+
+
+    ## Loading args
+    args = f"--config-name=pythia-2.8b_edit_pairs data_fp={ga_data_dir}/plain_pairs.jsonl " ## Modified relative to train_sft
+    args += " ".join(get_all_strs_from_nested_dict(cfg["gpt"]["args"])) + " "
+    args += f"test_fn_type=ehrlich test_fn_fp={test_fn_fp} "
+    args += f"job_name={gpt_run_name} s3_output_dir={s3_output_dir} "
+    args += f"model_config.model_name_or_path={model_dir} "
+    args += f"sanity_check={cfg.sanity_check} "
+    
+    # train from scratch
+    if train_from_scratch and hasattr(cfg, "initial_model_config"):
+        args += f"train_from_scratch=True "
+        for k, v in cfg.initial_model_config.items():
+            args += f"+init_model_config.{k}={v} "
+
+    slurm_dump_dir = f"{cfg.local_output_dir}/slurm_logs"
+
+    ## Check if there's already a directory with a pretrained GPT model
+    trained_model_dir = gpt_model_already_trained(cfg, fs, s3_output_dir, output_dir)
+    # breakpoint()
+    if trained_model_dir is not None and not cfg.overwrite_gpt:
+        logger.info(f"Trained model already exists in {trained_model_dir}. Skipping...")
+        return trained_model_dir
+    else:
+        if trained_model_dir is None:
+            logger.info(f"Did not find trained model, Continuing to train...")
+        else:
+            trained_model_dir = None
+            logger.info(f"Config says to overwrite model (cfg.overwrite_gpt={cfg.overwrite_gpt}), Continuing to train...")
+    os.makedirs(slurm_dump_dir, exist_ok=True)
+    
+    if cfg.run_gpt:
+        ## Submit commands for GPT pretraining
+
+        slurm_cfg = cfg.gpt.slurm_args
+        # run with ddp (TODO: switch to fsdp)
+        gpus_per_node = (
+            slurm_cfg.gpus_per_node
+            if hasattr(slurm_cfg, "gpus_per_node")
+            else int(slurm_cfg.gres.split(":")[-1])
+        )
+        ## If overwriting GPT, then delete previous checkpoints
+        py_cmd = ""
+        if cfg.overwrite_gpt:
+            py_cmd += f"rm -rf {output_dir}/checkpoint-*\n"
+
+        py_cmd += f"torchrun --standalone --nnodes={slurm_cfg.nodes} --nproc-per-node={gpus_per_node} "
+        py_cmd += f"-m finetune_ehrlich {args} training_args.output_dir={output_dir}\n"
+
+        # store return code for the finetuning job so that we can return it later
+        py_cmd += f"RETURN_CODE=$?\n"
+
+        # add extra commands for deleting local checkpoints after the job finishes
+        # if S3 was used
+        if cfg.parent_output_dir is not None:
+            py_cmd += f"rm -rf {output_dir}/checkpoint-*/model-*.safetensors\n"
+            py_cmd += f"rm -rf {output_dir}/model-*.safetensors\n"
+            py_cmd += f"rm -rf {output_dir}/checkpoint-*/optimizer.pt\n"
+
+        # return the exit code of the finetuning job
+        py_cmd += "exit ${RETURN_CODE}\n"
+
+        slurm_kwargs = OmegaConf.to_container(cfg.gpt.slurm_args)
+        slurm_kwargs["job_name"] = "gpt"
+        submit_cmd_to_slurm(
+            py_cmd,
+            slurm_dump_dir,
+            blocking=True,
+            path_to_repo=cfg.path_to_repo,
+            **slurm_kwargs,
+        )
+    return_path = s3_output_dir if cfg.parent_output_dir is not None else output_dir
+    return return_path
+
+
+
+def train_initial_sft(
+    cfg: DictConfig,
+    fs: LocalOrS3Client,
+    data_fp: str,
+    ga_data_dir: str,
+    initial_sft_run_name: str,
+    model_dir: str = "EleutherAI/pythia-2.8b",
+    train_from_scratch: bool = False,
+) -> str:
+
+    ## Creating/Getting Output Directories
+    test_fn_fp = f"{ga_data_dir}/ehrlich.jsonl" ## Path to Ehrlich function parameters
+    os.makedirs(f"{cfg.local_output_dir}/{cfg.run_name}", exist_ok=True)
+    output_dir = f"{cfg.local_output_dir}/{cfg.run_name}/{initial_sft_run_name}"
+    s3_output_dir = (
+        f"{cfg.parent_output_dir}/{cfg.run_name}/{initial_sft_run_name}"
+        if cfg.parent_output_dir is not None
+        else "null"
+    )
+
+    ## Loading args
+    args = f"--config-name=pythia-2.8b_edit_pairs data_fp={data_fp} "
+    args += " ".join(get_all_strs_from_nested_dict(cfg["initial_sft"]["args"])) + " "
+    args += f"test_fn_type=ehrlich test_fn_fp={test_fn_fp} "
+    args += f"job_name={initial_sft_run_name} s3_output_dir={s3_output_dir} "
+    args += f"model_config.model_name_or_path={model_dir} "
+    args += f"sanity_check={cfg.sanity_check} "
+    
+
+    # train from scratch
+    if train_from_scratch and hasattr(cfg, "initial_model_config"):
+        args += f"train_from_scratch=True "
+        for k, v in cfg.initial_model_config.items():
+            args += f"+init_model_config.{k}={v} "
+
+    slurm_dump_dir = f"{cfg.local_output_dir}/slurm_logs"
+
+    trained_model_dir = model_already_trained(cfg, fs, s3_output_dir, output_dir)
+    if trained_model_dir is not None and not cfg.overwrite_initial_sft:
+        logger.info(f"Trained model already exists in {trained_model_dir}. Skipping...")
+        return trained_model_dir
+    else:
+        if trained_model_dir is None:
+            logger.info(f"Did not find trained model, Continuing to train...")
+        else:
+            trained_model_dir = None
+            logger.info(f"Config says to overwrite model (cfg.overwrite_initial_sft={cfg.overwrite_initial_sft}), Continuing to train...")
+    os.makedirs(slurm_dump_dir, exist_ok=True)
+    if cfg.run_initial_sft:
+        slurm_cfg = cfg.initial_sft.slurm_args
+        # run with ddp (TODO: switch to fsdp)
+        gpus_per_node = (
+            slurm_cfg.gpus_per_node
+            if hasattr(slurm_cfg, "gpus_per_node")
+            else int(slurm_cfg.gres.split(":")[-1])
+        )
+        ## If overwriting Initial SFT, then delete previous checkpoints
+        py_cmd = ""
+        if cfg.overwrite_initial_sft:
+            py_cmd += f"rm -rf {output_dir}/checkpoint-*\n"
+
+        py_cmd += f"torchrun --standalone --nnodes={slurm_cfg.nodes} --nproc-per-node={gpus_per_node} "
+        py_cmd += f"-m finetune_ehrlich {args} training_args.output_dir={output_dir}\n"
+
+        # store return code for the finetuning job so that we can return it later
+        py_cmd += f"RETURN_CODE=$?\n"
+
+        # add extra commands for deleting local checkpoints after the job finishes
+        # if S3 was used
+        if cfg.parent_output_dir is not None:
+            py_cmd += f"rm -rf {output_dir}/checkpoint-*/model-*.safetensors\n"
+            py_cmd += f"rm -rf {output_dir}/model-*.safetensors\n"
+            py_cmd += f"rm -rf {output_dir}/checkpoint-*/optimizer.pt\n"
+
+        # return the exit code of the finetuning job
+        py_cmd += "exit ${RETURN_CODE}\n"
+
+        slurm_kwargs = OmegaConf.to_container(cfg.initial_sft.slurm_args)
+        slurm_kwargs["job_name"] = "initial_sft"
+        submit_cmd_to_slurm(
+            py_cmd,
+            slurm_dump_dir,
+            blocking=True,
+            path_to_repo=cfg.path_to_repo,
+            **slurm_kwargs,
+        )
+    return_path = s3_output_dir if cfg.parent_output_dir is not None else output_dir
+    return return_path
+
+
 
 
 def train_sft(
@@ -192,7 +392,9 @@ def train_sft(
     model_dir: str = "EleutherAI/pythia-2.8b",
     train_from_scratch: bool = False,
 ) -> str:
-    test_fn_fp = f"{ga_data_dir}/ehrlich.jsonl"
+
+    ## Creating/Getting Output Directories
+    test_fn_fp = f"{ga_data_dir}/ehrlich.jsonl" ## Path to Ehrlich function parameters
     os.makedirs(f"{cfg.local_output_dir}/{cfg.run_name}", exist_ok=True)
     output_dir = f"{cfg.local_output_dir}/{cfg.run_name}/{sft_run_name}"
     s3_output_dir = (
@@ -200,12 +402,15 @@ def train_sft(
         if cfg.parent_output_dir is not None
         else "null"
     )
+
+    ## Loading args
     args = f"--config-name=pythia-2.8b_edit_pairs data_fp={data_fp} "
     args += " ".join(get_all_strs_from_nested_dict(cfg["sft"]["args"])) + " "
     args += f"test_fn_type=ehrlich test_fn_fp={test_fn_fp} "
     args += f"job_name={sft_run_name} s3_output_dir={s3_output_dir} "
     args += f"model_config.model_name_or_path={model_dir} "
     args += f"sanity_check={cfg.sanity_check} "
+    
 
     # train from scratch
     if train_from_scratch and hasattr(cfg, "initial_model_config"):
@@ -213,13 +418,18 @@ def train_sft(
         for k, v in cfg.initial_model_config.items():
             args += f"+init_model_config.{k}={v} "
 
+    slurm_dump_dir = f"{cfg.local_output_dir}/slurm_logs"
+
     trained_model_dir = model_already_trained(cfg, fs, s3_output_dir, output_dir)
-    if trained_model_dir is not None:
+    if trained_model_dir is not None and not cfg.overwrite_sft:
         logger.info(f"Trained model already exists in {trained_model_dir}. Skipping...")
         return trained_model_dir
     else:
-        logger.info(f"Did not find trained model. Continuing to train...")
-    slurm_dump_dir = f"{cfg.local_output_dir}/slurm_logs"
+        if trained_model_dir is None:
+            logger.info(f"Did not find trained model, Continuing to train...")
+        else:
+            trained_model_dir = None
+            logger.info(f"Config says to overwrite model (cfg.overwrite_sft={cfg.overwrite_sft}), Continuing to train...")
     os.makedirs(slurm_dump_dir, exist_ok=True)
     if cfg.run_sft:
         slurm_cfg = cfg.sft.slurm_args
@@ -229,7 +439,12 @@ def train_sft(
             if hasattr(slurm_cfg, "gpus_per_node")
             else int(slurm_cfg.gres.split(":")[-1])
         )
-        py_cmd = f"torchrun --standalone --nnodes={slurm_cfg.nodes} --nproc-per-node={gpus_per_node} "
+        ## If overwriting SFT, then delete previous checkpoints
+        py_cmd = ""
+        if cfg.overwrite_sft:
+            py_cmd += f"rm -rf {output_dir}/checkpoint-*\n"
+
+        py_cmd += f"torchrun --standalone --nnodes={slurm_cfg.nodes} --nproc-per-node={gpus_per_node} "
         py_cmd += f"-m finetune_ehrlich {args} training_args.output_dir={output_dir}\n"
 
         # store return code for the finetuning job so that we can return it later
@@ -274,9 +489,16 @@ def train_dpo(
         else "null"
     )
     trained_model_dir = model_already_trained(cfg, fs, s3_output_dir, output_dir)
-    if trained_model_dir is not None:
+    if trained_model_dir is not None and not cfg.overwrite:
         logger.info(f"Trained model already exists in {trained_model_dir}. Skipping...")
         return trained_model_dir
+    else:
+        if trained_model_dir is None:
+            logger.info(f"Did not find trained model, Continuing to train...")
+        else:
+            trained_model_dir = None
+            logger.info(f"Config says to overwrite model (cfg.overwrite={cfg.overwrite}), Continuing to train...")
+    os.makedirs(slurm_dump_dir, exist_ok=True)
     args = f"--config-name=pythia-2.8b-dpo "
     args += " ".join(get_all_strs_from_nested_dict(cfg["dpo"]["args"])) + " "
     args += f"data_fp={data_fp} "
@@ -341,9 +563,15 @@ def train_marge(
         else "null"
     )
     trained_model_dir = model_already_trained(cfg, fs, s3_output_dir, output_dir)
-    if trained_model_dir is not None:
+    if trained_model_dir is not None and not cfg.overwrite:
         logger.info(f"Trained model already exists in {trained_model_dir}. Skipping...")
         return trained_model_dir
+    else:
+        if trained_model_dir is None:
+            logger.info(f"Did not find trained model, Continuing to train...")
+        else:
+            trained_model_dir = None
+            logger.info(f"Config says to overwrite model (cfg.overwrite={cfg.overwrite}), Continuing to train...")
     args = f"--config-name=pythia-2.8b-marge "
     args += " ".join(get_all_strs_from_nested_dict(cfg["marge"]["args"])) + " "
     args += f"data_fp={data_fp} "
@@ -451,6 +679,165 @@ def combine_new_with_old_datasets(
     return output_fp
 
 
+# def run_unconditional_generation(
+#     cfg: DictConfig,
+#     fs: LocalOrS3Client,
+#     data_fp: str,
+#     data_dir: str,
+#     model_dir: str,
+#     particle_field: str = "particle",
+#     # lower_score_particle_field: str = "lower_score_particle",
+#     score_field: str = "score",
+#     # higher_score_field: str = "higher_score",
+#     temps: List[float] = [1.0],
+# ) -> str:
+#     """
+#     Runs unconditional generation jobs, combines the outputs, and returns the combined output filepath.
+#     """
+#     opt_str = " ".join(
+#         get_all_strs_from_nested_dict(cfg["unconditional_generation"]["args"])
+#     )
+#     ## Note: In unconditional_generation, the training particles provided are *not* use as prompts, they are 
+#     ## only provided to check how much the density model is reproducing examples from training
+#     args = f"{opt_str} data_path={data_fp} model_name_or_path={model_dir} output_dir={model_dir} "
+#     args += f"test_fn_fp={data_dir}/ehrlich.jsonl "
+#     args += f"particle_field={particle_field} "
+#     # args += f"lower_score_particle_field={lower_score_particle_field} "
+#     args += f"score_field={score_field} "
+#     # args += f"higher_score_field={higher_score_field} "
+#     args += f"sanity_check={cfg.sanity_check} "
+
+#     output_filename_prefix = f"gens_uncon_likelihood_{cfg.unconditional_generation.args.sample_size}sample_{cfg.unconditional_generation.args.max_iterations}iter"
+#     # greedy_decoding_gen_args = f"generation_config.do_sample=False generation_config.num_beams=1 batch_size={cfg.greedy_gen_batch_size}"
+#     temp_sampling_gen_args = [
+#         f"generation_config.do_sample=True generation_config.num_beams=1 "
+#         + f"+generation_config.temperature={temp} "
+#         + f"generation_config.num_return_sequences={cfg.unconditional_sampling_num_return_sequences} "
+#         + f"batch_size={cfg.sampling_gen_batch_size} "
+#         for temp in temps
+#     ]
+    
+#     all_gen_args = temp_sampling_gen_args
+#     output_filenames = [f"{output_filename_prefix}_temp{temp}_{cfg.unconditional_sampling_num_return_sequences}seqs.jsonl" for temp in temps]
+
+#     output_filepaths = [f"{model_dir}/{output_fn}" for output_fn in output_filenames]
+#     combined_outputs_fp = f"{model_dir}/{output_filename_prefix}.jsonl"
+#     slurm_dump_dir = f"{cfg.local_output_dir}/slurm_logs"
+#     os.makedirs(slurm_dump_dir, exist_ok=True)
+#     hd = None
+#     if cfg.run_uncon_gen:
+#         all_args = []
+#         for gen_args, output_fn in zip(all_gen_args, output_filenames):
+#             if not cfg.overwrite_ig and fs.exists(f"{model_dir}/{output_fn}"):
+#                 logger.info(f"{model_dir}/{output_fn} already exists. Skipping...")
+#             else:
+#                 all_args.append(f"{args} {gen_args} output_filename={output_fn}")
+#         all_python_commands = [f"python -m unconditional_generation {a}" for a in all_args]
+#         slurm_kwargs = OmegaConf.to_container(cfg.unconditional_generation.slurm_args)
+#         slurm_kwargs["job_name"] = "uncon_gen"
+#         job_submissions = [
+#             submit_cmd_to_slurm(
+#                 py_cmd,
+#                 slurm_dump_dir,
+#                 blocking=False,
+#                 path_to_repo=cfg.path_to_repo,
+#                 **slurm_kwargs,
+#             )
+#             for py_cmd in all_python_commands
+#         ]
+#         wait_for_slurm_jobs_to_complete(job_submissions)
+#         hd = combine_datasets(cfg, fs, output_filepaths, combined_outputs_fp)
+#     return combined_outputs_fp, hd
+
+
+
+
+
+def run_initial_generation(
+    cfg: DictConfig,
+    fs: LocalOrS3Client,
+    data_fp: str,
+    data_dir: str,
+    model_dir: str,
+    higher_score_particle_field: str = "higher_score_particle",
+    lower_score_particle_field: str = "lower_score_particle",
+    lower_score_field: str = "lower_score",
+    higher_score_field: str = "higher_score",
+    temps: List[float] = [0.6, 0.8, 1.0, 1.2, 1.4, 1.6],
+) -> str:
+    """
+    Runs initial generation jobs, combines the outputs, and returns the combined output filepath.
+    """
+    opt_str = " ".join(
+        get_all_strs_from_nested_dict(cfg["initial_generation"]["args"])
+    )
+    args = f"{opt_str} data_path={data_fp} model_name_or_path={model_dir} output_dir={model_dir} "
+    args += f"test_fn_fp={data_dir}/ehrlich.jsonl "
+    args += f"higher_score_particle_field={higher_score_particle_field} "
+    args += f"lower_score_particle_field={lower_score_particle_field} "
+    args += f"lower_score_field={lower_score_field} "
+    args += f"higher_score_field={higher_score_field} "
+    args += f"sanity_check={cfg.sanity_check} "
+
+
+    output_filename_prefix = f"gens_init_likelihood_{cfg.initial_generation.args.sample_size}sample_{cfg.initial_generation.args.max_iterations}iter"
+    greedy_decoding_gen_args = f"generation_config.do_sample=False generation_config.num_beams=1 batch_size={cfg.greedy_gen_batch_size}"
+    temp_sampling_gen_args = [
+        f"generation_config.do_sample=True generation_config.num_beams=1 "
+        + f"+generation_config.temperature={temp} "
+        + f"generation_config.num_return_sequences={cfg.generation_sampling_num_return_sequences} "
+        + f"batch_size={cfg.sampling_gen_batch_size} "
+        for temp in temps
+    ]
+    if cfg.greedy_decoding:
+        all_gen_args = [greedy_decoding_gen_args, *temp_sampling_gen_args]
+        output_filenames = [
+            f"{output_filename_prefix}_greedy.jsonl",
+            *[
+                f"{output_filename_prefix}_temp{temp}_{cfg.generation_sampling_num_return_sequences}seqs.jsonl"
+                for temp in temps
+            ],
+        ]
+    else:
+        all_gen_args = temp_sampling_gen_args
+        output_filenames = [f"{output_filename_prefix}_temp{temp}_{cfg.generation_sampling_num_return_sequences}seqs.jsonl" for temp in temps]
+
+    output_filepaths = [f"{model_dir}/{output_fn}" for output_fn in output_filenames]
+    combined_outputs_fp = f"{model_dir}/{output_filename_prefix}.jsonl"
+    slurm_dump_dir = f"{cfg.local_output_dir}/slurm_logs"
+    os.makedirs(slurm_dump_dir, exist_ok=True)
+    hd = None
+
+    # breakpoint()
+
+    if cfg.run_init_gen:
+        all_args = []
+        for gen_args, output_fn in zip(all_gen_args, output_filenames):
+            if not cfg.overwrite_ig and fs.exists(f"{model_dir}/{output_fn}"):
+                logger.info(f"{model_dir}/{output_fn} already exists. Skipping...")
+            else:
+                all_args.append(f"{args} {gen_args} output_filename={output_fn}")
+        all_python_commands = [f"python -m initial_generation {a}" for a in all_args]
+        slurm_kwargs = OmegaConf.to_container(cfg.initial_generation.slurm_args)
+        slurm_kwargs["job_name"] = "init_gen"
+        job_submissions = [
+            submit_cmd_to_slurm(
+                py_cmd,
+                slurm_dump_dir,
+                blocking=False,
+                path_to_repo=cfg.path_to_repo,
+                **slurm_kwargs,
+            )
+            for py_cmd in all_python_commands
+        ]
+        wait_for_slurm_jobs_to_complete(job_submissions)
+        hd = combine_datasets(cfg, fs, output_filepaths, combined_outputs_fp)
+    return combined_outputs_fp, hd
+
+
+
+
+
 def run_iterative_generation(
     cfg: DictConfig,
     fs: LocalOrS3Client,
@@ -486,14 +873,19 @@ def run_iterative_generation(
         + f"batch_size={cfg.sampling_gen_batch_size} "
         for temp in temps
     ]
-    all_gen_args = [greedy_decoding_gen_args, *temp_sampling_gen_args]
-    output_filenames = [
-        f"{output_filename_prefix}_greedy.jsonl",
-        *[
-            f"{output_filename_prefix}_temp{temp}_{cfg.generation_sampling_num_return_sequences}seqs.jsonl"
-            for temp in temps
-        ],
-    ]
+    if cfg.greedy_decoding:
+        all_gen_args = [greedy_decoding_gen_args, *temp_sampling_gen_args]
+        output_filenames = [
+            f"{output_filename_prefix}_greedy.jsonl",
+            *[
+                f"{output_filename_prefix}_temp{temp}_{cfg.generation_sampling_num_return_sequences}seqs.jsonl"
+                for temp in temps
+            ],
+        ]
+    else:
+        all_gen_args = temp_sampling_gen_args
+        output_filenames = [f"{output_filename_prefix}_temp{temp}_{cfg.generation_sampling_num_return_sequences}seqs.jsonl" for temp in temps]
+
     output_filepaths = [f"{model_dir}/{output_fn}" for output_fn in output_filenames]
     combined_outputs_fp = f"{model_dir}/{output_filename_prefix}.jsonl"
     slurm_dump_dir = f"{cfg.local_output_dir}/slurm_logs"
@@ -502,7 +894,7 @@ def run_iterative_generation(
     if cfg.run_iter_gen:
         all_args = []
         for gen_args, output_fn in zip(all_gen_args, output_filenames):
-            if not cfg.overwrite and fs.exists(f"{model_dir}/{output_fn}"):
+            if not cfg.overwrite_ig and fs.exists(f"{model_dir}/{output_fn}"):
                 logger.info(f"{model_dir}/{output_fn} already exists. Skipping...")
             else:
                 all_args.append(f"{args} {gen_args} output_filename={output_fn}")
@@ -538,6 +930,7 @@ def get_temperatures(
     else:
         # if not already existing, dynamically compute and write to file
         temps = [0.6, 0.8, 1.0, 1.2, 1.4, 1.6]
+        # temps = [1.0]
         if cfg.temperature_scaling and prev_hd is not None:
             if prev_hd < 0.075:
                 temps = [1.2, 1.4, 1.6, 1.8, 2.0, 2.2]
@@ -583,14 +976,140 @@ def main(cfg: DictConfig):
     ga_data_dir = generate_ga_dataset(cfg, file_client)
     logger.info(f"GA dataset dir: {ga_data_dir}")
 
+    ## Pretrain model on unpaired sequences from genetic algorithm
+    train_from_scratch = hasattr(cfg, "initial_model_config")
+    if cfg.run_gpt:
+        gpt_dir = train_gpt(
+            cfg,
+            file_client,
+            ga_data_dir,
+            gpt_run_name=f"{cfg.run_name}_gpt",
+            model_dir=cfg.initial_model,
+            train_from_scratch=train_from_scratch,
+        )
+        curr_model = gpt_dir
+        logger.info(f"GPT model dir: {curr_model}")
+    else:
+        curr_model = cfg.initial_model
+        logger.info(f"Initial model dir: {curr_model}")
+
+    
+    ## (Abandoned this step, due to issues with unconditional sampling) 
+    ## Sample conformal calibration sequences unconditionally from GPT model
+    # uncon_gen_outputs, hd = run_unconditional_generation(
+    #     cfg,
+    #     file_client,
+    #     # combined_marge_dataset_fp,
+    #     ga_data_dir,
+    #     ga_data_dir,
+    #     model_dir=curr_model,
+    #     particle_field="particle",
+    #     score_field="score",
+    #     temps=[1.0],
+    # )
+    
     all_prev_sft_datasets = []
-    prev_round_outputs_fp = f"{ga_data_dir}/plain_pairs.jsonl"
-    curr_model = cfg.initial_model
+    prev_round_outputs_fp = f"{ga_data_dir}/plain_pairs.jsonl" ## TO DO: Update this to samples from GPT model
     prev_hd = None
+    # temps = [1.0]
+
+
+    # '''Initial SFT and generation with uniformly selected seeds to improve pretrained model'''
+    # for i in tqdm(range(cfg.num_init_sft_rounds), desc="SFT iterations"):
+    #     n = cfg.num_labels_after_first_round if i > 0 else None
+    #     sft_dataset_fp = create_propen_sft_dataset(
+    #         cfg, file_client, prev_round_outputs_fp, filename_prefix=f"sft_init_r{i}_", n=n
+    #     )
+    #     combined_sft_dataset_fp = combine_new_with_old_datasets(
+    #         cfg, file_client, all_prev_sft_datasets, sft_dataset_fp
+    #     )
+    #     logger.info(f"SFT dataset path: {combined_sft_dataset_fp}")
+    #     all_prev_sft_datasets.append(sft_dataset_fp)
+
+    #     train_from_scratch = curr_model == cfg.initial_model and hasattr(
+    #         cfg, "initial_model_config"
+    #     )
+    #     sft_dir = train_initial_sft(
+    #         cfg,
+    #         file_client,
+    #         combined_sft_dataset_fp,
+    #         ga_data_dir,
+    #         initial_sft_run_name=f"{cfg.run_name}_sft_init_r{i}",
+    #         model_dir=curr_model,
+    #         train_from_scratch=train_from_scratch,
+    #     )
+        
+
+    #     logger.info(f"Trained initial SFT model: {sft_dir}")
+    #     curr_model = sft_dir
+
+    #     # Take best checkpoint of trained model and get calibrated best likelihood range
+
+    #     if cfg.temperature_scaling:
+    #         temps = get_temperatures(cfg, file_client, sft_dir, prev_hd)
+    #     else:
+    #         temps = [1.0]
+    #     # breakpoint()
+    #     iter_gen_outputs, hd = run_initial_generation(
+    #         cfg,
+    #         file_client,
+    #         combined_sft_dataset_fp,
+    #         ga_data_dir,
+    #         sft_dir,
+    #         higher_score_particle_field="higher_score_particle",
+    #         lower_score_particle_field="lower_score_particle",
+    #         higher_score_field="higher_score",
+    #         lower_score_field="lower_score",
+    #         temps=temps,
+    #     )
+    #     prev_hd = hd
+    #     logger.info(f"Iterative generations output path: {iter_gen_outputs}")
+    #     prev_round_outputs_fp = iter_gen_outputs
+    
+    # sft_dataset_fp = create_propen_sft_dataset(
+    #     cfg, file_client, prev_round_outputs_fp, filename_prefix=f"sft_init_", n=cfg.num_labels_after_first_round
+    # )
+    # combined_sft_dataset_fp = combine_new_with_old_datasets(
+    #     cfg, file_client, all_prev_sft_datasets, sft_dataset_fp
+    # )
+    # logger.info(f"SFT dataset path: {combined_sft_dataset_fp}")
+    # all_prev_sft_datasets.append(sft_dataset_fp)
+
+    # train_from_scratch = False
+    # sft_dir = train_sft(
+    #     cfg,
+    #     file_client,
+    #     combined_sft_dataset_fp,
+    #     ga_data_dir,
+    #     sft_run_name=f"{cfg.run_name}_sft_init",
+    #     model_dir=curr_model,
+    #     train_from_scratch=train_from_scratch,
+    # )
+    
+
+    # logger.info(f"Trained SFT model: {sft_dir}")
+    # curr_model = sft_dir
+    # iter_gen_outputs, hd = run_initial_generation(
+    #     cfg,
+    #     file_client,
+    #     combined_sft_dataset_fp,
+    #     ga_data_dir,
+    #     gpt_dir,
+    #     higher_score_particle_field="higher_score_particle",
+    #     lower_score_particle_field="lower_score_particle",
+    #     higher_score_field="higher_score",
+    #     lower_score_field="lower_score",
+    #     temps=temps,
+    # )
+    # # breakpoint()
+
+
+
     for i in tqdm(range(cfg.num_sft_rounds), desc="SFT iterations"):
         n = cfg.num_labels_after_first_round if i > 0 else None
+        # n = cfg.num_labels_after_first_round
         sft_dataset_fp = create_propen_sft_dataset(
-            cfg, file_client, prev_round_outputs_fp, filename_prefix=f"sft_r{i}_", n=n
+            cfg, file_client, prev_round_outputs_fp, filename_prefix=f"sft_r{i}_20250901", n=n
         )
         combined_sft_dataset_fp = combine_new_with_old_datasets(
             cfg, file_client, all_prev_sft_datasets, sft_dataset_fp
@@ -606,16 +1125,25 @@ def main(cfg: DictConfig):
             file_client,
             combined_sft_dataset_fp,
             ga_data_dir,
-            sft_run_name=f"{cfg.run_name}_sft_r{i}",
+            sft_run_name=f"{cfg.run_name}_sft_r{i}_20250901",
             model_dir=curr_model,
             train_from_scratch=train_from_scratch,
         )
+        
+
         logger.info(f"Trained SFT model: {sft_dir}")
         curr_model = sft_dir
 
+        ## TO DO: Conformal Policy Control
+
         # Take best checkpoint of trained model and get calibrated best likelihood range
 
-        temps = get_temperatures(cfg, file_client, sft_dir, prev_hd)
+        if cfg.temperature_scaling:
+            temps = get_temperatures(cfg, file_client, sft_dir, prev_hd)
+        else:
+            temps = [0.6, 0.8, 1.0, 1.2, 1.4, 1.6]
+        # breakpoint()
+        logger.info(f"temps: {temps}")
         iter_gen_outputs, hd = run_iterative_generation(
             cfg,
             file_client,
@@ -705,6 +1233,7 @@ def main(cfg: DictConfig):
         curr_model = marge_dir
 
         temps = get_temperatures(cfg, file_client, marge_dir, prev_hd)
+        # temps = [1.0]
         iter_gen_outputs, hd = run_iterative_generation(
             cfg,
             file_client,

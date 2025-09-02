@@ -1,7 +1,7 @@
 log_level: info
 run_name: smaller_pythia
-parent_output_dir: null
-local_output_dir: null
+parent_output_dir: s3://prescient-pcluster-data/prinstea/llome/parent_output #/data/bucket/prinstea/llome/parent_output
+local_output_dir: /homefs/home/prinstea/llome/local_output
 overwrite: False  # If False, will only run job when output file does not already exist.
 run_evol_dataset_gen: True
 run_propen_sft_dataset_formatting: True
@@ -18,7 +18,7 @@ greedy_gen_batch_size: 64
 sampling_gen_batch_size: 32
 initial_model: "EleutherAI/pythia-14m" # "EleutherAI/pythia-2.8b"
 sanity_check: False  # will be propagated to all training + generation jobs
-path_to_repo: /scratch/ac5968/llome
+path_to_repo: null # /scratch/ac5968/llome
 
 # Only include this section if the initial model should be trained from scratch!
 initial_model_config:
@@ -60,14 +60,16 @@ evol_dataset_gen:
     nodes: 1
     cpus_per_task: 1
     ntasks_per_node: 1
-    gres: "gpu:1"
+    gpus_per_node: 1
+    partition: "gpu2"
+    #gres: "gpu:1"
     open_mode: "append"
     export: "ALL"
     time: "48:00:00"
     mem: "100GB"
     mail_type: "BEGIN,END,FAIL"
-    mail_user: "ac5968@nyu.edu"
-    account: "cds"
+    mail_user: "drew@cs.jhu.edu" # "ac5968@nyu.edu"
+    #account: "cds"
 
 propen_dataset_formatting_sft:
   args:
@@ -89,7 +91,7 @@ propen_dataset_formatting_sft:
     time: "6:00:00"
     mem: "100GB"
     mail_type: "BEGIN,END,FAIL"
-    mail_user: "ac5968@nyu.edu"
+    mail_user: "drew@cs.jhu.edu" # "ac5968@nyu.edu"
 
 
 propen_dataset_formatting_preference:
@@ -112,7 +114,7 @@ propen_dataset_formatting_preference:
     time: "6:00:00"
     mem: "100GB"
     mail_type: "BEGIN,END,FAIL"
-    mail_user: "ac5968@nyu.edu"
+    mail_user: "drew@cs.jhu.edu" # "ac5968@nyu.edu"
 
 
 sft:
@@ -130,7 +132,7 @@ sft:
       max_seq_length: 512
       log_level: "info"
       save_total_limit: 2
-      warmup_ratio: 0.0
+      #warmup_ratio: 0.0
 
     generation_config:  # use greedy decoding during evaluation
       max_new_tokens: 256
@@ -158,12 +160,14 @@ sft:
     nodes: 1
     cpus_per_task: 1
     ntasks_per_node: 1
+    gpus_per_node: 1
+    partition: "gpu2"
     open_mode: "append"
     export: "ALL"
     time: "48:00:00"
     mem: "100GB"
-    gres: "gpu:1"
-    account: "cds"
+    #gres: "gpu:1"
+    #account: "cds"
 
 iterative_generation:
   num_jobs: 6  # number of generation jobs to parallelize this over
@@ -181,12 +185,14 @@ iterative_generation:
     nodes: 1
     cpus_per_task: 1
     ntasks_per_node: 1
+    gpus_per_node: 1
+    partition: "gpu2"
     open_mode: "append"
     export: "ALL"
     time: "48:00:00"
     mem: "100GB"
-    gres: "gpu:1"
-    account: "cds"
+    # gres: "gpu:1"
+    # account: "cds"
 
 marge:
   args:
@@ -214,10 +220,12 @@ marge:
     nodes: 1
     cpus_per_task: 2
     ntasks_per_node: 2
+    gpus_per_node: 1
+    partition: "gpu2"
     open_mode: "append"
     export: "ALL"
     time: "48:00:00"
     mem: "100GB"
-    gres: "gpu:2"
-    account: "cds"
+    # gres: "gpu:2"
+    # account: "cds"
  

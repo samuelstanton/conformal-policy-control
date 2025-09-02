@@ -83,7 +83,8 @@ def submit_cmd_to_slurm(
     py_cmd: str,
     dump_dir: str,
     blocking: bool = False,
-    setup_str: str = "",  # setup  that goes between sbatch args and running the py_cmd
+    # setup_str: str = 'wandb login --relogin --host https://genentech.wandb.io \n\n 23fa6435c59b0dcf64957cd8fe26e0aa64fc40c2',  # setup  that goes between sbatch args and running the py_cmd
+    setup_str: str = 'export WANDB_INSECURE_DISABLE_SSL=true \n\n export WANDB_API_KEY="23fa6435c59b0dcf64957cd8fe26e0aa64fc40c2" \n\n export WANDB_BASE_URL="https://genentech.wandb.io" \n\n wandb login --relogin --host https://genentech.wandb.io \n\n export AWS_ACCESS_KEY_ID=AKIAZYZ3BPNLMTIYTPVJ \n\n export AWS_SECRET_ACCESS_KEY=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',
     path_to_repo: Optional[str] = None,
     **slurm_kwargs,
 ) -> Tuple[subprocess.Popen, str]:

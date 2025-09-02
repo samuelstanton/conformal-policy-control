@@ -150,6 +150,9 @@ def main(cfg: DictConfig):
     )
     train_dataset = raw_datasets["train"]
     eval_dataset = raw_datasets["test"]
+    print(f'cfg.data_fp : {cfg.data_fp}')
+    print(f'train_dataset len : {len(train_dataset)}')
+    print(f'eval_dataset len : {len(eval_dataset)}')
 
     if cfg.sanity_check:
         logger.info(f"In sanity check mode, will reduce the number of training steps.")
@@ -211,7 +214,10 @@ def main(cfg: DictConfig):
             logging.info(
                 f"Training new tokenizer with vocab size {cfg.init_model_config.vocab_size}"
             )
-            formatted_inputs = formatting_fn(train_dataset, include_target=True)
+            if cfg.format_type == "plain_pairs":
+                formatted_inputs = formatting_fn(train_dataset)
+            else:
+                formatted_inputs = formatting_fn(train_dataset, include_target=True)
             logging.info(
                 f"Example of first 5 examples used for training custom tokenizer: {formatted_inputs[:5]}"
             )

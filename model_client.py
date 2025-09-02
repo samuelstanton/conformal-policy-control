@@ -210,24 +210,72 @@ class ModelClient:
     @torch.no_grad()
     def generate_texts_batched(
         self,
-        input_texts: List[str],
+        input_texts: Optional[List[str]] = None,
         batch_size: int = 8,
         return_likelihoods=False,
+        subsample_seeds=False,
         **kwargs,
     ) -> Union[List[str], Tuple[List[str], List[torch.Tensor], List[torch.Tensor]]]:
         """
         Runs batched generation. If return_likelihoods=True, returns a tuple containing
         the output sequences, the output tokens, and the output token log-likelihoods.
         Otherwise, returns only the output sequences.
+
+        Args:
+            input_texts: List of input texts for conditional generation. If None, generates
+                        sequences unconditionally starting from BOS token or other appropriate
+                        start token (CLS, PAD, or space as fallback).
+            batch_size: Number of sequences to generate per batch
+            return_likelihoods: Whether to return token likelihoods
+            subsample_seeds: Whether to subsample input seeds with replacement
+            **kwargs: Additional generation arguments passed to model.generate()
+
+        if subsamples_seeds:
+            Subsample input seeds uniformly at random, with replacement, from input_texts.
         """
+        if input_texts is None:
+            # Unconditional generation - create proper BOS tokens
+            if hasattr(self.tokenizer, 'bos_token') and self.tokenizer.bos_token:
+                # Use beginning-of-sequence token if available
+                input_texts = [self.tokenizer.bos_token] * batch_size
+                if self.logger:
+                    self.logger.info(f"Using BOS token '{self.tokenizer.bos_token}' for unconditional generation")
+            else:
+                # Fallback: use a minimal context token that won't cause embedding issues
+                # Most tokenizers have a special token we can use
+                if hasattr(self.tokenizer, 'cls_token') and self.tokenizer.cls_token:
+                    input_texts = [self.tokenizer.cls_token] * batch_size
+                    if self.logger:
+                        self.logger.info(f"Using CLS token '{self.tokenizer.cls_token}' for unconditional generation")
+                elif hasattr(self.tokenizer, 'pad_token') and self.tokenizer.pad_token:
+                    input_texts = [self.tokenizer.pad_token] * batch_size
+                    if self.logger:
+                        self.logger.info(f"Using PAD token '{self.tokenizer.pad_token}' for unconditional generation")
+                else:
+                    # Last resort: use a single space character which should tokenize properly
+                    input_texts = [" "] * batch_size
+                    if self.logger:
+                        self.logger.info("Using space character for unconditional generation (fallback)")
+            is_unconditional = True
+        else:
+            is_unconditional = False
+        
         output_strs = []
         all_output_token_ids = []
         all_token_logps = []
         for batch_start_idx in tqdm(
             range(0, len(input_texts), batch_size), desc="Batched generation..."
-        ):
-            batch_end_idx = batch_start_idx + batch_size
-            batch_texts = input_texts[batch_start_idx:batch_end_idx]
+        ):  
+            if subsample_seeds:
+                ## In this condition: Subsample input seed seqs uniformly with replacement 
+                ## (ensures that each output is sampled from the mixture of the prompt-conditional distributions)
+                idx_input_texts = np.random.choice(range(len(input_texts)), size=batch_size, replace=True)
+                batch_texts = [input_texts[idx] for idx in idx_input_texts]
+            else:
+                ## In this condition: Move through all the input seeds in minibatches
+                batch_end_idx = batch_start_idx + batch_size
+                batch_texts = input_texts[batch_start_idx:batch_end_idx]
+
             input_ids = self._tokenize_batch(batch_texts).input_ids
             if self.device is not None:
                 input_ids = input_ids.to(self.device)
@@ -239,24 +287,58 @@ class ModelClient:
                 input_ids, **gen_args, tokenizer=self.tokenizer
             )
             output_token_ids = outputs.sequences if return_likelihoods else outputs
-            # remove the input from each output
-            decoded_outputs = self.tokenizer.batch_decode(
-                output_token_ids[:, input_ids.shape[-1] :],
-                skip_special_tokens=True,
-                clean_up_tokenization_spaces=True,
-            )
+            self.logger.info(f"len(output_token_ids) '{len(output_token_ids)}', output_token_ids[0] : {output_token_ids[0]}")
+            
+            # Handle output decoding based on generation type
+            if is_unconditional:
+                # For unconditional generation, remove the BOS/start token to get clean sequences
+                if hasattr(self.tokenizer, 'bos_token') and self.tokenizer.bos_token:
+                    # Remove the BOS token from output
+                    decoded_outputs = self.tokenizer.batch_decode(
+                        output_token_ids[:, 1:],  # Skip BOS token
+                        skip_special_tokens=True,
+                        clean_up_tokenization_spaces=True,
+                    )
+                else:
+                    # Keep the full sequence if no BOS token
+                    decoded_outputs = self.tokenizer.batch_decode(
+                        output_token_ids,
+                        skip_special_tokens=True,
+                        clean_up_tokenization_spaces=True,
+                    )
+            else:
+                # For conditional generation, remove the input context
+                decoded_outputs = self.tokenizer.batch_decode(
+                    output_token_ids[:, input_ids.shape[-1] :],
+                    skip_special_tokens=True,
+                    clean_up_tokenization_spaces=True,
+                )
             output_strs.extend(decoded_outputs)
             if return_likelihoods:
                 token_logps = self.model.compute_transition_scores(
                     outputs.sequences, outputs.scores, normalize_logits=True
                 )
-                for oti in output_token_ids[:, input_ids.shape[-1] :]:
-                    all_output_token_ids.append(oti)
+                # Handle token extraction based on generation type
+                if is_unconditional:
+                    if hasattr(self.tokenizer, 'bos_token') and self.tokenizer.bos_token:
+                        # Remove the BOS token for likelihood computation
+                        for oti in output_token_ids[:, 1:]:
+                            all_output_token_ids.append(oti)
+                    else:
+                        # Keep the full sequence if no BOS token
+                        for oti in output_token_ids:
+                            all_output_token_ids.append(oti)
+                else:
+                    for oti in output_token_ids[:, input_ids.shape[-1] :]:
+                        all_output_token_ids.append(oti)
                 for o_logps in token_logps:
                     all_token_logps.append(o_logps)
         if return_likelihoods:
             return (output_strs, all_output_token_ids, all_token_logps)
         return output_strs
+    
+
+
 
     @torch.no_grad()
     def compute_likelihoods(

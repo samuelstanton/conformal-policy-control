@@ -21,19 +21,7 @@ from transformers import GenerationConfig
 
 
 
-# def run_unconditional_generation(cfg: DictConfig, model_dir: str, logger: logging.Logger = None):
-#     ''' Generates unconditional samples from model
-#     '''
-#     gen_config = hydra.utils.instantiate(cfg.generation_config)
-#     model_client = ModelClient(
-#         model_name_or_path=model_dir, #cfg.model_name_or_path,
-#         logger=logger,
-#         max_generate_length=gen_config.max_new_tokens,
-#         device="cuda" if torch.cuda.is_available() else "cpu",
-#     )
-
-
-def run_iterative_generation(cfg: DictConfig, logger: logging.Logger = None):
+def run_initial_generation(cfg: DictConfig, logger: logging.Logger = None):
     test_fn_params = pd.read_json(cfg.test_fn_fp, orient="records", lines=True).to_dict(
         "records"
     )[0]
@@ -79,13 +67,13 @@ def run_iterative_generation(cfg: DictConfig, logger: logging.Logger = None):
     # Now dedupe the lower_score_particles and sample the lowest scoring examples from the data
     # to use as seeds for generation
     # df = df.drop_duplicates(subset=[cfg.lower_score_particle_field])
-    if cfg.sampling_method == "best_scoring":
+    if cfg.init_sampling_method == "best_scoring":
         df = df.sort_values(by=[cfg.lower_score_field], ascending=True)[
             : cfg.sample_size
         ]
-    elif cfg.sampling_method == "uniform":
+    elif cfg.init_sampling_method == "uniform":
         df = df.sample(n=min(len(df), cfg.sample_size), random_state=cfg.seed)
-    elif cfg.sampling_method == "combination":
+    elif cfg.init_sampling_method == "combination":
         half_sample_size = int(cfg.sample_size / 2)
         df = pd.concat(
             [
@@ -96,7 +84,7 @@ def run_iterative_generation(cfg: DictConfig, logger: logging.Logger = None):
             ]
         )
     else:
-        raise ValueError(f"Unknown sampling method '{cfg.sampling_method}.'")
+        raise ValueError(f"Unknown initial sampling method '{cfg.init_sampling_method}.'")
     # Start by using the lower score particle from each pair as the seed
     ## ds: Dataset of *pairs*, by the best (lowest) sample_size num scoring particles
     ds = datasets.Dataset.from_pandas(df)
@@ -234,14 +222,14 @@ def run_iterative_generation(cfg: DictConfig, logger: logging.Logger = None):
     )
 
 
-@hydra.main(config_path="config", config_name="iterative_generation")
+@hydra.main(config_path="config", config_name="initial_generation")
 def main(cfg: DictConfig):
     logging.basicConfig(level=cfg.log_level.upper(), force=True)
     logging.info(
         f"Running {__file__} with the following arguments:\n{pprint.pformat(OmegaConf.to_container(cfg))}"
     )
     logger = logging.getLogger(__file__)
-    run_iterative_generation(cfg, logger)
+    run_initial_generation(cfg, logger)
 
 
 if __name__ == "__main__":
