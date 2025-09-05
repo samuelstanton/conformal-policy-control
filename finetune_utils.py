@@ -604,6 +604,19 @@ def formatting_texts_func_plain_pairs(
         output_texts.append(f"Score: {score:.2f}\nParticle: {particles_str}")
     return output_texts
 
+## Same as 'formatting_texts_func_plain_pairs', except calling for "higher_score_particle"
+def formatting_texts_func_plain_pairs_higher(
+    examples: Mapping[str, Iterable[Any]]
+) -> List[str]:
+    output_texts = []
+    for i in range(len(examples["score"])):
+        score = examples["score"][i]
+        particles = [int(x) for x in examples["higher_score_particle"][i]]
+        particles_str = json.dumps(particles)
+        output_texts.append(f"Score: {score:.2f}\nParticle: {particles_str}")
+    return output_texts
+
+
 
 def get_response_template_edit_pairs(tokenizer: PreTrainedTokenizer):
     response_template_with_context = "\n"

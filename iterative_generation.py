@@ -97,6 +97,8 @@ def run_iterative_generation(cfg: DictConfig, logger: logging.Logger = None):
         )
     else:
         raise ValueError(f"Unknown sampling method '{cfg.sampling_method}.'")
+    
+    
     # Start by using the lower score particle from each pair as the seed
     ## ds: Dataset of *pairs*, by the best (lowest) sample_size num scoring particles
     ds = datasets.Dataset.from_pandas(df)
@@ -110,6 +112,12 @@ def run_iterative_generation(cfg: DictConfig, logger: logging.Logger = None):
             }
             for ex in ds
         ]
+    )
+
+    ## Write selected seeds to disk (needed for computing seed-marginalized likelihoods used in policy control)
+    input_df = input_ds.to_pandas()
+    input_df.to_json(
+        os.path.join(cfg.output_dir, f'seeds_{cfg.output_filename}'), orient="records", lines=True
     )
 
     ## all_trajectories : A list of lists; each sublist is a trajectory 
@@ -174,8 +182,9 @@ def run_iterative_generation(cfg: DictConfig, logger: logging.Logger = None):
                 output_logp = trunc_output_logps[
                     trajectory_idx * gen_config.num_return_sequences + output_idx
                 ]
+                # logger.info(f'output : {output}')
                 output_particle_and_score = parse_particle_and_score(output, test_fn)
-                logger.info(f'output_particle_and_score : {output_particle_and_score}')
+                # logger.info(f'output_particle_and_score : {output_particle_and_score}')
                 num_particles_generated += 1
                 if output_particle_and_score is None:
                     continue

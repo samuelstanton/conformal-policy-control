@@ -22,6 +22,7 @@ def score(cfg: DictConfig, logger: logging.Logger = None):
         max_generate_length=1,  # don't need to generate, only scoring
         device="cuda" if torch.cuda.is_available() else "cpu",
     )
+    # breakpoint()
     df = pd.read_json(cfg.data_path, orient="records", lines=True)
     if cfg.sanity_check:
         logger.warning(
@@ -31,12 +32,26 @@ def score(cfg: DictConfig, logger: logging.Logger = None):
     data = df.to_dict("list")
     # inputs = df[cfg.input_field].to_list()
     # targets = df[cfg.target_field].to_list()
+
+    '''Example of formatted_inputs
+    p formatted_inputs[0:2]
+    ['<inc> [12, 31, 2, 27, 15, 6, 14, 9, 12, 31, 11, 10, 25, 1, 15, 11, 19, 24, 10, 4, 17, 28, 1, 14, 31, 28, 16, 15, 9, 14, 16, 15]\n', 
+     '<inc> [12, 31, 2, 4, 15, 6, 9, 9, 12, 31, 11, 10, 25, 1, 15, 11, 19, 24, 10, 5, 17, 27, 1, 14, 31, 28, 16, 15, 11, 14, 16, 15]\n']
+    '''
+    
     formatted_inputs = formatting_texts_func_edit_pairs(
         data,
         include_target=False,
         higher_score_particle_field=cfg.input_field,
         lower_score_particle_field=cfg.target_field,
     )
+
+    '''Example of formatted_targets
+    p formatted_targets[0:2]
+    ['[12, 31, 2, 15, 15, 6, 14, 9, 12, 31, 11, 10, 25, 1, 15, 11, 19, 24, 10, 5, 19, 27, 1, 14, 31, 28, 16, 15, 11, 14, 16, 15]', 
+     '[12, 31, 2, 4, 15, 6, 14, 9, 12, 31, 11, 10, 25, 1, 14, 11, 19, 24, 10, 5, 17, 27, 1, 14, 31, 28, 15, 15, 14, 14, 16, 15]']
+    '''
+    # breakpoint()
     formatted_targets = [json.dumps(target) for target in data[cfg.target_field]]
     avg_likelihoods = model_client.compute_likelihoods(
         formatted_inputs,

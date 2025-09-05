@@ -76,15 +76,23 @@ def create_propen_sft_dataset(
     source_dataset_fp: str,
     filename_prefix: str = "",
     n: int = None,
+    initial_sft: bool = False, ## Whether is initialization (False : means policy improvement or extrapolation)
     **extra_kwargs,
 ) -> str:
     python_cmd_str = "python -m synthetic_dataset_formatter "
-    opts = get_all_strs_from_nested_dict(cfg["propen_dataset_formatting_sft"]["args"])
+    if initial_sft:
+        opts = get_all_strs_from_nested_dict(cfg["propen_dataset_formatting_initial_sft"]["args"])
+    else:
+        opts = get_all_strs_from_nested_dict(cfg["propen_dataset_formatting_sft"]["args"])
     opts_str = " ".join(opts)
     opts_str += (
         f" source_dataset_path={source_dataset_fp} format=dense_neighborhood_pairs "
     )
-    pdf_cfg = cfg.propen_dataset_formatting_sft.args
+    if initial_sft:
+        pdf_cfg = cfg.propen_dataset_formatting_initial_sft.args
+    else:
+        pdf_cfg = cfg.propen_dataset_formatting_sft.args
+
     output_fn = f"{filename_prefix}dense_neighborhood_pairs_xthres{pdf_cfg.dist_x_threshold}_maxinfs{pdf_cfg.max_proportion_infeasible}_{pdf_cfg.n_neighbors}nn.jsonl"
     output_fp = (
         f"{cfg.parent_output_dir}/{cfg.run_name}/{output_fn}"
@@ -105,10 +113,16 @@ def create_propen_sft_dataset(
     slurm_dump_dir = f"{cfg.local_output_dir}/slurm_logs"
     os.makedirs(slurm_dump_dir, exist_ok=True)
     if cfg.run_propen_sft_dataset_formatting:
-        slurm_kwargs = OmegaConf.to_container(
-            cfg.propen_dataset_formatting_sft.slurm_args
-        )
-        slurm_kwargs["job_name"] = "propen_sft_formatting"
+        if initial_sft:
+            slurm_kwargs = OmegaConf.to_container(
+                cfg.propen_dataset_formatting_initial_sft.slurm_args
+            )
+            slurm_kwargs["job_name"] = "propen_initial_sft_formatting"
+        else:
+            slurm_kwargs = OmegaConf.to_container(
+                cfg.propen_dataset_formatting_sft.slurm_args
+            )
+            slurm_kwargs["job_name"] = "propen_sft_formatting"
         submit_cmd_to_slurm(
             python_cmd_str,
             slurm_dump_dir,
@@ -192,6 +206,23 @@ def gpt_model_already_trained(
         if fs.exists(fp):
             return model_dir
     return None
+
+
+def train_cal_split_gen_outputs(cfg: DictConfig, gen_outputs : str, sft_dir : str):
+    iter_gen_outputs_df = pd.read_json(gen_outputs, orient="records", lines=True)
+    output_filename_suffix = f"gens_likelihood_{cfg.iterative_generation.args.sample_size}sample_{cfg.iterative_generation.args.max_iterations}iter"
+
+    ## Training data
+    train_df = iter_gen_outputs_df.sample(frac=cfg.train_frac, random_state=cfg.random_seed)
+    train_output_path = os.path.join(sft_dir, f'train_r0_{output_filename_suffix}.jsonl')
+    train_df.to_json(train_output_path, orient="records", lines=True)
+
+    ## Cal data
+    cal_df = iter_gen_outputs_df.drop(train_df.index)
+    cal_output_path = os.path.join(sft_dir, f'cal_r0_{output_filename_suffix}.jsonl')
+    cal_df.to_json(cal_output_path, orient="records", lines=True)
+
+    return train_df, train_output_path, cal_df, cal_output_path
 
 
 def train_gpt(
@@ -764,7 +795,8 @@ def run_initial_generation(
     lower_score_field: str = "lower_score",
     higher_score_field: str = "higher_score",
     temps: List[float] = [0.6, 0.8, 1.0, 1.2, 1.4, 1.6],
-) -> str:
+    return_seeds: bool = True
+):
     """
     Runs initial generation jobs, combines the outputs, and returns the combined output filepath.
     """
@@ -802,6 +834,9 @@ def run_initial_generation(
         all_gen_args = temp_sampling_gen_args
         output_filenames = [f"{output_filename_prefix}_temp{temp}_{cfg.generation_sampling_num_return_sequences}seqs.jsonl" for temp in temps]
 
+    seeds_filenames = [f'seeds_{output_filename}' for output_filename in output_filenames]
+    seeds_filepaths = [f"{model_dir}/{seeds_fn}" for seeds_fn in seeds_filenames]
+
     output_filepaths = [f"{model_dir}/{output_fn}" for output_fn in output_filenames]
     combined_outputs_fp = f"{model_dir}/{output_filename_prefix}.jsonl"
     slurm_dump_dir = f"{cfg.local_output_dir}/slurm_logs"
@@ -813,7 +848,7 @@ def run_initial_generation(
     if cfg.run_init_gen:
         all_args = []
         for gen_args, output_fn in zip(all_gen_args, output_filenames):
-            if not cfg.overwrite_ig and fs.exists(f"{model_dir}/{output_fn}"):
+            if not cfg.overwrite_initg and fs.exists(f"{model_dir}/{output_fn}"):
                 logger.info(f"{model_dir}/{output_fn} already exists. Skipping...")
             else:
                 all_args.append(f"{args} {gen_args} output_filename={output_fn}")
@@ -832,9 +867,98 @@ def run_initial_generation(
         ]
         wait_for_slurm_jobs_to_complete(job_submissions)
         hd = combine_datasets(cfg, fs, output_filepaths, combined_outputs_fp)
+    if return_seeds:
+        return combined_outputs_fp, hd, seeds_filepaths
+    else:
+        return combined_outputs_fp, hd
+
+
+
+
+def run_contrastive_generation(
+    cfg: DictConfig,
+    fs: LocalOrS3Client,
+    data_fp_list: List[str],
+    data_dir: str,
+    model_dir_list: List[str],
+    particle_field: str = "higher_score_particle",
+    score_field: str = "score",
+    temps: List[float] = [0.6, 0.8, 1.0, 1.2, 1.4, 1.6],
+) -> str:
+    """
+    Runs contrastive generation jobs, combines the outputs, and returns the combined output filepath.
+    """
+    opt_str = " ".join(
+        get_all_strs_from_nested_dict(cfg["contrastive_generation"]["args"])
+    )
+
+    ## Format lists of strings into a long string that python and hydra can interpret
+    data_fp_list_str = f"\\['{data_fp_list[0]}'"
+    model_dir_list_str = f"\\['{model_dir_list[0]}'"
+    for i in range(1, len(data_fp_list)):
+        data_fp_list_str += f",'{data_fp_list[i]}'"
+        model_dir_list_str += f",'{model_dir_list[i]}'"
+    data_fp_list_str += "\\]"
+    model_dir_list_str += "\\]"
+
+
+    args = f"{opt_str} data_path_list={data_fp_list_str} model_name_or_path_list={model_dir_list_str} output_dir={model_dir_list[-1]} "
+    args += f"test_fn_fp={data_dir}/ehrlich.jsonl "
+    args += f"particle_field={particle_field} "
+    args += f"score_field={score_field} "
+    args += f"sanity_check={cfg.sanity_check} "
+
+    output_filename_prefix = f"contrast_gens_likelihood_{cfg.contrastive_generation.args.sample_size}sample"
+    greedy_decoding_gen_args = f"generation_config.do_sample=False generation_config.num_beams=1 batch_size={cfg.greedy_gen_batch_size}"
+    temp_sampling_gen_args = [
+        f"generation_config.do_sample=True generation_config.num_beams=1 "
+        + f"+generation_config.temperature={temp} "
+        + f"generation_config.num_return_sequences={cfg.generation_sampling_num_return_sequences} "
+        + f"batch_size={cfg.sampling_gen_batch_size} "
+        for temp in temps
+    ]
+    if cfg.contrastive_generation.greedy_decoding:
+        all_gen_args = [greedy_decoding_gen_args, *temp_sampling_gen_args]
+        output_filenames = [
+            f"{output_filename_prefix}_greedy.jsonl",
+            *[
+                f"{output_filename_prefix}_temp{temp}_{cfg.generation_sampling_num_return_sequences}seqs.jsonl"
+                for temp in temps
+            ],
+        ]
+    else:
+        all_gen_args = temp_sampling_gen_args
+        output_filenames = [f"{output_filename_prefix}_temp{temp}_{cfg.generation_sampling_num_return_sequences}seqs.jsonl" for temp in temps]
+
+    output_filepaths = [f"{model_dir_list[-1]}/{output_fn}" for output_fn in output_filenames]
+    combined_outputs_fp = f"{model_dir_list[-1]}/{output_filename_prefix}.jsonl"
+    slurm_dump_dir = f"{cfg.local_output_dir}/slurm_logs"
+    os.makedirs(slurm_dump_dir, exist_ok=True)
+    hd = None
+    if cfg.run_contrast_gen:
+        all_args = []
+        for gen_args, output_fn in zip(all_gen_args, output_filenames):
+            if not cfg.overwrite_cg and fs.exists(f"{model_dir_list[-1]}/{output_fn}"):
+                logger.info(f"{model_dir_list[-1]}/{output_fn} already exists. Skipping contrastive generation...")
+            else:
+                logger.info(f"Running contrastive generation...")
+                all_args.append(f"{args} {gen_args} output_filename={output_fn}")
+        all_python_commands = [f"python -m contrastive_generation {a}" for a in all_args]
+        slurm_kwargs = OmegaConf.to_container(cfg.contrastive_generation.slurm_args)
+        slurm_kwargs["job_name"] = "contrast_gen"
+        job_submissions = [
+            submit_cmd_to_slurm(
+                py_cmd,
+                slurm_dump_dir,
+                blocking=False,
+                path_to_repo=cfg.path_to_repo,
+                **slurm_kwargs,
+            )
+            for py_cmd in all_python_commands
+        ]
+        wait_for_slurm_jobs_to_complete(job_submissions)
+        hd = combine_datasets(cfg, fs, output_filepaths, combined_outputs_fp)
     return combined_outputs_fp, hd
-
-
 
 
 
@@ -849,7 +973,8 @@ def run_iterative_generation(
     lower_score_field: str = "lower_score",
     higher_score_field: str = "higher_score",
     temps: List[float] = [0.6, 0.8, 1.0, 1.2, 1.4, 1.6],
-) -> str:
+    return_seeds: bool = True
+):
     """
     Runs iterative generation jobs, combines the outputs, and returns the combined output filepath.
     """
@@ -886,6 +1011,9 @@ def run_iterative_generation(
         all_gen_args = temp_sampling_gen_args
         output_filenames = [f"{output_filename_prefix}_temp{temp}_{cfg.generation_sampling_num_return_sequences}seqs.jsonl" for temp in temps]
 
+    seeds_filenames = [f'seeds_{output_filename}' for output_filename in output_filenames]
+    seeds_filepaths = [f"{model_dir}/{seeds_fn}" for seeds_fn in seeds_filenames]
+    
     output_filepaths = [f"{model_dir}/{output_fn}" for output_fn in output_filenames]
     combined_outputs_fp = f"{model_dir}/{output_filename_prefix}.jsonl"
     slurm_dump_dir = f"{cfg.local_output_dir}/slurm_logs"
@@ -913,7 +1041,10 @@ def run_iterative_generation(
         ]
         wait_for_slurm_jobs_to_complete(job_submissions)
         hd = combine_datasets(cfg, fs, output_filepaths, combined_outputs_fp)
-    return combined_outputs_fp, hd
+    if return_seeds:
+        return combined_outputs_fp, hd, seeds_filepaths
+    else:
+        return combined_outputs_fp, hd
 
 
 def get_temperatures(
@@ -978,6 +1109,8 @@ def main(cfg: DictConfig):
     ga_data_dir = generate_ga_dataset(cfg, file_client)
     logger.info(f"GA dataset dir: {ga_data_dir}")
 
+    ## Running list of all model paths
+    all_model_paths = []
 
     '''If run_gpt: Pretrain model on unpaired sequences from genetic algorithm'''
     train_from_scratch = hasattr(cfg, "initial_model_config")
@@ -990,11 +1123,11 @@ def main(cfg: DictConfig):
             model_dir=cfg.initial_model,
             train_from_scratch=train_from_scratch,
         )
-        curr_model = gpt_dir
-        logger.info(f"GPT model dir: {curr_model}")
+        all_model_paths.append(gpt_dir)
+        logger.info(f"GPT model dir: {all_model_paths[-1]}")
     else:
-        curr_model = cfg.initial_model
-        logger.info(f"Initial model dir: {curr_model}")
+        all_model_paths.append(cfg.initial_model)
+        logger.info(f"Initial model dir: {all_model_paths[-1]}")
 
     
     ## (Abandoned this step, due to issues with unconditional sampling) 
@@ -1005,7 +1138,7 @@ def main(cfg: DictConfig):
     #     # combined_marge_dataset_fp,
     #     ga_data_dir,
     #     ga_data_dir,
-    #     model_dir=curr_model,
+    #     model_dir=all_model_paths[-1],
     #     particle_field="particle",
     #     score_field="score",
     #     temps=[1.0],
@@ -1021,10 +1154,10 @@ def main(cfg: DictConfig):
     # temps = [1.0]
     temps = [0.6, 0.8, 1.0, 1.2, 1.4, 1.6]
 
-    for i in tqdm(range(cfg.num_init_sft_rounds), desc="SFT iterations"):
+    for i in tqdm(range(cfg.num_init_sft_rounds), desc="SFT Initialization Iterations"):
         n = cfg.num_labels_after_first_round if i > 0 else None
         sft_dataset_fp = create_propen_sft_dataset(
-            cfg, file_client, prev_round_outputs_fp, filename_prefix=f"sft_init_r{i}_", n=n
+            cfg, file_client, prev_round_outputs_fp, filename_prefix=f"sft_init_r{i}_", n=n, initial_sft=True
         )
         combined_sft_dataset_fp = combine_new_with_old_datasets(
             cfg, file_client, all_prev_sft_datasets, sft_dataset_fp
@@ -1032,7 +1165,7 @@ def main(cfg: DictConfig):
         logger.info(f"SFT dataset path: {combined_sft_dataset_fp}")
         all_prev_sft_datasets.append(sft_dataset_fp)
 
-        train_from_scratch = curr_model == cfg.initial_model and hasattr(
+        train_from_scratch = all_model_paths[-1] == cfg.initial_model and hasattr(
             cfg, "initial_model_config"
         )
         sft_dir = train_initial_sft(
@@ -1041,13 +1174,13 @@ def main(cfg: DictConfig):
             combined_sft_dataset_fp,
             ga_data_dir,
             initial_sft_run_name=f"{cfg.run_name}_sft_init_r{i}",
-            model_dir=curr_model,
+            model_dir=all_model_paths[-1],
             train_from_scratch=train_from_scratch,
         )
         
 
         logger.info(f"Trained initial SFT model: {sft_dir}")
-        curr_model = sft_dir
+        all_model_paths.append(sft_dir)
 
         # Take best checkpoint of trained model and get calibrated best likelihood range
 
@@ -1059,7 +1192,7 @@ def main(cfg: DictConfig):
         else:
             ## At last init iteration, use only temp=1.0 for sampling initial calibration data
             temps = [1.0]
-        iter_gen_outputs, hd = run_initial_generation(
+        iter_gen_outputs, hd, seeds_filepaths = run_initial_generation(
             cfg,
             file_client,
             combined_sft_dataset_fp,
@@ -1071,27 +1204,38 @@ def main(cfg: DictConfig):
             lower_score_field="lower_score",
             temps=temps,
         )
-        breakpoint()
+        # breakpoint()
+        prev_hd = hd
+        logger.info(f"Iterative generations output path: {iter_gen_outputs}")
         
         if i < cfg.num_init_sft_rounds - 1:
-            prev_hd = hd
-            logger.info(f"Iterative generations output path: {iter_gen_outputs}")
             prev_round_outputs_fp = iter_gen_outputs
     
 
-    # '''Split last batch of generated outputs into training and calibration data'''
-    # iter_gen_outputs_pd = pd.read_json(iter_gen_outputs)
-
-
+    '''Split last batch of generated outputs into training and calibration data'''
+    train_df, train_output_path, cal_df, cal_output_path = \
+        train_cal_split_gen_outputs(cfg, iter_gen_outputs, sft_dir)
+    prev_round_outputs_fp = train_output_path ## Hereon, prev_round_outputs_fp will only contain training data
+    logger.info(f"train_r0 output path: {train_output_path}")
+    logger.info(f"cal_r0 output path: {cal_output_path}")
 
     
 
+    ## Lists storing seeds and models used for policy improvement (pi)
+    if len(seeds_filepaths) > 1:
+        ## Should have len(seeds_filepaths)==1 for now, for simpler implementation
+        logger.info(f"Warning: len(seeds_filepaths)={len(seeds_filepaths)}>1")
+    pi_seeds_filepaths_list = [seeds_filepaths[-1]]
+    pi_model_fp_list = [all_model_paths[-1]]
+    # pi_model_dirs_list = [sft_dir]
+
+
     '''Policy Improvement Outer Loop, with Policy Control Inner Loop'''
-    for i in tqdm(range(cfg.num_sft_rounds), desc="SFT iterations"):
+    for i in tqdm(range(cfg.num_sft_rounds), desc="SFT Policy Improvement Iterations"):
         n = cfg.num_labels_after_first_round if i > 0 else None
         # n = cfg.num_labels_after_first_round
         sft_dataset_fp = create_propen_sft_dataset(
-            cfg, file_client, prev_round_outputs_fp, filename_prefix=f"sft_r{i}_20250901", n=n
+            cfg, file_client, prev_round_outputs_fp, filename_prefix=f"sft_r{i}", n=n
         )
         combined_sft_dataset_fp = combine_new_with_old_datasets(
             cfg, file_client, all_prev_sft_datasets, sft_dataset_fp
@@ -1099,7 +1243,7 @@ def main(cfg: DictConfig):
         logger.info(f"SFT dataset path: {combined_sft_dataset_fp}")
         all_prev_sft_datasets.append(sft_dataset_fp)
 
-        train_from_scratch = curr_model == cfg.initial_model and hasattr(
+        train_from_scratch = all_model_paths[-1] == cfg.initial_model and hasattr(
             cfg, "initial_model_config"
         )
         sft_dir = train_sft(
@@ -1107,18 +1251,20 @@ def main(cfg: DictConfig):
             file_client,
             combined_sft_dataset_fp,
             ga_data_dir,
-            sft_run_name=f"{cfg.run_name}_sft_r{i}_20250901",
-            model_dir=curr_model,
+            sft_run_name=f"{cfg.run_name}_sft_r{i}",
+            model_dir=all_model_paths[-1],
             train_from_scratch=train_from_scratch,
         )
         
 
         logger.info(f"Trained SFT model: {sft_dir}")
-        curr_model = sft_dir
+        all_model_paths.append(sft_dir)
 
         ## TO DO: Conformal Policy Control
 
-        # Take best checkpoint of trained model and get calibrated best likelihood range
+
+
+
 
         if cfg.temperature_scaling:
             temps = get_temperatures(cfg, file_client, sft_dir, prev_hd)
@@ -1127,7 +1273,7 @@ def main(cfg: DictConfig):
             temps = [1.0]
         # breakpoint()
         logger.info(f"temps: {temps}")
-        iter_gen_outputs, hd = run_iterative_generation(
+        iter_gen_outputs, hd, seeds_filepaths = run_iterative_generation(
             cfg,
             file_client,
             combined_sft_dataset_fp,
@@ -1141,7 +1287,39 @@ def main(cfg: DictConfig):
         )
         prev_hd = hd
         logger.info(f"Iterative generations output path: {iter_gen_outputs}")
-        prev_round_outputs_fp = iter_gen_outputs
+
+
+        if len(seeds_filepaths) > 1:
+            ## Should have len(seeds_filepaths)==1 for now, for simpler implementation
+            logger.info(f"Warning: len(seeds_filepaths)={len(seeds_filepaths)}>1")
+        pi_seeds_filepaths_list.append(seeds_filepaths[-1])
+        pi_model_fp_list.append(all_model_paths[-1])
+        # pi_model_dirs_list.append(sft_dir)
+
+        ## Contrastive generation to get test point weight
+        # breakpoint()
+        contrast_gen_outputs, hd = run_contrastive_generation(
+            cfg,
+            file_client,
+            data_fp_list=pi_seeds_filepaths_list,
+            data_dir=ga_data_dir,
+            model_dir_list=pi_model_fp_list,
+            particle_field= "higher_score_particle",
+            score_field= "score",
+            temps=[1.0],
+        )
+        # breakpoint()
+
+
+
+        '''Split last batch of generated outputs into training and calibration data'''
+        train_df, train_output_path, cal_df, cal_output_path = \
+            train_cal_split_gen_outputs(cfg, iter_gen_outputs, sft_dir)
+        prev_round_outputs_fp = train_output_path ## Hereon, prev_round_outputs_fp will only contain training data
+        logger.info(f"train_r0 output path: {train_output_path}")
+        logger.info(f"cal_r0 output path: {cal_output_path}")
+
+        # prev_round_outputs_fp = iter_gen_outputs
 
     all_prev_pref_datasets = []
     prev_hd = None
@@ -1160,13 +1338,13 @@ def main(cfg: DictConfig):
         dpo_dir = train_dpo(
             cfg,
             file_client,
-            curr_model,
+            all_model_paths[-1],
             combined_dpo_dataset_fp,
             ga_data_dir,
             run_name=f"{cfg.run_name}_dpo_r{i}",
         )
         logger.info(f"DPO model trained in {dpo_dir}.")
-        curr_model = dpo_dir
+        all_model_paths.append(dpo_dir)
 
         temps = get_temperatures(cfg, file_client, dpo_dir, prev_hd)
         iter_gen_outputs, hd = run_iterative_generation(
@@ -1207,13 +1385,13 @@ def main(cfg: DictConfig):
         marge_dir = train_marge(
             cfg,
             file_client,
-            curr_model,
+            all_model_paths[-1],
             combined_marge_dataset_fp,
             ga_data_dir,
             run_name=f"{cfg.run_name}_marge_r{i}",
         )
         logger.info(f"MargE model trained in {marge_dir}.")
-        curr_model = marge_dir
+        all_model_paths.append(marge_dir)
 
         temps = get_temperatures(cfg, file_client, marge_dir, prev_hd)
         # temps = [1.0]
