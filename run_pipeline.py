@@ -208,21 +208,32 @@ def gpt_model_already_trained(
     return None
 
 
-def train_cal_split_gen_outputs(cfg: DictConfig, gen_outputs : str, sft_dir : str):
-    iter_gen_outputs_df = pd.read_json(gen_outputs, orient="records", lines=True)
+def train_cal_split_gen_outputs(cfg: DictConfig, gen_outputs : str, sft_dir : str, sample_num_cal: int = None, sample_num_train: int = None):
+    gen_outputs_df = pd.read_json(gen_outputs, orient="records", lines=True)
     output_filename_suffix = f"gens_likelihood_{cfg.iterative_generation.args.sample_size}sample_{cfg.iterative_generation.args.max_iterations}iter"
 
-    ## Training data
-    train_df = iter_gen_outputs_df.sample(frac=cfg.train_frac, random_state=cfg.random_seed)
-    train_output_path = os.path.join(sft_dir, f'train_r0_{output_filename_suffix}.jsonl')
-    train_df.to_json(train_output_path, orient="records", lines=True)
-
-    ## Cal data
-    cal_df = iter_gen_outputs_df.drop(train_df.index)
+    ## Cal data (sample exchangeably, without replacement, from generated samples)
+    if sample_num_cal is not None and len(gen_outputs_df) >= 2*sample_num_cal:
+        ## If want to sample desired number, and 2x that desired number is available
+        cal_df = gen_outputs_df.sample(n=sample_num_cal, random_state=cfg.random_seed)
+    else:
+        cal_df = gen_outputs_df.sample(frac=cfg.cal_frac, random_state=cfg.random_seed)
     cal_output_path = os.path.join(sft_dir, f'cal_r0_{output_filename_suffix}.jsonl')
     cal_df.to_json(cal_output_path, orient="records", lines=True)
 
-    return train_df, train_output_path, cal_df, cal_output_path
+
+    ## Training data (sample exchangeably, w/o replacement, from *non-cal, deduplicated* generated samples)
+    non_cal_gen_outputs_df = gen_outputs_df.drop(cal_df.index) ## non cal
+    non_cal_gen_outputs_df_unique = non_cal_gen_outputs_df.drop_duplicates(subset=["particle"]) ## de-duplicate
+    if sample_num_train is not None and len(non_cal_gen_outputs_df_unique) >= sample_num_train:
+        train_df = non_cal_gen_outputs_df_unique.sample(n=sample_num_train, random_state=cfg.random_seed)
+    else:
+        train_df = non_cal_gen_outputs_df_unique.sample(frac=cfg.train_frac_from_non_cal, random_state=cfg.random_seed)
+    train_output_path = os.path.join(sft_dir, f'train_r0_{output_filename_suffix}.jsonl')
+    train_df.to_json(train_output_path, orient="records", lines=True)
+
+
+    return cal_df, cal_output_path, train_df, train_output_path
 
 
 def train_gpt(
@@ -651,6 +662,7 @@ def train_marge(
     return return_path
 
 
+
 def combine_datasets(
     cfg: DictConfig, fs: LocalOrS3Client, input_fps: List[str], output_fp: str
 ):
@@ -868,7 +880,7 @@ def run_initial_generation(
         wait_for_slurm_jobs_to_complete(job_submissions)
         hd = combine_datasets(cfg, fs, output_filepaths, combined_outputs_fp)
     if return_seeds:
-        return combined_outputs_fp, hd, seeds_filepaths
+        return combined_outputs_fp, output_filepaths, hd, seeds_filepaths
     else:
         return combined_outputs_fp, hd
 
@@ -1042,7 +1054,7 @@ def run_iterative_generation(
         wait_for_slurm_jobs_to_complete(job_submissions)
         hd = combine_datasets(cfg, fs, output_filepaths, combined_outputs_fp)
     if return_seeds:
-        return combined_outputs_fp, hd, seeds_filepaths
+        return combined_outputs_fp, output_filepaths, hd, seeds_filepaths
     else:
         return combined_outputs_fp, hd
 
@@ -1192,7 +1204,7 @@ def main(cfg: DictConfig):
         else:
             ## At last init iteration, use only temp=1.0 for sampling initial calibration data
             temps = [1.0]
-        iter_gen_outputs, hd, seeds_filepaths = run_initial_generation(
+        init_gen_outputs_combined, init_gen_outputs_list, hd, seeds_filepaths = run_initial_generation(
             cfg,
             file_client,
             combined_sft_dataset_fp,
@@ -1206,18 +1218,20 @@ def main(cfg: DictConfig):
         )
         # breakpoint()
         prev_hd = hd
-        logger.info(f"Iterative generations output path: {iter_gen_outputs}")
+        # logger.info(f"Iterative generations output path: {init_gen_outputs_combined}")
+        # logger.info(f"init_gen_outputs_combined: {init_gen_outputs_combined}")
+        # logger.info(f"init_gen_outputs_list: {init_gen_outputs_list}")        
         
         if i < cfg.num_init_sft_rounds - 1:
-            prev_round_outputs_fp = iter_gen_outputs
+            prev_round_outputs_fp = init_gen_outputs_combined
     
-
     '''Split last batch of generated outputs into training and calibration data'''
-    train_df, train_output_path, cal_df, cal_output_path = \
-        train_cal_split_gen_outputs(cfg, iter_gen_outputs, sft_dir)
+    cal_df, cal_output_path, train_df, train_output_path = \
+        train_cal_split_gen_outputs(cfg, init_gen_outputs_list[0], sft_dir, sample_num_cal=cfg.num_cal_init, sample_num_train=cfg.num_train_pi_sft0)
     prev_round_outputs_fp = train_output_path ## Hereon, prev_round_outputs_fp will only contain training data
-    logger.info(f"train_r0 output path: {train_output_path}")
-    logger.info(f"cal_r0 output path: {cal_output_path}")
+    logger.info(f"cal_r0 (n_cal0={len(cal_df)}) output path: {cal_output_path}")
+    logger.info(f"train_r0 (n_tr0={len(train_df)}) output path: {train_output_path}")
+    # breakpoint()
 
     
 
@@ -1273,7 +1287,7 @@ def main(cfg: DictConfig):
             temps = [1.0]
         # breakpoint()
         logger.info(f"temps: {temps}")
-        iter_gen_outputs, hd, seeds_filepaths = run_iterative_generation(
+        iter_gen_outputs_combined, iter_gen_outputs_list, hd, seeds_filepaths = run_iterative_generation(
             cfg,
             file_client,
             combined_sft_dataset_fp,
@@ -1286,7 +1300,9 @@ def main(cfg: DictConfig):
             temps=temps,
         )
         prev_hd = hd
-        logger.info(f"Iterative generations output path: {iter_gen_outputs}")
+
+        logger.info(f"iter_gen_outputs_combined: {iter_gen_outputs_combined}")
+        logger.info(f"iter_gen_outputs_list: {iter_gen_outputs_list}")
 
 
         if len(seeds_filepaths) > 1:
@@ -1313,11 +1329,11 @@ def main(cfg: DictConfig):
 
 
         '''Split last batch of generated outputs into training and calibration data'''
-        train_df, train_output_path, cal_df, cal_output_path = \
-            train_cal_split_gen_outputs(cfg, iter_gen_outputs, sft_dir)
+        cal_df, cal_output_path, train_df, train_output_path = \
+            train_cal_split_gen_outputs(cfg, iter_gen_outputs_list[0], sft_dir)
         prev_round_outputs_fp = train_output_path ## Hereon, prev_round_outputs_fp will only contain training data
-        logger.info(f"train_r0 output path: {train_output_path}")
-        logger.info(f"cal_r0 output path: {cal_output_path}")
+        logger.info(f"cal_r0 (n_cal{i}={len(cal_df)}) output path: {cal_output_path}")
+        logger.info(f"train_r0 (n_tr{i}={len(train_df)}) output path: {train_output_path}")
 
         # prev_round_outputs_fp = iter_gen_outputs
 

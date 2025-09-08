@@ -2,7 +2,7 @@ log_level: info
 run_name: smaller_pythia
 parent_output_dir: s3://prescient-pcluster-data/prinstea/llome/parent_output_20250908_moreSFT #_20250901_evol0.5 #/data/bucket/prinstea/llome/parent_output
 local_output_dir: /homefs/home/prinstea/llome/local_output_20250908_moreSFT #_20250901_evol0.5
-overwrite_ga: True ## If False, will only run genetic algorithm when output file does not already exist.
+overwrite_ga: False ## If False, will only run genetic algorithm when output file does not already exist.
 overwrite_gpt: False ## If False, will only run GPT pretraining when output file does not already exist.
 overwrite_initial_sft: True ## If False, will only run SFT when output file does not already exist.
 overwrite_sft: True ## If False, will only run SFT when output file does not already exist.
@@ -39,7 +39,11 @@ path_to_repo: null # /scratch/ac5968/llome
 
 ## Conformal policy control params
 random_seed: 0 ## For train/cal set splits
-train_frac: 0.9 ## Fraction of generated outputs to place in training data (rather than calibration) at each time
+num_cal_init: 200 ## Num of calibration samples to draw from original "safe" policy (if available)
+num_train_pi_sft0: 200 ## Num of training samples to use in first policy improvement (if available)
+cal_frac: 0.1 ## Fraction of generated outputs to place in calibration data (rather than training) at each time
+train_frac_from_non_cal: 0.5 ## Fraction of *non-cal, deduplicated* generated outputs to place in training data (rather than calibration) at each time
+
 
 # # Only include this section if the initial model should be trained from scratch!
 # initial_model_config:
