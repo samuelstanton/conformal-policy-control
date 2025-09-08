@@ -120,27 +120,29 @@ def run_iterative_generation(cfg: DictConfig, logger: logging.Logger = None):
         os.path.join(cfg.output_dir, f'seeds_{cfg.output_filename}'), orient="records", lines=True
     )
 
-    ## all_trajectories : A list of lists; each sublist is a trajectory 
-    ## Each individual trajectory is initialized with a different input seed
-    all_trajectories = [
-        [
-            {
-                "particle": ex[cfg.lower_score_particle_field],
-                "score": ex[cfg.lower_score_field],
-                "input_particle": None,
-                "input_score": None,
-                "seed_score": ex[cfg.lower_score_field],
-                "in_dataset": True,
-                "iter": 0,
-                "loglikelihood": None,
-                "num_particles_generated": 0,
-                "hamming_distance": None,
-            },
-        ]
-        for ex in ds
-    ]
+    # ## all_trajectories : A list of lists; each sublist is a trajectory 
+    # all_trajectories = [
+    #     [
+    #         {
+    #             "particle": ex[cfg.lower_score_particle_field],
+    #             "score": ex[cfg.lower_score_field],
+    #             "input_particle": None,
+    #             "input_score": None,
+    #             "seed_score": ex[cfg.lower_score_field],
+    #             "in_dataset": True,
+    #             "iter": 0,
+    #             "loglikelihood": None,
+    #             "num_particles_generated": 0,
+    #             "hamming_distance": None,
+    #         },
+    #     ]
+    #     for ex in ds
+    # ]
     num_particles_generated = 0
+    all_outputs = []
     for iter in tqdm(range(1, cfg.max_iterations + 1), desc="Generation iterations..."):
+
+        ## Formatting text inputs
         input_texts = formatting_texts_func_edit_pairs(
             input_ds,
             include_target=False,
@@ -150,6 +152,8 @@ def run_iterative_generation(cfg: DictConfig, logger: logging.Logger = None):
         logger.info(
             f"Generating texts with cfg.subsample_seeds={cfg.subsample_seeds}, len(input_texts)={len(input_texts)}, len(set(input_texts))={len(set(input_texts))}"
         )
+
+        ## Generate raw output texts
         _, output_token_ids, output_token_logps = model_client.generate_texts_batched(
             input_texts,
             batch_size=cfg.batch_size,
@@ -157,6 +161,8 @@ def run_iterative_generation(cfg: DictConfig, logger: logging.Logger = None):
             return_likelihoods=True,
             subsample_seeds=cfg.subsample_seeds
         )
+
+        ## Truncated outputs
         trunc_outputs = []
         trunc_output_logps = []
         for token_ids, token_logps in tqdm(
@@ -172,74 +178,86 @@ def run_iterative_generation(cfg: DictConfig, logger: logging.Logger = None):
         #     \nLen of input_ds before loop : {len(input_ds)}\
         #     \nLen of all_trajectories before loop : {len(all_trajectories)}"
         # )
+
+
         # store outputs and create inputs for the next iteration
         prev_input_ds = input_ds
-        input_ds = []
-        for trajectory_idx in range(len(all_trajectories)):
-            for output_idx in range(gen_config.num_return_sequences):
-                output = trunc_outputs[
-                    trajectory_idx * gen_config.num_return_sequences + output_idx
-                ]
-                output_logp = trunc_output_logps[
-                    trajectory_idx * gen_config.num_return_sequences + output_idx
-                ]
-                # logger.info(f'output : {output}')
-                output_particle_and_score = parse_particle_and_score(output, test_fn)
-                # logger.info(f'output_particle_and_score : {output_particle_and_score}')
-                num_particles_generated += 1
-                if output_particle_and_score is None:
-                    continue
-                input_particle = prev_input_ds[trajectory_idx][
-                    cfg.higher_score_particle_field
-                ]
-                hamming_dist = distance.hamming(
-                    input_particle, output_particle_and_score[0]
-                )
-                # If any of the outputs is parsable, then we continue to iteratively
-                # generate for that example.
-                all_trajectories[trajectory_idx].append(
-                    {
-                        "particle": output_particle_and_score[0],
-                        "score": output_particle_and_score[1],
-                        "input_particle": input_particle,
-                        "input_score": prev_input_ds[trajectory_idx]["score"],
-                        "seed_score": all_trajectories[trajectory_idx][0]["seed_score"],
-                        "in_dataset": tuple(output_particle_and_score[0])
-                        in dataset_particles,
-                        "iter": iter,
-                        "loglikelihood": output_logp,
-                        "num_particles_generated": num_particles_generated,
-                        "hamming_distance": hamming_dist,
-                    }
-                )
-            # Only include the highest-likelihood output in the pool for a given example
-            # in the inputs for the next round. If no particles have non-NaN log-likelihood, then
-            # use the original seed.
-            candidates = [
-                d
-                for d in all_trajectories[trajectory_idx]
-                if d["loglikelihood"] is not None
-            ]
-            if len(candidates) > 0:
-                max_likelihood_gen = max(candidates, key=lambda d: d["loglikelihood"])
-            else:
-                max_likelihood_gen = all_trajectories[trajectory_idx][0]
-            input_ds.append(
+        # input_ds = []
+        # for trajectory_idx in range(len(all_trajectories)):
+        for output_idx in range(gen_config.num_return_sequences):
+            output = trunc_outputs[output_idx]
+            output_logp = trunc_output_logps[output_idx]
+            # logger.info(f'output : {output}')
+            output_particle_and_score = parse_particle_and_score(output, test_fn)
+            # logger.info(f'output_particle_and_score : {output_particle_and_score}')
+            num_particles_generated += 1
+            if output_particle_and_score is None:
+                continue
+            # input_particle = prev_input_ds[trajectory_idx][
+            #     cfg.higher_score_particle_field
+            # ]
+            # hamming_dist = distance.hamming(
+            #     input_particle, output_particle_and_score[0]
+            # )
+
+            all_outputs.append(
                 {
-                    cfg.higher_score_particle_field: max_likelihood_gen["particle"],
-                    "score": max_likelihood_gen["score"],
+                    "particle": output_particle_and_score[0],
+                    "score": output_particle_and_score[1],
+                    "loglikelihood": output_logp,
+                    "num_particles_generated": num_particles_generated,
+                    # "hamming_distance": hamming_dist,
                 }
             )
+            # # If any of the outputs is parsable, then we continue to iteratively
+            # # generate for that example.
+            # all_trajectories[trajectory_idx].append(
+            #     {
+            #         "particle": output_particle_and_score[0],
+            #         "score": output_particle_and_score[1],
+            #         "input_particle": input_particle,
+            #         "input_score": prev_input_ds[trajectory_idx]["score"],
+            #         "seed_score": all_trajectories[trajectory_idx][0]["seed_score"],
+            #         "in_dataset": tuple(output_particle_and_score[0])
+            #         in dataset_particles,
+            #         "iter": iter,
+            #         "loglikelihood": output_logp,
+            #         "num_particles_generated": num_particles_generated,
+            #         "hamming_distance": hamming_dist,
+            #     }
+            # )
+        # Only include the highest-likelihood output in the pool for a given example
+        # in the inputs for the next round. If no particles have non-NaN log-likelihood, then
+        # use the original seed.
+        # candidates = [
+        #     d
+        #     for d in all_trajectories[trajectory_idx]
+        #     if d["loglikelihood"] is not None
+        # ]
+        # if len(candidates) > 0:
+        #     max_likelihood_gen = max(candidates, key=lambda d: d["loglikelihood"])
+        # else:
+        #     max_likelihood_gen = all_trajectories[trajectory_idx][0]
+        # input_ds.append(
+        #     {
+        #         cfg.higher_score_particle_field: max_likelihood_gen["particle"],
+        #         "score": max_likelihood_gen["score"],
+        #     }
+        # )
 
-        input_ds = datasets.Dataset.from_list(input_ds)
+        # input_ds = datasets.Dataset.from_list(input_ds)
     # Give each trajectory an ID and flatten out the list of outputs!
-    all_trajectories = [
-        {"trajectory_id": example_id, **d}
-        for example_id, trajectory in enumerate(all_trajectories)
-        for d in trajectory
-    ]
-    all_trajectories = pd.DataFrame(all_trajectories)
-    all_trajectories.to_json(
+    # all_trajectories = [
+    #     {"trajectory_id": example_id, **d}
+    #     for example_id, trajectory in enumerate(all_trajectories)
+    #     for d in trajectory
+    # ]
+    # all_trajectories = pd.DataFrame(all_trajectories)
+    # all_trajectories.to_json(
+    #     os.path.join(cfg.output_dir, cfg.output_filename), orient="records", lines=True
+    # )
+    all_outputs = pd.DataFrame(all_outputs)
+    all_outputs.to_json(
         os.path.join(cfg.output_dir, cfg.output_filename), orient="records", lines=True
     )
 

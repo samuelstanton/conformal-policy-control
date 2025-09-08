@@ -407,6 +407,190 @@ class ModelClient:
         return output_strs
 
 
+
+
+    @torch.no_grad()
+    def compute_likelihoods(
+        self,
+        inputs: List[str],
+        targets: List[str],
+        batch_size: int = 16,
+        device: str = "cuda",
+        # add_start_token: bool = True,
+        logger: logging.Logger = None,
+    ) -> List[float]:
+        # Compute length-normalized likelihoods of target tokens given the input
+        # TODO: write test to check that the logprobs match what model.generate and compute_transition_scores gives!
+        if device is not None:
+            assert device in [
+                "gpu",
+                "cpu",
+                "cuda",
+            ], "device should be in ['gpu', 'cpu', 'cuda']."
+            if device == "gpu":
+                device = "cuda"
+        else:
+            device = self.device
+
+        all_likelihoods = []
+        for start_index in tqdm(
+            range(0, len(inputs), batch_size), desc="Computing log likelihood..."
+        ):
+            end_index = min(start_index + batch_size, len(inputs))
+            batch = [
+                f"{input}{target}"
+                for input, target in zip(
+                    inputs[start_index:end_index], targets[start_index:end_index]
+                )
+            ]
+            tokenized = self._tokenize_batch(batch, max_generate_length=0).to(
+                self.device
+            )
+            outputs = self.model(**tokenized)
+            scores = outputs.logits
+            # probs = torch.exp(torch.nn.functional.log_softmax(scores, dim=-1))
+
+            ### NOTE: Think this should be log_softmax (without exp as above)
+            probs = torch.nn.functional.log_softmax(scores, dim=-1) ###
+            # logger.info(f"probs shape : {probs.shape}")
+            # get probs and mask out both padding and input tokens
+            inputs_tokenized = self._tokenize_batch(inputs[start_index:end_index])
+            input_seq_lens = inputs_tokenized.attention_mask.sum(-1)
+            input_tokens_mask = torch.LongTensor(
+                [
+                    [0 for _ in range(input_seq_lens[i].item())]
+                    + [
+                        1
+                        for _ in range(
+                            tokenized.input_ids.shape[1] - input_seq_lens[i].item()
+                        )
+                    ]
+                    for i in range(tokenized.input_ids.shape[0])
+                ]
+            ).to(self.device)
+            indexes = tokenized.input_ids[:, 1:]
+            next_token_probs = (
+                torch.gather(probs, -1, indexes.unsqueeze(-1)).squeeze(-1)
+                * tokenized.attention_mask[:, 1:]
+                * input_tokens_mask[:, 1:]
+            )
+
+            next_token_probs = next_token_probs.cpu().numpy()
+
+            targets_tokenized = self._tokenize_batch(targets[start_index:end_index])
+            targets_seq_lens = targets_tokenized.attention_mask.sum(-1).cpu().numpy()
+            avg_likelihoods = list(next_token_probs.sum(-1) / targets_seq_lens)
+            # logger.info(f"avg_likelihoods shape : {np.shape(avg_likelihoods)}")
+            # logger.info(f"seq likelihood : {list(next_token_probs.prod(-1) / targets_seq_lens)}")
+            
+            all_likelihoods.extend(avg_likelihoods)
+            # logger.info(f"all_likelihoods : {all_likelihoods}")
+
+        return all_likelihoods
+
+
+
+
+
+    @torch.no_grad()
+    def compute_likelihoods_avg(
+        self,
+        inputs: List[str],
+        targets: List[str],
+        batch_size: int = 10,
+        device: str = "cuda",
+        # add_start_token: bool = True,
+        logger: logging.Logger = None,
+    ) -> List[float]:
+        """
+        Compute likelihoods of target sequences, averaged over all provided seeds
+        """
+
+
+        # Compute length-normalized likelihoods of target tokens given the input
+        # TODO: write test to check that the logprobs match what model.generate and compute_transition_scores gives!
+        if device is not None:
+            assert device in [
+                "gpu",
+                "cpu",
+                "cuda",
+            ], "device should be in ['gpu', 'cpu', 'cuda']."
+            if device == "gpu":
+                device = "cuda"
+        else:
+            device = self.device
+
+        all_likelihoods = []
+
+        ## Looping over target sequences
+        for t, target in enumerate(tqdm(targets, desc="Computing log likelihoods averaged over inputs...")):
+            
+            log_likelihoods_target = []
+            
+            ## Looping over batches of input sequences
+            for start_index in range(0, len(inputs), batch_size):  
+                end_index = min(start_index + batch_size, len(inputs))
+
+                ## For a given target, minibatch of concatenations with subset of input prompt sequences
+                batch = [f"{input}{target}" for input in inputs[start_index:end_index]]
+
+                tokenized = self._tokenize_batch(batch, max_generate_length=0).to(
+                    self.device
+                )
+                outputs = self.model(**tokenized)
+                scores = outputs.logits
+
+                # probs = torch.exp(torch.nn.functional.log_softmax(scores, dim=-1)) ## Seems unnecessary to do exp(log(softmax)) ??
+                probs = torch.nn.functional.log_softmax(scores, dim=-1)
+
+                ## TO DO: Compute probabilities averaged over input sequences
+
+                # get probs and mask out both padding and input tokens
+                inputs_tokenized = self._tokenize_batch(inputs[start_index:end_index])
+                input_seq_lens = inputs_tokenized.attention_mask.sum(-1)
+                input_tokens_mask = torch.LongTensor(
+                    [
+                        [0 for _ in range(input_seq_lens[i].item())]
+                        + [
+                            1
+                            for _ in range(
+                                tokenized.input_ids.shape[1] - input_seq_lens[i].item()
+                            )
+                        ]
+                        for i in range(tokenized.input_ids.shape[0])
+                    ]
+                ).to(self.device)
+                indexes = tokenized.input_ids[:, 1:]
+                next_token_probs = (
+                    torch.gather(probs, -1, indexes.unsqueeze(-1)).squeeze(-1)
+                    * tokenized.attention_mask[:, 1:]
+                    * input_tokens_mask[:, 1:]
+                )
+                next_token_probs = next_token_probs.cpu().numpy()
+                targets_tokenized = self._tokenize_batch(targets[start_index:end_index])
+                targets_seq_lens = targets_tokenized.attention_mask.sum(-1).cpu().numpy()
+                log_likelihoods_batch = list(next_token_probs.sum(-1) / targets_seq_lens)
+
+                log_likelihoods_target.extend(log_likelihoods_batch)
+
+                # seq_log_likelihoods = list(next_token_probs.prod(-1) / targets_seq_lens)
+                # all_log_likelihoods.extend(avg_log_likelihoods)
+                logger.info(f"log_likelihoods_target len : {len(log_likelihoods_target)}")
+
+            logger.info(f"np.exp(log_likelihoods_target) : {np.exp(log_likelihoods_target)}")
+            all_likelihoods.append(np.exp(log_likelihoods_target).mean())
+            logger.info(f"seq likelihood : {all_likelihoods[-1]}")
+            logger.info(f"len(all_likelihoods) : {len(all_likelihoods)}")
+            
+                
+        return all_likelihoods
+
+
+
+
+
+
+
     ### NOTE: Had attempted modifying this function for unconditional generation, wasn't working so reverted to 
     ### original version below this commented-out block
     # @torch.no_grad()
@@ -661,73 +845,3 @@ class ModelClient:
     #         return decoded_outputs, [float(sum(per_step_log_ratios))]
     #     return decoded_outputs
 
-
-
-
-    @torch.no_grad()
-    def compute_likelihoods(
-        self,
-        inputs: List[str],
-        targets: List[str],
-        batch_size: int = 16,
-        device: str = "cuda",
-        # add_start_token: bool = True,
-        logger: logging.Logger = None,
-    ) -> List[float]:
-        # Compute length-normalized likelihoods of target tokens given the input
-        # TODO: write test to check that the logprobs match what model.generate and compute_transition_scores gives!
-        if device is not None:
-            assert device in [
-                "gpu",
-                "cpu",
-                "cuda",
-            ], "device should be in ['gpu', 'cpu', 'cuda']."
-            if device == "gpu":
-                device = "cuda"
-        else:
-            device = self.device
-
-        all_likelihoods = []
-        for start_index in tqdm(
-            range(0, len(inputs), batch_size), desc="Computing log likelihood..."
-        ):
-            end_index = min(start_index + batch_size, len(inputs))
-            batch = [
-                f"{input}{target}"
-                for input, target in zip(
-                    inputs[start_index:end_index], targets[start_index:end_index]
-                )
-            ]
-            tokenized = self._tokenize_batch(batch, max_generate_length=0).to(
-                self.device
-            )
-            outputs = self.model(**tokenized)
-            scores = outputs.logits
-            probs = torch.exp(torch.nn.functional.log_softmax(scores, dim=-1))
-            # get probs and mask out both padding and input tokens
-            inputs_tokenized = self._tokenize_batch(inputs[start_index:end_index])
-            input_seq_lens = inputs_tokenized.attention_mask.sum(-1)
-            input_tokens_mask = torch.LongTensor(
-                [
-                    [0 for _ in range(input_seq_lens[i].item())]
-                    + [
-                        1
-                        for _ in range(
-                            tokenized.input_ids.shape[1] - input_seq_lens[i].item()
-                        )
-                    ]
-                    for i in range(tokenized.input_ids.shape[0])
-                ]
-            ).to(self.device)
-            indexes = tokenized.input_ids[:, 1:]
-            next_token_probs = (
-                torch.gather(probs, -1, indexes.unsqueeze(-1)).squeeze(-1)
-                * tokenized.attention_mask[:, 1:]
-                * input_tokens_mask[:, 1:]
-            )
-            next_token_probs = next_token_probs.cpu().numpy()
-            targets_tokenized = self._tokenize_batch(targets[start_index:end_index])
-            targets_seq_lens = targets_tokenized.attention_mask.sum(-1).cpu().numpy()
-            avg_likelihoods = list(next_token_probs.sum(-1) / targets_seq_lens)
-            all_likelihoods.extend(avg_likelihoods)
-        return all_likelihoods

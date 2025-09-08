@@ -1,13 +1,13 @@
 log_level: info
 run_name: smaller_pythia
-parent_output_dir: s3://prescient-pcluster-data/prinstea/llome/parent_output_20250904_moreSFT_10s #_20250901_evol0.5 #/data/bucket/prinstea/llome/parent_output
-local_output_dir: /homefs/home/prinstea/llome/local_output_20250904_moreSFT_10s #_20250901_evol0.5
-overwrite_ga: False ## If False, will only run genetic algorithm when output file does not already exist.
+parent_output_dir: s3://prescient-pcluster-data/prinstea/llome/parent_output_20250908_moreSFT #_20250901_evol0.5 #/data/bucket/prinstea/llome/parent_output
+local_output_dir: /homefs/home/prinstea/llome/local_output_20250908_moreSFT #_20250901_evol0.5
+overwrite_ga: True ## If False, will only run genetic algorithm when output file does not already exist.
 overwrite_gpt: False ## If False, will only run GPT pretraining when output file does not already exist.
-overwrite_initial_sft: False ## If False, will only run SFT when output file does not already exist.
-overwrite_sft: False ## If False, will only run SFT when output file does not already exist.
-overwrite_initg: False ## If False, will only run initial generation when output file does not already exist.
-overwrite_ig: False ## If False, will only run iterative generation when output file does not already exist.
+overwrite_initial_sft: True ## If False, will only run SFT when output file does not already exist.
+overwrite_sft: True ## If False, will only run SFT when output file does not already exist.
+overwrite_initg: True ## If False, will only run initial generation when output file does not already exist.
+overwrite_ig: True ## If False, will only run iterative generation when output file does not already exist.
 overwrite_cg: False ## If False, will only run contrastive generation when output file does not already exist.
 
 overwrite: False  # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
@@ -22,7 +22,8 @@ run_iter_gen: True
 run_contrast_gen: False ## Whether to run contrastive generation
 # run_uncon_gen: True ## Whether to run unconditional generation from initial density model
 run_propen_dpo_dataset_formatting: True
-generation_sampling_num_return_sequences: 10
+init_generation_sampling_num_return_sequences: 10 #10 ## Number of sequences to sample at each intialization generation stage
+generation_sampling_num_return_sequences: 10 #10 ## Number of sequences to sample at each iterative generation (policy improvement) stage
 unconditional_sampling_num_return_sequences: 10 ## Number of sequences to sample from density model, for initial CP cal
 num_labels_after_first_round: 2000 # num. of labels to use in all rounds after the first
 proportion_of_old_data: 0.0  # proportion of the training dataset that will contain old data
@@ -38,7 +39,7 @@ path_to_repo: null # /scratch/ac5968/llome
 
 ## Conformal policy control params
 random_seed: 0 ## For train/cal set splits
-train_frac: 0.5 ## Fraction of generated outputs to place in training data (rather than calibration) at each time
+train_frac: 0.9 ## Fraction of generated outputs to place in training data (rather than calibration) at each time
 
 # # Only include this section if the initial model should be trained from scratch!
 # initial_model_config:
@@ -57,7 +58,7 @@ train_frac: 0.5 ## Fraction of generated outputs to place in training data (rath
 #   vocab_size: 512
 
 num_dpo_rounds: 0
-num_init_sft_rounds: 10
+num_init_sft_rounds: 5 #10
 num_sft_rounds: 30
 num_marge_rounds: 0
 
@@ -226,7 +227,7 @@ gpt:
 initial_sft:
   args:
     training_args:
-      num_train_epochs: 10
+      num_train_epochs: 5 #10
       seed: 0
       eval_steps: 0.1
       save_steps: 0.2
@@ -418,7 +419,7 @@ iterative_generation:
     subsample_seeds: True ## Whether to subsample input seeds (with replacement), or to iterate through all of them
     sanity_check: False
     sample_size: 10 #10 #100 #200  # initial number of seeds to use for iterative generation
-    max_iterations: 1 #10
+    max_iterations: 100 #10
     log_level: info
     seed: 0
     test_fn_type: "ehrlich"  # [ehrlich, mt_fuji]
@@ -434,7 +435,8 @@ iterative_generation:
     open_mode: "append"
     export: "ALL"
     time: "48:00:00"
-    mem: "100GB"
+    mem: "200GB" #"100GB"
+    nodelist: "b200-st-b200-[2-10,13-15,23,40-41],b200-st-b200-2-[2-3,9,65,69-83]" #"b200-st-b200-41"
     # gres: "gpu:1"
     # account: "cds"
 

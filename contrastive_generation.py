@@ -229,12 +229,14 @@ def run_contrastive_generation(cfg: DictConfig, logger: logging.Logger = None):
     ## Populate input_texts_lists: a list of lists, each containing input prompts for each model.
     input_ds_list = []
     input_texts_list = []
+
     for input_fp in cfg.data_path_list:
         input_df = pd.read_json(input_fp, orient="records", lines=True)
         # logger.info(f"input_df["score"] : {input_df["score"]}")
         # logger.info(f"input_df["higher_score_particle"] : {input_df["higher_score_particle"]}")
+        
         input_ds_list.append(datasets.Dataset.from_pandas(input_df))
-        input_texts_list.append(formatting_texts_func_plain_pairs_higher(input_ds_list[-1]))
+        input_texts_list.append(formatting_texts_func_single_seq(input_ds_list[-1]))
         ## May need to / want to write a new 'formatting_texts_func_single_sequences', to do job of 'formatting_texts_func_edit_pairs' for seed files
 
 

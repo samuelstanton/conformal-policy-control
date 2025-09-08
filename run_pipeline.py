@@ -817,7 +817,7 @@ def run_initial_generation(
     temp_sampling_gen_args = [
         f"generation_config.do_sample=True generation_config.num_beams=1 "
         + f"+generation_config.temperature={temp} "
-        + f"generation_config.num_return_sequences={cfg.generation_sampling_num_return_sequences} "
+        + f"generation_config.num_return_sequences={cfg.init_generation_sampling_num_return_sequences} "
         + f"batch_size={cfg.sampling_gen_batch_size} "
         for temp in temps
     ]
@@ -826,13 +826,13 @@ def run_initial_generation(
         output_filenames = [
             f"{output_filename_prefix}_greedy.jsonl",
             *[
-                f"{output_filename_prefix}_temp{temp}_{cfg.generation_sampling_num_return_sequences}seqs.jsonl"
+                f"{output_filename_prefix}_temp{temp}_{cfg.init_generation_sampling_num_return_sequences}seqs.jsonl"
                 for temp in temps
             ],
         ]
     else:
         all_gen_args = temp_sampling_gen_args
-        output_filenames = [f"{output_filename_prefix}_temp{temp}_{cfg.generation_sampling_num_return_sequences}seqs.jsonl" for temp in temps]
+        output_filenames = [f"{output_filename_prefix}_temp{temp}_{cfg.init_generation_sampling_num_return_sequences}seqs.jsonl" for temp in temps]
 
     seeds_filenames = [f'seeds_{output_filename}' for output_filename in output_filenames]
     seeds_filepaths = [f"{model_dir}/{seeds_fn}" for seeds_fn in seeds_filenames]
@@ -1026,7 +1026,7 @@ def run_iterative_generation(
                 logger.info(f"{model_dir}/{output_fn} already exists. Skipping...")
             else:
                 all_args.append(f"{args} {gen_args} output_filename={output_fn}")
-        all_python_commands = [f"python -m iterative_generation {a}" for a in all_args]
+        all_python_commands = [f"python -m iterative_generation2 {a}" for a in all_args]
         slurm_kwargs = OmegaConf.to_container(cfg.iterative_generation.slurm_args)
         slurm_kwargs["job_name"] = "iter_gen"
         job_submissions = [

@@ -1,13 +1,16 @@
-data_path: s3://prescient-pcluster-data/prinstea/llome/parent_output_20250904_moreSFT_10s/smaller_pythia/smaller_pythia_sft_r1/gens_likelihood_10sample_100iter.jsonl
+input_data_path: null #s3://prescient-pcluster-data/prinstea/llome/parent_output_20250908_moreSFT/smaller_pythia/smaller_pythia_sft_r1/seeds_gens_likelihood_10sample_100iter_temp1.0_10seqs.jsonl
+target_data_path: null #s3://prescient-pcluster-data/prinstea/llome/parent_output_20250908_moreSFT/smaller_pythia/smaller_pythia_sft_r1/cal_r0_gens_likelihood_10sample_100iter.jsonl
+
 #s3://prescient-pcluster-data/prinstea/llome/parent_output_20250901_temp1/smaller_pythia/sft_r9_20250901dense_neighborhood_pairs_xthres0.3_maxinfs0.1_30nn.jsonl
 #s3://prescient-data-dev/sandbox/chena78/pipelines/sft_EleutherAI/pythia-2.8b_ehrlich_s8_d128_m8_l8_r10_s2000_ga_steps30_p1000_pm0.005_xthres0.25/sft_r0_dense_neighborhood_pairs_xthres0.25_maxinfs0.1_30nn.jsonl
-model_name_or_path: s3://prescient-pcluster-data/prinstea/llome/parent_output_20250904_moreSFT_10s/smaller_pythia/smaller_pythia_sft_r8_20250901/
+model_name_or_path: null #s3://prescient-pcluster-data/prinstea/llome/parent_output_20250908_moreSFT/smaller_pythia/smaller_pythia_sft_r1/
+model_timestep: null ## Model's time index
 #s3://prescient-data-dev/sandbox/chena78/pipelines/sft_EleutherAI/pythia-2.8b_ehrlich_s8_d128_m8_l8_r10_s2000_ga_steps30_p1000_pm0.005_xthres0.25/sft_EleutherAI/pythia-2.8b_ehrlich_s8_d128_m8_l8_r10_s2000_ga_steps30_p1000_pm0.005_xthres0.25_sft_r0/
 batch_size: 10 #4
-output_dir: s3://prescient-pcluster-data/prinstea/llome/parent_output_20250901_temp1/smaller_pythia/smaller_pythia_sft_r9_20250901/
+output_dir: null #s3://prescient-pcluster-data/prinstea/llome/parent_output_20250908_moreSFT/smaller_pythia/smaller_pythia_sft_r1/
 #s3://prescient-data-dev/sandbox/chena78/pipelines/sft_EleutherAI/pythia-2.8b_ehrlich_s8_d128_m8_l8_r10_s2000_ga_steps30_p1000_pm0.005_xthres0.25/sft_EleutherAI/pythia-2.8b_ehrlich_s8_d128_m8_l8_r10_s2000_ga_steps30_p1000_pm0.005_xthres0.25_sft_r0/
-output_filename: scores_of_training_data.jsonl
+output_filename: scores_of_cal_data.jsonl
 log_level: info
-input_field: "higher_score_particle"
-target_field: "lower_score_particle"
+# input_field: "higher_score_particle"
+# target_field: "lower_score_particle"
 sanity_check: False

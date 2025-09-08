@@ -604,14 +604,31 @@ def formatting_texts_func_plain_pairs(
         output_texts.append(f"Score: {score:.2f}\nParticle: {particles_str}")
     return output_texts
 
+
 ## Same as 'formatting_texts_func_plain_pairs', except calling for "higher_score_particle"
-def formatting_texts_func_plain_pairs_higher(
+def formatting_texts_func_single_seq(
     examples: Mapping[str, Iterable[Any]]
 ) -> List[str]:
+
+    ## Get particle_field and score_field
+    if "higher_score_particle" in examples:
+        particle_field = "higher_score_particle"
+    elif "lower_score_particle" in examples:
+        particle_field = "lower_score_particle"
+    else:
+        particle_field = "particle"
+    if "higher_score_particle_score" in examples:
+        score_field = "higher_score_particle_score"
+    elif "lower_score_particle_score" in examples:
+        score_field = "lower_score_particle_score"
+    else:
+        score_field = "score"
+
+    ## 
     output_texts = []
-    for i in range(len(examples["score"])):
-        score = examples["score"][i]
-        particles = [int(x) for x in examples["higher_score_particle"][i]]
+    for i in range(len(examples[score_field])):
+        score = examples[score_field][i]
+        particles = [int(x) for x in examples[particle_field][i]]
         particles_str = json.dumps(particles)
         output_texts.append(f"Score: {score:.2f}\nParticle: {particles_str}")
     return output_texts
