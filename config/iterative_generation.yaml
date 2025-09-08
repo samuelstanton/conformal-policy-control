@@ -19,6 +19,7 @@ lower_score_particle_field: "lower_score_particle" # "chosen"
 lower_score_field: "lower_score" # "chosen_score"
 higher_score_field: "higher_score" # "prompt_score"
 subsample_seeds: True ## Whether to subsample input seeds (with replacement), or to iterate through all of them
+first_iter: False ## Whether is first iteration, in which case will use sampling_method="uniform"
 
 generation_config:  # greedy decoding
   _target_: transformers.GenerationConfig

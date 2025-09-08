@@ -79,11 +79,16 @@ def run_iterative_generation(cfg: DictConfig, logger: logging.Logger = None):
     # Now dedupe the lower_score_particles and sample the lowest scoring examples from the data
     # to use as seeds for generation
     # df = df.drop_duplicates(subset=[cfg.lower_score_particle_field])
-    if cfg.sampling_method == "best_scoring":
+    logger.info(f"sample_size : {cfg.sample_size}")
+    if cfg.sampling_method == "best_scoring" and not cfg.first_iter:
+        ## Only use best_scoring if is not first iteration
+        logger.info(f"sampling_method : best_scoring")
         df = df.sort_values(by=[cfg.lower_score_field], ascending=True)[
             : cfg.sample_size
         ]
-    elif cfg.sampling_method == "uniform":
+    elif cfg.sampling_method == "uniform" or cfg.first_iter:
+        ## Always use "uniform" for first iteration, for a safe initial policy
+        logger.info(f"sampling_method : uniform")
         df = df.sample(n=min(len(df), cfg.sample_size), random_state=cfg.seed)
     elif cfg.sampling_method == "combination":
         half_sample_size = int(cfg.sample_size / 2)
@@ -140,6 +145,7 @@ def run_iterative_generation(cfg: DictConfig, logger: logging.Logger = None):
     # ]
     num_particles_generated = 0
     all_outputs = []
+    logger.info(f"cfg.max_iterations : {cfg.max_iterations}")
     for iter in tqdm(range(1, cfg.max_iterations + 1), desc="Generation iterations..."):
 
         ## Formatting text inputs

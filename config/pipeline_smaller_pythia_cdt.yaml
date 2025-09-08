@@ -419,14 +419,19 @@ contrastive_generation:
 
 iterative_generation:
   num_jobs: 6  # number of generation jobs to parallelize this over
+  init_args:
+    ## init args just for first iteration:
+    sample_size: 20
+    max_iterations: 200
+    sampling_method: "uniform"
   args:
-    subsample_seeds: True ## Whether to subsample input seeds (with replacement), or to iterate through all of them
     sanity_check: False
-    sample_size: 10 #10 #100 #200  # initial number of seeds to use for iterative generation
-    max_iterations: 100 #10
     log_level: info
     seed: 0
     test_fn_type: "ehrlich"  # [ehrlich, mt_fuji]
+    subsample_seeds: True ## Whether to subsample input seeds (with replacement), or to iterate through all of them
+    sample_size: 10 #10 #100 #200  # initial number of seeds to use for iterative generation
+    max_iterations: 100 #10
     sampling_method: "best_scoring" ## Method for selecting seeds # "uniform", "combination", "best_scoring"
     generation_config:
       max_new_tokens: 512
@@ -440,7 +445,7 @@ iterative_generation:
     export: "ALL"
     time: "48:00:00"
     mem: "200GB" #"100GB"
-    nodelist: "b200-st-b200-[2-10,13-15,23,40-41],b200-st-b200-2-[2-3,9,65,69-83]" #"b200-st-b200-41"
+    # nodelist: "b200-st-b200-[2-10,13-15,23,40-41],b200-st-b200-2-[2-3,9,65,69-83]" #"b200-st-b200-41"
     # gres: "gpu:1"
     # account: "cds"
 
