@@ -611,18 +611,18 @@ def formatting_texts_func_single_seq(
 ) -> List[str]:
 
     ## Get particle_field and score_field
-    if "higher_score_particle" in examples:
-        particle_field = "higher_score_particle"
-    elif "lower_score_particle" in examples:
-        particle_field = "lower_score_particle"
+    if 'higher_score_particle' in examples:
+        particle_field = 'higher_score_particle'
+    elif 'lower_score_particle' in examples:
+        particle_field = 'lower_score_particle'
     else:
-        particle_field = "particle"
-    if "higher_score_particle_score" in examples:
-        score_field = "higher_score_particle_score"
-    elif "lower_score_particle_score" in examples:
-        score_field = "lower_score_particle_score"
+        particle_field = 'particle'
+    if 'higher_score_particle_score' in examples:
+        score_field = 'higher_score_particle_score'
+    elif 'lower_score_particle_score' in examples:
+        score_field = 'lower_score_particle_score'
     else:
-        score_field = "score"
+        score_field = 'score'
 
     ## 
     output_texts = []

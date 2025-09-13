@@ -210,10 +210,10 @@ def gpt_model_already_trained(
 
 def train_cal_split_gen_outputs(cfg: DictConfig, gen_outputs : str, sft_dir : str, sample_num_cal: int = None, sample_num_train: int = None, first_iter: bool = False):
     gen_outputs_df = pd.read_json(gen_outputs, orient="records", lines=True)
-    if first_iter:
-        output_filename_suffix = f"gens_likelihood_{cfg.iterative_generation.init_args.sample_size}sample_{cfg.iterative_generation.init_args.max_iterations}iter"
-    else:
-        output_filename_suffix = f"gens_likelihood_{cfg.iterative_generation.args.sample_size}sample_{cfg.iterative_generation.args.max_iterations}iter"
+    # if first_iter:
+    #     output_filename_suffix = f"gens_likelihood_{cfg.iterative_generation.init_args.sample_size}sample_{cfg.iterative_generation.init_args.max_iterations}iter"
+    # else:
+    # output_filename_suffix = f"gens_likelihood_{cfg.iterative_generation.args.sample_size}sample_{cfg.iterative_generation.args.max_iterations}iter"
 
     ## Cal data (sample exchangeably, without replacement, from generated samples)
     if sample_num_cal is not None and len(gen_outputs_df) >= 2*sample_num_cal:
@@ -221,7 +221,8 @@ def train_cal_split_gen_outputs(cfg: DictConfig, gen_outputs : str, sft_dir : st
         cal_df = gen_outputs_df.sample(n=sample_num_cal, random_state=cfg.random_seed)
     else:
         cal_df = gen_outputs_df.sample(frac=cfg.cal_frac, random_state=cfg.random_seed)
-    cal_output_path = os.path.join(sft_dir, f'cal_r0_{output_filename_suffix}.jsonl')
+    cal_output_path = os.path.join(sft_dir, "cal_gens_all_likelihoods_temp1.0.jsonl")
+    # cal_output_path = "cal_gens_all_likelihoods_temp1.0.jsonl"
     cal_df.to_json(cal_output_path, orient="records", lines=True)
 
 
@@ -232,7 +233,8 @@ def train_cal_split_gen_outputs(cfg: DictConfig, gen_outputs : str, sft_dir : st
         train_df = non_cal_gen_outputs_df_unique.sample(n=sample_num_train, random_state=cfg.random_seed)
     else:
         train_df = non_cal_gen_outputs_df_unique.sample(frac=cfg.train_frac_from_non_cal, random_state=cfg.random_seed)
-    train_output_path = os.path.join(sft_dir, f'train_r0_{output_filename_suffix}.jsonl')
+    train_output_path = os.path.join(sft_dir, "train_gens_all_likelihoods_temp1.0.jsonl")
+    # train_output_path = "cal_gens_all_likelihoods_temp1.0.jsonl"
     train_df.to_json(train_output_path, orient="records", lines=True)
 
 
@@ -518,6 +520,8 @@ def train_sft(
     return return_path
 
 
+
+
 def train_dpo(
     cfg: DictConfig,
     fs: LocalOrS3Client,
@@ -543,6 +547,9 @@ def train_dpo(
         else:
             trained_model_dir = None
             logger.info(f"Config says to overwrite model (cfg.overwrite={cfg.overwrite}), Continuing to train...")
+    
+    slurm_dump_dir = f"{cfg.local_output_dir}/slurm_logs"
+
     os.makedirs(slurm_dump_dir, exist_ok=True)
     args = f"--config-name=pythia-2.8b-dpo "
     args += " ".join(get_all_strs_from_nested_dict(cfg["dpo"]["args"])) + " "
@@ -1079,6 +1086,89 @@ def run_iterative_generation(
         return combined_outputs_fp, hd
 
 
+
+def run_compute_liks_all_models_and_cal_data(
+    cfg: DictConfig,
+    fs: LocalOrS3Client,
+    data_fp_list: List[str],
+    prev_cal_data_fp_list: List[str],
+    # data_dir: str,
+    model_dir_list: List[str],
+    target_fp: str,
+    # particle_field: str = "higher_score_particle",
+    # score_field: str = "score",
+    temps: List[float] = [1.0],
+) -> str:
+    """
+    Runs compute_likelihoods_all_models jobs.
+    """
+    opt_str = " ".join(
+        get_all_strs_from_nested_dict(cfg["compute_likelihooods_all_models"]["args"])
+    )
+
+
+    ## Format lists of strings into a long string that python and hydra can interpret
+    data_fp_list_str = f"\\['{data_fp_list[0]}'"
+    model_dir_list_str = f"\\['{model_dir_list[0]}'"
+    if len(prev_cal_data_fp_list) > 0:
+        prev_cal_data_fp_list_str = f"\\['{prev_cal_data_fp_list[0]}'"
+    else:
+        prev_cal_data_fp_list_str = "\\["
+    for i in range(1, len(data_fp_list)):
+        data_fp_list_str += f",'{data_fp_list[i]}'"
+        model_dir_list_str += f",'{model_dir_list[i]}'"
+        if i < len(prev_cal_data_fp_list):
+            prev_cal_data_fp_list_str += f",'{prev_cal_data_fp_list[i]}'"
+    data_fp_list_str += "\\]"
+    model_dir_list_str += "\\]"
+    prev_cal_data_fp_list_str += "\\]"
+
+
+    args = f"{opt_str} input_data_path_list={data_fp_list_str} target_data_path={target_fp} prev_target_data_path_list={prev_cal_data_fp_list_str} model_name_or_path_list={model_dir_list_str} output_dir={model_dir_list[-1]} "
+    # args += f"test_fn_fp={data_dir}/ehrlich.jsonl "
+    # args += f"particle_field={particle_field} "
+    # args += f"score_field={score_field} "
+    args += f"sanity_check={cfg.sanity_check} "
+
+    output_filename_prefix = f"cal_gens_all_likelihoods"
+    # greedy_decoding_gen_args = f"generation_config.do_sample=False generation_config.num_beams=1 batch_size={cfg.greedy_gen_batch_size}"
+    temp_sampling_gen_args = [f"generation_config.temperature={temp} " for temp in temps]
+
+    all_gen_args = temp_sampling_gen_args
+    output_filenames = [f"{output_filename_prefix}_temp{temp}.jsonl" for temp in temps]
+
+    output_filepaths = [f"{model_dir_list[-1]}/{output_fn}" for output_fn in output_filenames]
+    # combined_outputs_fp = f"{model_dir_list[-1]}/{output_filename_prefix}.jsonl"
+    slurm_dump_dir = f"{cfg.local_output_dir}/slurm_logs"
+    os.makedirs(slurm_dump_dir, exist_ok=True)
+    hd = None
+    if cfg.run_compute_liks_all_models_and_cal_data:
+        all_args = []
+        for gen_args, output_fn in zip(all_gen_args, output_filenames):
+            if not cfg.overwrite_cmp_lik_all and fs.exists(f"{model_dir_list[-1]}/{output_fn}"):
+                logger.info(f"{model_dir_list[-1]}/{output_fn} already exists. Skipping likelihoods computation...")
+            else:
+                logger.info(f"Running compute_likelihoods all models...")
+                all_args.append(f"{args} {gen_args} output_filename={output_fn}")
+        all_python_commands = [f"python -m compute_liks_all_models_and_cal_data {a}" for a in all_args]
+        slurm_kwargs = OmegaConf.to_container(cfg.compute_likelihooods_all_models.slurm_args)
+        slurm_kwargs["job_name"] = "comp_lik_all_models"
+        job_submissions = [
+            submit_cmd_to_slurm(
+                py_cmd,
+                slurm_dump_dir,
+                blocking=False,
+                path_to_repo=cfg.path_to_repo,
+                **slurm_kwargs,
+            )
+            for py_cmd in all_python_commands
+        ]
+        wait_for_slurm_jobs_to_complete(job_submissions)
+        # hd = combine_datasets(cfg, fs, output_filepaths, combined_outputs_fp)
+    return output_filepaths, hd
+
+
+
 def get_temperatures(
     cfg: DictConfig,
     fs: LocalOrS3Client,
@@ -1184,7 +1274,7 @@ def main(cfg: DictConfig):
     prev_round_outputs_fp = f"{ga_data_dir}/plain_pairs.jsonl" ## TO DO: Update this to samples from GPT model
     prev_hd = None
     # temps = [1.0]
-    temps = [0.6, 0.8, 1.0, 1.2, 1.4, 1.6]
+    # temps = [0.6, 0.8, 1.0, 1.2, 1.4, 1.6]
 
     for i in tqdm(range(cfg.num_init_sft_rounds), desc="SFT Initialization Iterations"):
         n = cfg.num_labels_after_first_round if i > 0 else None
@@ -1216,71 +1306,65 @@ def main(cfg: DictConfig):
 
         # Take best checkpoint of trained model and get calibrated best likelihood range
 
-        if cfg.temperature_scaling:
-            temps = get_temperatures(cfg, file_client, sft_dir, prev_hd)
+        # if cfg.temperature_scaling:
+        #     temps = get_temperatures(cfg, file_client, sft_dir, prev_hd)
         # elif i < cfg.num_init_sft_rounds - 1:
             ## At all iterations except the last, use a range of temperatures to stabilize pre-training
-        temps = [0.6, 0.8, 1.0, 1.2, 1.4, 1.6]
-        init_gen_outputs_combined, init_gen_outputs_list, hd, seeds_filepaths = run_initial_generation(
-            cfg,
-            file_client,
-            combined_sft_dataset_fp,
-            ga_data_dir,
-            sft_dir,
-            higher_score_particle_field="higher_score_particle",
-            lower_score_particle_field="lower_score_particle",
-            higher_score_field="higher_score",
-            lower_score_field="lower_score",
-            temps=temps,
-        )
+        # temps = [0.6, 0.8, 1.0, 1.2, 1.4, 1.6]
+        # init_gen_outputs_combined, init_gen_outputs_list, hd, seeds_filepaths = run_initial_generation(
+        #     cfg,
+        #     file_client,
+        #     combined_sft_dataset_fp,
+        #     ga_data_dir,
+        #     sft_dir,
+        #     higher_score_particle_field="higher_score_particle",
+        #     lower_score_particle_field="lower_score_particle",
+        #     higher_score_field="higher_score",
+        #     lower_score_field="lower_score",
+        #     temps=temps,
+        # )
 
         # else:
             ## Last iteration of initialization SFT/generation will be treated as the first iterative generation/policy improvement iteration, which is "safer"
             # temps = [1.0] ## At last init iteration, use only temp=1.0 for sampling initial calibration data
-            # init_gen_outputs_combined, init_gen_outputs_list, hd, seeds_filepaths = run_iterative_generation(
-            #     cfg,
-            #     file_client,
-            #     combined_sft_dataset_fp,
-            #     ga_data_dir,
-            #     sft_dir,
-            #     higher_score_particle_field="higher_score_particle",
-            #     lower_score_particle_field="lower_score_particle",
-            #     higher_score_field="higher_score",
-            #     lower_score_field="lower_score",
-            #     temps=temps,
-            # )
 
-        # breakpoint()
-        prev_hd = hd
-        # logger.info(f"Iterative generations output path: {init_gen_outputs_combined}")
-        # logger.info(f"init_gen_outputs_combined: {init_gen_outputs_combined}")
-        # logger.info(f"init_gen_outputs_list: {init_gen_outputs_list}")        
-        
-        # if i < cfg.num_init_sft_rounds - 1:
-        prev_round_outputs_fp = init_gen_outputs_combined
-    
-
-    # logger.info(f"cal_r0 (n_cal0={len(cal_df)}) output path: {cal_output_path}")
-    # logger.info(f"train_r0 (n_tr0={len(train_df)}) output path: {train_output_path}")
-    # breakpoint()
+    ## Generate examples from initial safe policy
+    iter_gen_outputs_combined, iter_gen_outputs_list, hd, seeds_filepaths = run_iterative_generation(
+        cfg,
+        file_client,
+        combined_sft_dataset_fp,
+        ga_data_dir,
+        sft_dir,
+        higher_score_particle_field="higher_score_particle",
+        lower_score_particle_field="lower_score_particle",
+        higher_score_field="higher_score",
+        lower_score_field="lower_score",
+        temps=[1.0],
+        first_iter = True
+    )
 
     
 
-    ## Lists storing seeds and models used for policy improvement (pi)
-    # if len(seeds_filepaths) > 1:
-    #     ## Should have len(seeds_filepaths)==1 for now, for simpler implementation
-    #     logger.info(f"Warning: len(seeds_filepaths)={len(seeds_filepaths)}>1")
-    # pi_seeds_filepaths_list = [seeds_filepaths[-1]]
-    # pi_model_fp_list = [all_model_paths[-1]]
-    pi_seeds_filepaths_list = []
-    pi_model_fp_list = []
-    # pi_model_dirs_list = [sft_dir]
+    '''Split last batch of generated outputs into training and calibration data'''
+    cal_df, cal_output_path, train_df, train_output_path = \
+        train_cal_split_gen_outputs(cfg, iter_gen_outputs_list[0], sft_dir, first_iter=True)
+    prev_round_outputs_fp = train_output_path ## Hereon, prev_round_outputs_fp will only contain training data
+    # cal_data_fp_list.append(cal_output_path)
+    logger.info(f"cal_r0 (n_cal{i}={len(cal_df)}) output path: {cal_output_path}")
+    logger.info(f"train_r0 (n_tr{i}={len(train_df)}) output path: {train_output_path}")
 
 
-    '''Policy Improvement Outer Loop, with Policy Control Inner Loop'''
-    for i in tqdm(range(cfg.num_sft_rounds), desc="SFT Policy Improvement Iterations"):
-        n = cfg.num_labels_after_first_round if i > 0 else None
-        # n = cfg.num_labels_after_first_round
+    pi_seeds_filepaths_list = [seeds_filepaths[-1]]
+    pi_model_fp_list = [all_model_paths[-1]]
+    cal_data_fp_list = [cal_output_path]
+
+
+
+
+    '''SFT Policy Improvement Outer Loop, with Policy Control Inner Loop'''
+    for i in tqdm(range(1, cfg.num_sft_rounds), desc="SFT Policy Improvement Iterations"):
+        # n = cfg.num_labels_after_first_round if i > 0 else None
+        n = cfg.num_labels_after_first_round
         sft_dataset_fp = create_propen_sft_dataset(
             cfg, file_client, prev_round_outputs_fp, filename_prefix=f"sft_r{i}", n=n
         )
@@ -1317,7 +1401,7 @@ def main(cfg: DictConfig):
             temps = [1.0]
         # breakpoint()
         logger.info(f"temps: {temps}")
-        first_iter = True if i == 0 else False ## bool: whether is first iteration (if so, will select seeds uniformly for a safe initial policy)
+        # first_iter = True if i == 0 else False ## bool: whether is first iteration (if so, will select seeds uniformly for a safe initial policy)
         iter_gen_outputs_combined, iter_gen_outputs_list, hd, seeds_filepaths = run_iterative_generation(
             cfg,
             file_client,
@@ -1328,8 +1412,7 @@ def main(cfg: DictConfig):
             lower_score_particle_field="lower_score_particle",
             higher_score_field="higher_score",
             lower_score_field="lower_score",
-            temps=temps,
-            first_iter=first_iter
+            temps=temps
         )
         prev_hd = hd
 
@@ -1358,90 +1441,239 @@ def main(cfg: DictConfig):
         )
         # breakpoint()
 
+    
+
         '''Split last batch of generated outputs into training and calibration data'''
         cal_df, cal_output_path, train_df, train_output_path = \
-            train_cal_split_gen_outputs(cfg, iter_gen_outputs_list[0], sft_dir, first_iter=first_iter)
+            train_cal_split_gen_outputs(cfg, iter_gen_outputs_list[0], sft_dir)
         prev_round_outputs_fp = train_output_path ## Hereon, prev_round_outputs_fp will only contain training data
+        cal_data_fp_list.append(cal_output_path)
         logger.info(f"cal_r0 (n_cal{i}={len(cal_df)}) output path: {cal_output_path}")
         logger.info(f"train_r0 (n_tr{i}={len(train_df)}) output path: {train_output_path}")
 
+
+        cal_all_liks_fp, hd = run_compute_liks_all_models_and_cal_data(
+            cfg,
+            file_client,
+            data_fp_list=pi_seeds_filepaths_list,
+            prev_cal_data_fp_list=cal_data_fp_list[:-1],
+            # data_dir=ga_data_dir,
+            model_dir_list=pi_model_fp_list,
+            target_fp=cal_output_path,
+            # particle_field= "higher_score_particle",
+            # score_field= "score",
+            temps=[1.0],
+        )
+        logger.info(f"cal_all_liks_fp : {cal_all_liks_fp}")
+
+
         # prev_round_outputs_fp = iter_gen_outputs
 
-    all_prev_pref_datasets = []
-    prev_hd = None
-    for i in tqdm(range(cfg.num_dpo_rounds), desc="DPO iterations"):
+
+    all_prev_dpo_datasets = []
+    '''DPO Policy Improvement Outer Loop, with Policy Control Inner Loop'''
+    for i in tqdm(range(1, cfg.num_dpo_rounds), desc="DPO Policy Improvement Iterations"):
+        # n = cfg.num_labels_after_first_round if i > 0 else None
         n = cfg.num_labels_after_first_round
         dpo_dataset_fp = create_propen_preference_dataset(
-            cfg, file_client, prev_round_outputs_fp, filename_prefix=f"dpo_r{i}_", n=n
+            cfg, file_client, prev_round_outputs_fp, filename_prefix=f"dpo_r{i}", n=n
         )
         combined_dpo_dataset_fp = combine_new_with_old_datasets(
-            cfg, file_client, all_prev_pref_datasets, dpo_dataset_fp
+            cfg, file_client, all_prev_dpo_datasets, dpo_dataset_fp
         )
-        logger.info(f"DPO training dataset: {combined_dpo_dataset_fp}")
-        all_prev_pref_datasets.append(dpo_dataset_fp)
+        logger.info(f"DPO dataset path: {combined_dpo_dataset_fp}")
+        all_prev_dpo_datasets.append(dpo_dataset_fp)
 
-        # Consider picking last checkpoint that generated >90% parsable particles w/ correct length and vals in range
+        train_from_scratch = all_model_paths[-1] == cfg.initial_model and hasattr(
+            cfg, "initial_model_config"
+        )
         dpo_dir = train_dpo(
             cfg,
             file_client,
-            all_model_paths[-1],
-            combined_dpo_dataset_fp,
-            ga_data_dir,
+            data_fp=combined_dpo_dataset_fp,
+            ga_data_dir=ga_data_dir,
             run_name=f"{cfg.run_name}_dpo_r{i}",
+            ref_model_path=all_model_paths[-1],
+            # train_from_scratch=train_from_scratch,
         )
-        logger.info(f"DPO model trained in {dpo_dir}.")
+
+
+        
+
+        logger.info(f"Trained SFT model: {dpo_dir}")
         all_model_paths.append(dpo_dir)
 
-        temps = get_temperatures(cfg, file_client, dpo_dir, prev_hd)
-        iter_gen_outputs, hd = run_iterative_generation(
+        ## TO DO: Conformal Policy Control
+
+
+        if cfg.temperature_scaling:
+            temps = get_temperatures(cfg, file_client, dpo_dir, prev_hd)
+        else:
+            # temps = [0.6, 0.8, 1.0, 1.2, 1.4, 1.6]
+            temps = [1.0]
+        # breakpoint()
+        logger.info(f"temps: {temps}")
+        # first_iter = True if i == 0 else False ## bool: whether is first iteration (if so, will select seeds uniformly for a safe initial policy)
+        iter_gen_outputs_combined, iter_gen_outputs_list, hd, seeds_filepaths = run_iterative_generation(
             cfg,
             file_client,
             combined_dpo_dataset_fp,
             ga_data_dir,
             dpo_dir,
-            higher_score_particle_field="prompt",
-            lower_score_particle_field="chosen",
-            higher_score_field="prompt_score",
-            lower_score_field="chosen_score",
-            temps=temps,
+            higher_score_particle_field="higher_score_particle",
+            lower_score_particle_field="lower_score_particle",
+            higher_score_field="higher_score",
+            lower_score_field="lower_score",
+            temps=temps
         )
         prev_hd = hd
-        logger.info(
-            f"Iterative generations output path (from DPO model): {iter_gen_outputs}"
-        )
-        prev_round_outputs_fp = iter_gen_outputs
 
-    prev_hd = None
-    for i in tqdm(range(cfg.num_marge_rounds), desc="MargE iterations"):
-        n = cfg.num_labels_after_first_round
-        marge_dataset_fp = create_propen_sft_dataset(
+        logger.info(f"iter_gen_outputs_combined: {iter_gen_outputs_combined}")
+        logger.info(f"iter_gen_outputs_list: {iter_gen_outputs_list}")
+
+
+        if len(seeds_filepaths) > 1:
+            ## Should have len(seeds_filepaths)==1 for now, for simpler implementation
+            logger.info(f"Warning: len(seeds_filepaths)={len(seeds_filepaths)}>1")
+        pi_seeds_filepaths_list.append(seeds_filepaths[-1])
+        pi_model_fp_list.append(all_model_paths[-1])
+        # pi_model_dirs_list.append(dpo_dir)
+
+        ## Contrastive generation to get test point weight
+        # breakpoint()
+        contrast_gen_outputs, hd = run_contrastive_generation(
             cfg,
             file_client,
-            prev_round_outputs_fp,
-            filename_prefix=f"marge_r{i}_",
-            n=n,
-            allow_same_score_pair=False,
+            data_fp_list=pi_seeds_filepaths_list,
+            data_dir=ga_data_dir,
+            model_dir_list=pi_model_fp_list,
+            particle_field= "higher_score_particle",
+            score_field= "score",
+            temps=[1.0],
+        )
+        # breakpoint()
+
+    
+
+        '''Split last batch of generated outputs into training and calibration data'''
+        cal_df, cal_output_path, train_df, train_output_path = \
+            train_cal_split_gen_outputs(cfg, iter_gen_outputs_list[0], dpo_dir)
+        prev_round_outputs_fp = train_output_path ## Hereon, prev_round_outputs_fp will only contain training data
+        cal_data_fp_list.append(cal_output_path)
+        logger.info(f"cal_r0 (n_cal{i}={len(cal_df)}) output path: {cal_output_path}")
+        logger.info(f"train_r0 (n_tr{i}={len(train_df)}) output path: {train_output_path}")
+
+
+        cal_all_liks_fp, hd = run_compute_liks_all_models_and_cal_data(
+            cfg,
+            file_client,
+            data_fp_list=pi_seeds_filepaths_list,
+            prev_cal_data_fp_list=cal_data_fp_list[:-1],
+            # data_dir=ga_data_dir,
+            model_dir_list=pi_model_fp_list,
+            target_fp=cal_output_path,
+            # particle_field= "higher_score_particle",
+            # score_field= "score",
+            temps=[1.0],
+        )
+        logger.info(f"cal_all_liks_fp : {cal_all_liks_fp}")
+
+
+
+
+    
+
+    # all_prev_pref_datasets = []
+    # prev_hd = None
+    # for i in tqdm(range(cfg.num_dpo_rounds), desc="DPO iterations"):
+    #     n = cfg.num_labels_after_first_round
+    #     dpo_dataset_fp = create_propen_preference_dataset(
+    #         cfg, file_client, prev_round_outputs_fp, filename_prefix=f"dpo_r{i}_", n=n
+    #     )
+    #     combined_dpo_dataset_fp = combine_new_with_old_datasets(
+    #         cfg, file_client, all_prev_pref_datasets, dpo_dataset_fp
+    #     )
+    #     logger.info(f"DPO training dataset: {combined_dpo_dataset_fp}")
+    #     all_prev_pref_datasets.append(dpo_dataset_fp)
+
+    #     # Consider picking last checkpoint that generated >90% parsable particles w/ correct length and vals in range
+    #     dpo_dir = train_dpo(
+    #         cfg,
+    #         file_client,
+    #         all_model_paths[-1],
+    #         combined_dpo_dataset_fp,
+    #         ga_data_dir,
+    #         run_name=f"{cfg.run_name}_dpo_r{i}",
+    #     )
+    #     logger.info(f"DPO model trained in {dpo_dir}.")
+    #     all_model_paths.append(dpo_dir)
+
+    #     temps = get_temperatures(cfg, file_client, dpo_dir, prev_hd)
+    #     iter_gen_outputs, hd = run_iterative_generation(
+    #         cfg,
+    #         file_client,
+    #         combined_dpo_dataset_fp,
+    #         ga_data_dir,
+    #         dpo_dir,
+    #         higher_score_particle_field="prompt",
+    #         lower_score_particle_field="chosen",
+    #         higher_score_field="prompt_score",
+    #         lower_score_field="chosen_score",
+    #         temps=temps,
+    #     )
+    #     prev_hd = hd
+    #     logger.info(
+    #         f"Iterative generations output path (from DPO model): {iter_gen_outputs}"
+    #     )
+    #     prev_round_outputs_fp = iter_gen_outputs
+
+
+
+
+    all_prev_marge_datasets = []
+    '''MARGE Policy Improvement Outer Loop, with Policy Control Inner Loop'''
+    for i in tqdm(range(1, cfg.num_marge_rounds), desc="MargE Iterations"):
+        # n = cfg.num_labels_after_first_round if i > 0 else None
+        n = cfg.num_labels_after_first_round
+        marge_dataset_fp = create_propen_sft_dataset(
+            cfg, file_client, prev_round_outputs_fp, filename_prefix=f"marge_r{i}", n=n
         )
         combined_marge_dataset_fp = combine_new_with_old_datasets(
-            cfg, file_client, all_prev_sft_datasets, marge_dataset_fp
+            cfg, file_client, all_prev_marge_datasets, marge_dataset_fp
         )
-        logger.info(f"MargE training dataset: {combined_marge_dataset_fp}")
-        all_prev_sft_datasets.append(marge_dataset_fp)
+        logger.info(f"MARGE dataset path: {combined_marge_dataset_fp}")
+        all_prev_marge_datasets.append(marge_dataset_fp)
 
+        train_from_scratch = all_model_paths[-1] == cfg.initial_model and hasattr(
+            cfg, "initial_model_config"
+        )
         marge_dir = train_marge(
             cfg,
             file_client,
-            all_model_paths[-1],
-            combined_marge_dataset_fp,
-            ga_data_dir,
+            data_fp=combined_marge_dataset_fp,
+            ga_data_dir=ga_data_dir,
             run_name=f"{cfg.run_name}_marge_r{i}",
+            ref_model_path=all_model_paths[-1],
+            # train_from_scratch=train_from_scratch,
         )
-        logger.info(f"MargE model trained in {marge_dir}.")
+
+
+
+        logger.info(f"Trained MARGE model: {marge_dir}")
         all_model_paths.append(marge_dir)
 
-        temps = get_temperatures(cfg, file_client, marge_dir, prev_hd)
-        # temps = [1.0]
-        iter_gen_outputs, hd = run_iterative_generation(
+        ## TO DO: Conformal Policy Control
+
+
+        if cfg.temperature_scaling:
+            temps = get_temperatures(cfg, file_client, marge_dir, prev_hd)
+        else:
+            # temps = [0.6, 0.8, 1.0, 1.2, 1.4, 1.6]
+            temps = [1.0]
+        # breakpoint()
+        logger.info(f"temps: {temps}")
+        # first_iter = True if i == 0 else False ## bool: whether is first iteration (if so, will select seeds uniformly for a safe initial policy)
+        iter_gen_outputs_combined, iter_gen_outputs_list, hd, seeds_filepaths = run_iterative_generation(
             cfg,
             file_client,
             combined_marge_dataset_fp,
@@ -1451,13 +1683,109 @@ def main(cfg: DictConfig):
             lower_score_particle_field="lower_score_particle",
             higher_score_field="higher_score",
             lower_score_field="lower_score",
-            temps=temps,
+            temps=temps
         )
         prev_hd = hd
-        logger.info(
-            f"Iterative generations output path (from MargE model): {iter_gen_outputs}\nAverage hamming distance: {hd}"
+
+        logger.info(f"iter_gen_outputs_combined: {iter_gen_outputs_combined}")
+        logger.info(f"iter_gen_outputs_list: {iter_gen_outputs_list}")
+
+
+        if len(seeds_filepaths) > 1:
+            ## Should have len(seeds_filepaths)==1 for now, for simpler implementation
+            logger.info(f"Warning: len(seeds_filepaths)={len(seeds_filepaths)}>1")
+        pi_seeds_filepaths_list.append(seeds_filepaths[-1])
+        pi_model_fp_list.append(all_model_paths[-1])
+        # pi_model_dirs_list.append(marge_dir)
+
+        ## Contrastive generation to get test point weight
+        # breakpoint()
+        contrast_gen_outputs, hd = run_contrastive_generation(
+            cfg,
+            file_client,
+            data_fp_list=pi_seeds_filepaths_list,
+            data_dir=ga_data_dir,
+            model_dir_list=pi_model_fp_list,
+            particle_field= "higher_score_particle",
+            score_field= "score",
+            temps=[1.0],
         )
-        prev_round_outputs_fp = iter_gen_outputs
+        # breakpoint()
+
+    
+
+        '''Split last batch of generated outputs into training and calibration data'''
+        cal_df, cal_output_path, train_df, train_output_path = \
+            train_cal_split_gen_outputs(cfg, iter_gen_outputs_list[0], marge_dir)
+        prev_round_outputs_fp = train_output_path ## Hereon, prev_round_outputs_fp will only contain training data
+        cal_data_fp_list.append(cal_output_path)
+        logger.info(f"cal_r0 (n_cal{i}={len(cal_df)}) output path: {cal_output_path}")
+        logger.info(f"train_r0 (n_tr{i}={len(train_df)}) output path: {train_output_path}")
+
+
+        cal_all_liks_fp, hd = run_compute_liks_all_models_and_cal_data(
+            cfg,
+            file_client,
+            data_fp_list=pi_seeds_filepaths_list,
+            prev_cal_data_fp_list=cal_data_fp_list[:-1],
+            # data_dir=ga_data_dir,
+            model_dir_list=pi_model_fp_list,
+            target_fp=cal_output_path,
+            # particle_field= "higher_score_particle",
+            # score_field= "score",
+            temps=[1.0],
+        )
+        logger.info(f"cal_all_liks_fp : {cal_all_liks_fp}")
+
+
+
+    # prev_hd = None
+    # for i in tqdm(range(cfg.num_marge_rounds), desc="MargE iterations"):
+    #     n = cfg.num_labels_after_first_round
+    #     marge_dataset_fp = create_propen_sft_dataset(
+    #         cfg,
+    #         file_client,
+    #         prev_round_outputs_fp,
+    #         filename_prefix=f"marge_r{i}_",
+    #         n=n,
+    #         allow_same_score_pair=False,
+    #     )
+    #     combined_marge_dataset_fp = combine_new_with_old_datasets(
+    #         cfg, file_client, all_prev_sft_datasets, marge_dataset_fp
+    #     )
+    #     logger.info(f"MargE training dataset: {combined_marge_dataset_fp}")
+    #     all_prev_sft_datasets.append(marge_dataset_fp)
+
+    #     marge_dir = train_marge(
+    #         cfg,
+    #         file_client,
+    #         all_model_paths[-1],
+    #         combined_marge_dataset_fp,
+    #         ga_data_dir,
+    #         run_name=f"{cfg.run_name}_marge_r{i}",
+    #     )
+    #     logger.info(f"MargE model trained in {marge_dir}.")
+    #     all_model_paths.append(marge_dir)
+
+    #     temps = get_temperatures(cfg, file_client, marge_dir, prev_hd)
+    #     # temps = [1.0]
+    #     iter_gen_outputs, hd = run_iterative_generation(
+    #         cfg,
+    #         file_client,
+    #         combined_marge_dataset_fp,
+    #         ga_data_dir,
+    #         marge_dir,
+    #         higher_score_particle_field="higher_score_particle",
+    #         lower_score_particle_field="lower_score_particle",
+    #         higher_score_field="higher_score",
+    #         lower_score_field="lower_score",
+    #         temps=temps,
+    #     )
+    #     prev_hd = hd
+    #     logger.info(
+    #         f"Iterative generations output path (from MargE model): {iter_gen_outputs}\nAverage hamming distance: {hd}"
+    #     )
+    #     prev_round_outputs_fp = iter_gen_outputs
 
 
 if __name__ == "__main__":

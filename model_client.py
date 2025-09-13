@@ -575,12 +575,12 @@ class ModelClient:
 
                 # seq_log_likelihoods = list(next_token_probs.prod(-1) / targets_seq_lens)
                 # all_log_likelihoods.extend(avg_log_likelihoods)
-                logger.info(f"log_likelihoods_target len : {len(log_likelihoods_target)}")
+                # logger.info(f"log_likelihoods_target len : {len(log_likelihoods_target)}")
 
-            logger.info(f"np.exp(log_likelihoods_target) : {np.exp(log_likelihoods_target)}")
+            # logger.info(f"np.exp(log_likelihoods_target) : {np.exp(log_likelihoods_target)}")
             all_likelihoods.append(np.exp(log_likelihoods_target).mean())
-            logger.info(f"seq likelihood : {all_likelihoods[-1]}")
-            logger.info(f"len(all_likelihoods) : {len(all_likelihoods)}")
+            # logger.info(f"seq likelihood : {all_likelihoods[-1]}")
+            # logger.info(f"len(all_likelihoods) : {len(all_likelihoods)}")
             
                 
         return all_likelihoods

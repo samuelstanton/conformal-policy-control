@@ -1,15 +1,15 @@
 log_level: info
 run_name: smaller_pythia
-parent_output_dir: s3://prescient-pcluster-data/prinstea/llome/parent_output_20250910_moreSFT #_20250901_evol0.5 #/data/bucket/prinstea/llome/parent_output
-local_output_dir: /homefs/home/prinstea/llome/local_output_20250910_moreSFT #_20250901_evol0.5
+parent_output_dir: s3://prescient-pcluster-data/prinstea/llome/parent_output_20250911_noInitGen #_20250901_evol0.5 #/data/bucket/prinstea/llome/parent_output
+local_output_dir: /homefs/home/prinstea/llome/local_output_20250911_noInitGen #_20250901_evol0.5
 overwrite_ga: False ## If False, will only run genetic algorithm when output file does not already exist.
 overwrite_gpt: False ## If False, will only run GPT pretraining when output file does not already exist.
 overwrite_initial_sft: False ## If False, will only run SFT when output file does not already exist.
-overwrite_sft: True ## If False, will only run SFT when output file does not already exist.
+overwrite_sft: False ## If False, will only run SFT when output file does not already exist.
 overwrite_initg: False ## If False, will only run initial generation when output file does not already exist.
-overwrite_ig: True ## If False, will only run iterative generation when output file does not already exist.
+overwrite_ig: False ## If False, will only run iterative generation when output file does not already exist.
 overwrite_cg: False ## If False, will only run contrastive generation when output file does not already exist.
-overwrite_cmp_lik_all: True ## If False, will only run compute_likelihoods_all_models when output file doesn't exist.
+overwrite_cmp_lik_all: False ## If False, will only run compute_likelihoods_all_models when output file doesn't exist.
 overwrite: True  # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
 
 run_evol_dataset_gen: True
@@ -63,15 +63,15 @@ train_frac_from_non_cal: 0.1 ## Fraction of *non-cal, deduplicated* generated ou
 #   vocab_size: 512
 
 num_dpo_rounds: 0
-num_init_sft_rounds: 10 #5 #10
-num_sft_rounds: 30
-num_marge_rounds: 0
+num_init_sft_rounds: 1 #5 #10
+num_sft_rounds: 0 #10
+num_marge_rounds: 10
 
 evol_dataset_gen:
   args:
     optimizer:
-      num_particles: 10000 #1000
-      mutation_prob: 0.005
+      num_particles: 5000 #10000 #1000
+      mutation_prob: 0.05 #0.005
     test_function:
       num_states: 32
       dim: 32
@@ -109,7 +109,7 @@ evol_dataset_gen:
 propen_dataset_formatting_sft:
   args:
     dist_x_threshold: 0.3 #0.32 #0.25
-    max_proportion_infeasible: 0.1  # the maximum proportion of the dataset that infeasible examples
+    max_proportion_infeasible: 0.05 #0.1  # the maximum proportion of the dataset that infeasible examples
                                     # or pairs containing infeasible examples can be
     distance_metric: "hamming"
     seed: 0
@@ -132,7 +132,7 @@ propen_dataset_formatting_sft:
 propen_dataset_formatting_initial_sft:
   args:
     dist_x_threshold: 0.3 #0.32 #0.25
-    max_proportion_infeasible: 0.1  # the maximum proportion of the dataset that infeasible examples
+    max_proportion_infeasible: 0.05 #0.1  # the maximum proportion of the dataset that infeasible examples
                                     # or pairs containing infeasible examples can be
     distance_metric: "hamming"
     seed: 0
@@ -152,27 +152,27 @@ propen_dataset_formatting_initial_sft:
     mail_user: "drew@cs.jhu.edu" # "ac5968@nyu.edu"
 
 
-# propen_dataset_formatting_preference:
-#   args:
-#     dist_x_threshold: 0.25
-#     max_proportion_infeasible: 0.1  # the maximum proportion of the dataset that infeasible examples
-#                                     # or pairs containing infeasible examples can be
-#     distance_metric: "hamming"
-#     seed: 0
-#     n_neighbors: 30  # how many approx. nearest neighbors to compute -- higher is more accurate but more expensive
-#     filter_by_likelihood: True
-#     likelihood_quantile_threshold: 0.6
-#     filter_by_likelihood_range: False
-#   slurm_args:
-#     nodes: 1
-#     cpus_per_task: 1
-#     ntasks_per_node: 1
-#     open_mode: "append"
-#     export: "ALL"
-#     time: "6:00:00"
-#     mem: "100GB"
-#     mail_type: "BEGIN,END,FAIL"
-#     mail_user: "drew@cs.jhu.edu" # "ac5968@nyu.edu"
+propen_dataset_formatting_preference:
+  args:
+    dist_x_threshold: 0.3 #0.25
+    max_proportion_infeasible: 0.05 #0.1  # the maximum proportion of the dataset that infeasible examples
+                                    # or pairs containing infeasible examples can be
+    distance_metric: "hamming"
+    seed: 0
+    n_neighbors: 30  # how many approx. nearest neighbors to compute -- higher is more accurate but more expensive
+    filter_by_likelihood: True
+    likelihood_quantile_threshold: 0.6
+    filter_by_likelihood_range: False
+  slurm_args:
+    nodes: 1
+    cpus_per_task: 1
+    ntasks_per_node: 1
+    open_mode: "append"
+    export: "ALL"
+    time: "6:00:00"
+    mem: "100GB"
+    mail_type: "BEGIN,END,FAIL"
+    mail_user: "drew@cs.jhu.edu" # "ac5968@nyu.edu"
 
 
 ## Config params for GPT pretraining on unpaired sequences. Similar to SFT params, except importantly w/ format_type: "plain_pairs"
@@ -285,7 +285,7 @@ initial_sft:
 sft:
   args:
     training_args:
-      num_train_epochs: 5  #5
+      num_train_epochs: 2  #5
       seed: 0
       eval_steps: 0.1
       save_steps: 0.2
@@ -474,6 +474,41 @@ compute_likelihooods_all_models:
     export: "ALL"
     time: "48:00:00"
     mem: "100GB"
+
+
+## NOTE: DPO config taken from pipeline_dpo_f2.yaml
+dpo:
+  args:
+    dpo_config:
+      learning_rate: 1e-7
+      beta: 0.4
+      gradient_accumulation_steps: 32
+      num_train_epochs: 1
+      eval_steps: 0.1
+      save_steps: 0.2
+      self_normalize_weights: True
+      reinforce_style: False
+      max_length: 512
+      max_prompt_length: 256
+      log_level: "info"
+      seed: 0
+      per_device_train_batch_size: 1
+      per_device_eval_batch_size: 8
+    test_fn_type: "ehrlich"
+    train_size: 0.95
+    max_eval_size: 100
+    generation_config:
+      max_new_tokens: 256
+  slurm_args:
+    nodes: 1
+    cpus_per_task: 2
+    ntasks_per_node: 2
+    gpus_per_node: 2
+    partition: "b200"
+    open_mode: "append"
+    export: "ALL"
+    time: "48:00:00"
+    mem: "200GB"
 
 
 marge:
