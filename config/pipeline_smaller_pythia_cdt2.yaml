@@ -9,8 +9,8 @@ overwrite_sft: False ## If False, will only run SFT when output file does not al
 overwrite_initg: False ## If False, will only run initial generation when output file does not already exist.
 overwrite_ig: False ## If False, will only run iterative generation when output file does not already exist.
 overwrite_cg: False ## If False, will only run contrastive generation when output file does not already exist.
-overwrite_cmp_lik_all: False ## If False, will only run compute_likelihoods_all_models when output file doesn't exist.
-overwrite: True  # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
+overwrite_cmp_lik_all: True ## If False, will only run compute_likelihoods_all_models when output file doesn't exist.
+overwrite: False  # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
 
 run_evol_dataset_gen: True
 run_propen_sft_dataset_formatting: True

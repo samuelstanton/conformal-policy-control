@@ -1130,14 +1130,16 @@ def run_compute_liks_all_models_and_cal_data(
     # args += f"score_field={score_field} "
     args += f"sanity_check={cfg.sanity_check} "
 
-    output_filename_prefix = f"cal_gens_all_likelihoods"
+    # output_filename_prefix = f"cal_gens_all_likelihoods"
     # greedy_decoding_gen_args = f"generation_config.do_sample=False generation_config.num_beams=1 batch_size={cfg.greedy_gen_batch_size}"
     temp_sampling_gen_args = [f"generation_config.temperature={temp} " for temp in temps]
 
     all_gen_args = temp_sampling_gen_args
-    output_filenames = [f"{output_filename_prefix}_temp{temp}.jsonl" for temp in temps]
+    # output_filenames = [f"{output_filename_prefix}_temp{temp}.jsonl" for temp in temps]
 
-    output_filepaths = [f"{model_dir_list[-1]}/{output_fn}" for output_fn in output_filenames]
+    # output_filepaths = [f"{model_dir_list[-1]}/{output_fn}" for output_fn in output_filenames]
+    output_filepaths = [target_fp]
+    output_filenames = [os.path.basename(target_fp)]
     # combined_outputs_fp = f"{model_dir_list[-1]}/{output_filename_prefix}.jsonl"
     slurm_dump_dir = f"{cfg.local_output_dir}/slurm_logs"
     os.makedirs(slurm_dump_dir, exist_ok=True)
@@ -1145,12 +1147,31 @@ def run_compute_liks_all_models_and_cal_data(
     if cfg.run_compute_liks_all_models_and_cal_data:
         all_args = []
         for gen_args, output_fn in zip(all_gen_args, output_filenames):
-            if not cfg.overwrite_cmp_lik_all and fs.exists(f"{model_dir_list[-1]}/{output_fn}"):
-                logger.info(f"{model_dir_list[-1]}/{output_fn} already exists. Skipping likelihoods computation...")
+        # for gen_args in all_gen_args:
+            
+            # file_exists = fs.exists(f"{model_dir_list[-1]}/{output_fn}")
+            file_exists = fs.exists(target_fp)
+            df = pd.read_json(target_fp, orient="records", lines=True)
+
+            ## If not overwriting, file exists, and contains updated likelihoods (for most recent model), then don't overwrite
+                ## Note: This doesn't comprehensively check whether prior files also have updated likelihood info, though should be true
+            if not cfg.overwrite_cmp_lik_all and file_exists and f"lik_r{len(model_dir_list)-1}" in df.columns:
+                logger.info(f"target_fp {target_fp} already exists with likelihoods computed. Skipping likelihoods computation...")
             else:
                 logger.info(f"Running compute_likelihoods all models...")
                 all_args.append(f"{args} {gen_args} output_filename={output_fn}")
-        all_python_commands = [f"python -m compute_liks_all_models_and_cal_data {a}" for a in all_args]
+        all_python_commands = []
+        # breakpoint()
+        if len(target_fp) > 0:
+            ## Can only run script for updating curr data if provided non-empty filepath
+            ## (so, providing empty `target_fp` allows skipping this)
+            all_python_commands.extend([f"python -m compute_liks_all_models_one_target {a}" for a in all_args])
+
+        if len(prev_cal_data_fp_list) > 0:
+            ## Can only run script for updating prev data with curr model likelihoods if provided paths to prev data
+            ## (so, providing empty `prev_cal_data_fp_list` allows skipping this)
+            all_python_commands.extend([f"python -m compute_likelihoods_one_model_all_data {a}" for a in all_args])
+        
         slurm_kwargs = OmegaConf.to_container(cfg.compute_likelihooods_all_models.slurm_args)
         slurm_kwargs["job_name"] = "comp_lik_all_models"
         job_submissions = [
@@ -1343,6 +1364,23 @@ def main(cfg: DictConfig):
         first_iter = True
     )
 
+
+    ## Initialize lists of models and seeds for policy improvement loop
+    pi_model_fp_list = [all_model_paths[-1]]
+    pi_seeds_filepaths_list = [seeds_filepaths[-1]]
+
+
+    ## Compute likelihoods for all initial generated data
+    gen_liks_fp, hd = run_compute_liks_all_models_and_cal_data(
+        cfg,
+        file_client,
+        data_fp_list=pi_seeds_filepaths_list,
+        prev_cal_data_fp_list=[],
+        model_dir_list=pi_model_fp_list,
+        target_fp=iter_gen_outputs_list[-1],
+        temps=[1.0],
+    )
+
     
 
     '''Split last batch of generated outputs into training and calibration data'''
@@ -1354,8 +1392,7 @@ def main(cfg: DictConfig):
     logger.info(f"train_r0 (n_tr{i}={len(train_df)}) output path: {train_output_path}")
 
 
-    pi_seeds_filepaths_list = [seeds_filepaths[-1]]
-    pi_model_fp_list = [all_model_paths[-1]]
+
     cal_data_fp_list = [cal_output_path]
 
 
@@ -1399,7 +1436,6 @@ def main(cfg: DictConfig):
         else:
             # temps = [0.6, 0.8, 1.0, 1.2, 1.4, 1.6]
             temps = [1.0]
-        # breakpoint()
         logger.info(f"temps: {temps}")
         # first_iter = True if i == 0 else False ## bool: whether is first iteration (if so, will select seeds uniformly for a safe initial policy)
         iter_gen_outputs_combined, iter_gen_outputs_list, hd, seeds_filepaths = run_iterative_generation(
@@ -1427,8 +1463,21 @@ def main(cfg: DictConfig):
         pi_model_fp_list.append(all_model_paths[-1])
         # pi_model_dirs_list.append(sft_dir)
 
+
+
+        ## Compute likelihoods for all initial generated data
+        gen_liks_fp, hd = run_compute_liks_all_models_and_cal_data(
+            cfg,
+            file_client,
+            data_fp_list=pi_seeds_filepaths_list,
+            prev_cal_data_fp_list=[], ## Empty because not updating previous cal data likelihoods here
+            model_dir_list=pi_model_fp_list,
+            target_fp=iter_gen_outputs_list[-1],
+            temps=[1.0],
+        )
+
+
         ## Contrastive generation to get test point weight
-        # breakpoint()
         contrast_gen_outputs, hd = run_contrastive_generation(
             cfg,
             file_client,
@@ -1439,7 +1488,6 @@ def main(cfg: DictConfig):
             score_field= "score",
             temps=[1.0],
         )
-        # breakpoint()
 
     
 
@@ -1459,7 +1507,7 @@ def main(cfg: DictConfig):
             prev_cal_data_fp_list=cal_data_fp_list[:-1],
             # data_dir=ga_data_dir,
             model_dir_list=pi_model_fp_list,
-            target_fp=cal_output_path,
+            target_fp='', ## Empty because this should already be updated #cal_output_path,
             # particle_field= "higher_score_particle",
             # score_field= "score",
             temps=[1.0],
@@ -1511,7 +1559,6 @@ def main(cfg: DictConfig):
         else:
             # temps = [0.6, 0.8, 1.0, 1.2, 1.4, 1.6]
             temps = [1.0]
-        # breakpoint()
         logger.info(f"temps: {temps}")
         # first_iter = True if i == 0 else False ## bool: whether is first iteration (if so, will select seeds uniformly for a safe initial policy)
         iter_gen_outputs_combined, iter_gen_outputs_list, hd, seeds_filepaths = run_iterative_generation(
@@ -1539,8 +1586,18 @@ def main(cfg: DictConfig):
         pi_model_fp_list.append(all_model_paths[-1])
         # pi_model_dirs_list.append(dpo_dir)
 
+        ## Compute likelihoods for all initial generated data
+        gen_liks_fp, hd = run_compute_liks_all_models_and_cal_data(
+            cfg,
+            file_client,
+            data_fp_list=pi_seeds_filepaths_list,
+            prev_cal_data_fp_list=[], ## Empty because not updating previous cal data likelihoods here
+            model_dir_list=pi_model_fp_list,
+            target_fp=iter_gen_outputs_list[-1],
+            temps=[1.0],
+        )
+
         ## Contrastive generation to get test point weight
-        # breakpoint()
         contrast_gen_outputs, hd = run_contrastive_generation(
             cfg,
             file_client,
@@ -1551,7 +1608,6 @@ def main(cfg: DictConfig):
             score_field= "score",
             temps=[1.0],
         )
-        # breakpoint()
 
     
 
@@ -1571,7 +1627,7 @@ def main(cfg: DictConfig):
             prev_cal_data_fp_list=cal_data_fp_list[:-1],
             # data_dir=ga_data_dir,
             model_dir_list=pi_model_fp_list,
-            target_fp=cal_output_path,
+            target_fp='', ## Empty because this should already be updated #cal_output_path,
             # particle_field= "higher_score_particle",
             # score_field= "score",
             temps=[1.0],
@@ -1670,7 +1726,6 @@ def main(cfg: DictConfig):
         else:
             # temps = [0.6, 0.8, 1.0, 1.2, 1.4, 1.6]
             temps = [1.0]
-        # breakpoint()
         logger.info(f"temps: {temps}")
         # first_iter = True if i == 0 else False ## bool: whether is first iteration (if so, will select seeds uniformly for a safe initial policy)
         iter_gen_outputs_combined, iter_gen_outputs_list, hd, seeds_filepaths = run_iterative_generation(
@@ -1698,8 +1753,20 @@ def main(cfg: DictConfig):
         pi_model_fp_list.append(all_model_paths[-1])
         # pi_model_dirs_list.append(marge_dir)
 
+
+        ## Compute likelihoods for all initial generated data
+        gen_liks_fp, hd = run_compute_liks_all_models_and_cal_data(
+            cfg,
+            file_client,
+            data_fp_list=pi_seeds_filepaths_list,
+            prev_cal_data_fp_list=[], ## Empty because not updating previous cal data likelihoods here
+            model_dir_list=pi_model_fp_list,
+            target_fp=iter_gen_outputs_list[-1],
+            temps=[1.0],
+        )
+
+
         ## Contrastive generation to get test point weight
-        # breakpoint()
         contrast_gen_outputs, hd = run_contrastive_generation(
             cfg,
             file_client,
@@ -1730,7 +1797,7 @@ def main(cfg: DictConfig):
             prev_cal_data_fp_list=cal_data_fp_list[:-1],
             # data_dir=ga_data_dir,
             model_dir_list=pi_model_fp_list,
-            target_fp=cal_output_path,
+            target_fp='', ## Empty because this should already be updated #cal_output_path,
             # particle_field= "higher_score_particle",
             # score_field= "score",
             temps=[1.0],
