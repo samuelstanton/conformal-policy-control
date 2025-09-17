@@ -73,7 +73,10 @@ def compute_likelihoods_all_models_one_target(cfg: DictConfig, logger: logging.L
     # logger.info(f"target_df.columns : {target_df.columns}")
     # logger.info(f"lik_col_names     : {lik_col_names}")
     # logger.info(f"all_timestep_likelihoods : {all_timestep_likelihoods}")
-    target_all_likelihoods_df = pd.DataFrame(np.c_[target_df, np.array(all_timestep_likelihoods).T], columns=np.concatenate((target_df.columns, lik_col_names)))
+
+    # target_all_likelihoods_df = pd.DataFrame(np.c_[target_df, np.array(all_timestep_likelihoods).T], columns=np.concatenate((target_df.columns, lik_col_names)))
+    target_all_likelihoods_df = pd.DataFrame(np.c_[target_df[['particle', 'score']], np.array(all_timestep_likelihoods).T], columns=['particle', 'score'] + lik_col_names)
+    logger.info(f"target_all_likelihoods_df.columns : {target_all_likelihoods_df.columns}")
     target_all_likelihoods_df.to_json(output_fp, orient="records", lines=True)
 
 

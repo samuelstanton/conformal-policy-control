@@ -6,10 +6,10 @@ overwrite_ga: False ## If False, will only run genetic algorithm when output fil
 overwrite_gpt: False ## If False, will only run GPT pretraining when output file does not already exist.
 overwrite_initial_sft: False ## If False, will only run SFT when output file does not already exist.
 overwrite_sft: False ## If False, will only run SFT when output file does not already exist.
-overwrite_initg: False ## If False, will only run initial generation when output file does not already exist.
+overwrite_initg: False #False ## If False, will only run initial generation when output file does not already exist.
 overwrite_ig: False ## If False, will only run iterative generation when output file does not already exist.
 overwrite_cg: False ## If False, will only run contrastive generation when output file does not already exist.
-overwrite_cmp_lik_all: True ## If False, will only run compute_likelihoods_all_models when output file doesn't exist.
+overwrite_cmp_lik_all: True #False #True ## If False, will only run compute_likelihoods_all_models when output file doesn't exist.
 overwrite: False  # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
 
 run_evol_dataset_gen: True
@@ -65,7 +65,7 @@ train_frac_from_non_cal: 0.1 ## Fraction of *non-cal, deduplicated* generated ou
 num_dpo_rounds: 0
 num_init_sft_rounds: 1 #5 #10
 num_sft_rounds: 0 #10
-num_marge_rounds: 10
+num_marge_rounds:  10 #10
 
 evol_dataset_gen:
   args:
@@ -422,9 +422,10 @@ iterative_generation:
   num_jobs: 6  # number of generation jobs to parallelize this over
   init_args:
     ## init args just for first iteration:
-    sample_size: 20
-    max_iterations: 200
+    sample_size: 20 #20
+    max_iterations: 200 #200
     sampling_method: "uniform"
+    seed: 0
   args:
     sanity_check: False
     log_level: info
@@ -449,6 +450,14 @@ iterative_generation:
     # nodelist: "b200-st-b200-[2-10,13-15,23,40-41],b200-st-b200-2-[2-3,9,65,69-83]" #"b200-st-b200-41"
     # gres: "gpu:1"
     # account: "cds"
+
+
+conformal_policy_control:
+  args:
+    n_grid: 100 ## Approx size of grid to search over for lik-ratio bound
+  accept_reject:
+    n_target: 1000
+
 
 
 compute_likelihooods_all_models:

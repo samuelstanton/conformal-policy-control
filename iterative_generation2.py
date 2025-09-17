@@ -71,59 +71,85 @@ def run_iterative_generation(cfg: DictConfig, logger: logging.Logger = None):
         )
         df = df.sample(n=min(10, len(df)))
 
-    # Before sampling, save all the particles as tuples in a set so that we can check whether
-    # generations are regurgitations from the training data
-    dataset_particles = set(
-        [tuple(ex[cfg.higher_score_particle_field]) for _, ex in df.iterrows()]
-    ).union(set([tuple(ex[cfg.lower_score_particle_field]) for _, ex in df.iterrows()]))
-    # Now dedupe the lower_score_particles and sample the lowest scoring examples from the data
-    # to use as seeds for generation
-    # df = df.drop_duplicates(subset=[cfg.lower_score_particle_field])
-    logger.info(f"sample_size : {cfg.sample_size}")
-    if cfg.sampling_method == "best_scoring" and not cfg.first_iter:
-        ## Only use best_scoring if is not first iteration
-        logger.info(f"sampling_method : best_scoring")
-        df = df.sort_values(by=[cfg.lower_score_field], ascending=True)[
-            : cfg.sample_size
-        ]
-    elif cfg.sampling_method == "uniform" or cfg.first_iter:
-        ## Always use "uniform" for first iteration, for a safe initial policy
-        logger.info(f"sampling_method : uniform")
-        df = df.sample(n=min(len(df), cfg.sample_size), random_state=cfg.seed)
-    elif cfg.sampling_method == "combination":
-        half_sample_size = int(cfg.sample_size / 2)
-        df = pd.concat(
+    if cfg.higher_score_field in df.columns and cfg.lower_score_field in df.columns:
+
+        # Before sampling, save all the particles as tuples in a set so that we can check whether
+        # generations are regurgitations from the training data
+        dataset_particles = set(
+            [tuple(ex[cfg.higher_score_particle_field]) for _, ex in df.iterrows()]
+        ).union(set([tuple(ex[cfg.lower_score_particle_field]) for _, ex in df.iterrows()]))
+        # Now dedupe the lower_score_particles and sample the lowest scoring examples from the data
+        # to use as seeds for generation
+        # df = df.drop_duplicates(subset=[cfg.lower_score_particle_field])
+        logger.info(f"sample_size : {cfg.sample_size}")
+        if cfg.sampling_method == "best_scoring" and not cfg.first_iter:
+            ## Only use best_scoring if is not first iteration
+            logger.info(f"sampling_method : best_scoring")
+            df = df.sort_values(by=[cfg.lower_score_field], ascending=True)[
+                : cfg.sample_size
+            ]
+        elif cfg.sampling_method == "uniform" or cfg.first_iter:
+            ## Always use "uniform" for first iteration, for a safe initial policy
+            logger.info(f"sampling_method : uniform")
+            df = df.sample(n=min(len(df), cfg.sample_size), random_state=cfg.seed)
+        elif cfg.sampling_method == "combination":
+            half_sample_size = int(cfg.sample_size / 2)
+            df = pd.concat(
+                [
+                    df.sort_values(by=[cfg.lower_score_field], ascending=True)[
+                        :half_sample_size
+                    ],
+                    df.sample(n=min(len(df), half_sample_size), random_state=cfg.seed),
+                ]
+            )
+        else:
+            raise ValueError(f"Unknown sampling method '{cfg.sampling_method}.'")
+
+        # Start by using the lower score particle from each pair as the seed
+        ## ds: Dataset of *pairs*, by the best (lowest) sample_size num scoring particles
+        ds = datasets.Dataset.from_pandas(df)
+
+        ## input_ds: Dataset of *sequences*, by the best (lowest) sample_size num scoring particles
+        input_ds = datasets.Dataset.from_list(
             [
-                df.sort_values(by=[cfg.lower_score_field], ascending=True)[
-                    :half_sample_size
-                ],
-                df.sample(n=min(len(df), half_sample_size), random_state=cfg.seed),
+                {
+                    cfg.higher_score_particle_field: ex[cfg.lower_score_particle_field],
+                    "score": ex[cfg.lower_score_field],
+                }
+                for ex in ds
             ]
         )
+
+        ## If selected seeds here, then write them to disk (needed for computing seed-marginalized likelihoods used in policy control)
+        input_df = input_ds.to_pandas()
+        input_df.to_json(
+            os.path.join(cfg.output_dir, f'seeds_{cfg.output_filename}'), orient="records", lines=True
+        )
+
     else:
-        raise ValueError(f"Unknown sampling method '{cfg.sampling_method}.'")
+        ## Else, assume that seeds are pre-selected, don't need to select
+        dataset_particles = set(
+            [tuple(ex[cfg.higher_score_particle_field]) for _, ex in df.iterrows()]
+        )
+    
+        # Start by using the lower score particle from each pair as the seed
+        ## ds: Dataset of *pairs*, by the best (lowest) sample_size num scoring particles
+        input_ds = datasets.Dataset.from_pandas(df)
+
+        # ## input_ds: Dataset of *sequences*, by the best (lowest) sample_size num scoring particles
+        # input_ds = datasets.Dataset.from_list(
+        #     [
+        #         {
+        #             cfg.higher_score_particle_field: ex[cfg.lower_score_particle_field],
+        #             "score": ex[cfg.lower_score_field],
+        #         }
+        #         for ex in ds
+        #     ]
+        # )
     
     
-    # Start by using the lower score particle from each pair as the seed
-    ## ds: Dataset of *pairs*, by the best (lowest) sample_size num scoring particles
-    ds = datasets.Dataset.from_pandas(df)
 
-    ## input_ds: Dataset of *sequences*, by the best (lowest) sample_size num scoring particles
-    input_ds = datasets.Dataset.from_list(
-        [
-            {
-                cfg.higher_score_particle_field: ex[cfg.lower_score_particle_field],
-                "score": ex[cfg.lower_score_field],
-            }
-            for ex in ds
-        ]
-    )
 
-    ## Write selected seeds to disk (needed for computing seed-marginalized likelihoods used in policy control)
-    input_df = input_ds.to_pandas()
-    input_df.to_json(
-        os.path.join(cfg.output_dir, f'seeds_{cfg.output_filename}'), orient="records", lines=True
-    )
 
     # ## all_trajectories : A list of lists; each sublist is a trajectory 
     # all_trajectories = [

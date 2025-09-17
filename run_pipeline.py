@@ -18,26 +18,47 @@ logger = logging.getLogger(__name__)
 
 
 
+# '''Process matrix of unconstrained likelihoods into constrained likelihoods'''
+# def constrain_likelihoods(
+#     likelihoods_mat, ## 2-D np array, shape (*, n_prop); flexible length, equal to n_models total from safe model to curr
+#     betas, ## 1-D np array or list of lik-ratio bounds
+#     psis ## 1-D np array or list of normalization constants
+# ):
+#     n_models, n_prop = np.shape(likelihoods_mat)
+
+#     constrained_likelihoods_mat = np.zeros((n_models, n_prop))
+
+#     ## First row of likelihoods_mat should already be safe/constrained
+#     constrained_likelihoods_mat[0] = likelihoods_mat[0] 
+
+#     ## Compute constrained likelihoods for each subsequent policy and bound
+#     for i in range(1, n_models):
+#         constrained_likelihoods_mat[i] = np.where(likelihoods_mat[i] / constrained_likelihoods_mat[i-1] < betas[i], \
+#                                                   likelihoods_mat[i] / psis[i], betas[i] * constrained_likelihoods_mat[i-1] / psis[i])
+    
+#     return constrained_likelihoods_mat
+
+
+
 '''Process matrix of unconstrained likelihoods into constrained likelihoods'''
 def constrain_likelihoods(
-    likelihoods_mat, ## 2-D np array, shape (*, n_prop); flexible length, equal to n_models total from safe model to curr
+    likelihoods_mat, ## 2-D np array, shape (n_prop, *); flexible num columns, equal to n_models total from safe model to curr
     betas, ## 1-D np array or list of lik-ratio bounds
     psis ## 1-D np array or list of normalization constants
-):
-    n_models, n_prop = np.shape(likelihoods_mat)
+):  
+    n_prop, n_models = np.shape(likelihoods_mat)
 
-    constrained_likelihoods_mat = np.zeros((n_models, n_prop))
+    constrained_likelihoods_mat = np.zeros((n_prop, n_models))
 
-    ## First row of likelihoods_mat should already be safe/constrained
-    constrained_likelihoods_mat[0] = likelihoods_mat[0] 
+    ## First col of likelihoods_mat should already be safe/constrained
+    constrained_likelihoods_mat[:, 0] = likelihoods_mat[:, 0] 
 
     ## Compute constrained likelihoods for each subsequent policy and bound
     for i in range(1, n_models):
-        constrained_likelihoods_mat[i] = np.where(likelihoods_mat[i] / constrained_likelihoods_mat[i-1] < betas[i], \
-                                                  likelihoods_mat[i] / psis[i], betas[i] * constrained_likelihoods_mat[i-1] / psis[i])
+        constrained_likelihoods_mat[:, i] = np.where(likelihoods_mat[:, i] / constrained_likelihoods_mat[:, i-1] < betas[i], \
+                                                  likelihoods_mat[:, i] / psis[i], betas[i] * constrained_likelihoods_mat[:, i-1] / psis[i])
     
     return constrained_likelihoods_mat
-
 
 
 '''Sort and coarsen grid of lik-ratio values to search over'''
@@ -53,7 +74,7 @@ def prepare_grid(
 
         ## Coarsen grid to approximately n_grid elements
         n_curr = len(G)
-        k = int(n_curr / n_grid)
+        k = int(n_curr / n_grid) if int(n_curr / n_grid) > n_curr else n_curr
         G = G[::k]
         G = np.concatenate(([np.inf], G, [1])) ## For unconstrained, ensure also consider unconstrained policy in grid (np.inf) and 1 as bounds
 
@@ -62,7 +83,7 @@ def prepare_grid(
 
         ## Coarsen grid to approximately n_grid elements
         n_curr = len(G)
-        k = int(n_curr / n_grid)
+        k = int(n_curr / n_grid) if int(n_curr / n_grid) > n_curr else n_curr
         G = G[::k]
         G = np.concatenate((G, [sys.float_info.min])) ## For safe, ensure that include minimum positive float value
 
@@ -70,9 +91,6 @@ def prepare_grid(
 
 
 
-# '''Accept-Reject sample and get both unconstrained and constrained likelihoods'''
-
-# def accept_reject_and_get_likelihoods():
 
 
 
@@ -343,7 +361,6 @@ def train_gpt(
 
     ## Check if there's already a directory with a pretrained GPT model
     trained_model_dir = gpt_model_already_trained(cfg, fs, s3_output_dir, output_dir)
-    # breakpoint()
     if trained_model_dir is not None and not cfg.overwrite_gpt:
         logger.info(f"Trained model already exists in {trained_model_dir}. Skipping...")
         return trained_model_dir
@@ -930,7 +947,6 @@ def run_initial_generation(
     os.makedirs(slurm_dump_dir, exist_ok=True)
     hd = None
 
-    # breakpoint()
 
     if cfg.run_init_gen:
         all_args = []
@@ -1052,7 +1068,7 @@ def run_contrastive_generation(
 def run_iterative_generation(
     cfg: DictConfig,
     fs: LocalOrS3Client,
-    data_fp: str,
+    data_fp: str, ## Either path to paired training data (to select seeds from) or path to pre-selected seeds (unpaired)
     data_dir: str,
     model_dir: str,
     higher_score_particle_field: str = "higher_score_particle",
@@ -1060,8 +1076,10 @@ def run_iterative_generation(
     lower_score_field: str = "lower_score",
     higher_score_field: str = "higher_score",
     temps: List[float] = [0.6, 0.8, 1.0, 1.2, 1.4, 1.6],
-    return_seeds: bool = True,
-    first_iter: bool = False
+    return_seeds: bool = False,
+    first_iter: bool = False,
+    num_calls: int = 1, ## Number of times this generation has been called, including current, for same model directory
+    proposal: str = 'unconstrained',
 ):
     """
     Runs iterative generation jobs, combines the outputs, and returns the combined output filepath.
@@ -1088,7 +1106,7 @@ def run_iterative_generation(
         args += f"sample_size={cfg.iterative_generation.args.sample_size} "
         args += f"max_iterations={cfg.iterative_generation.args.max_iterations} "
         args += f"sampling_method={cfg.iterative_generation.args.sampling_method} "
-        output_filename_prefix = f"gens_likelihood_{cfg.iterative_generation.args.sample_size}sample_{cfg.iterative_generation.args.max_iterations}iter"
+        output_filename_prefix = f"gens_likelihood_c{num_calls}_{proposal}_{cfg.iterative_generation.args.sample_size}sample_{cfg.iterative_generation.args.max_iterations}iter"
 
 
     greedy_decoding_gen_args = f"generation_config.do_sample=False generation_config.num_beams=1 batch_size={cfg.greedy_gen_batch_size}"
@@ -1123,7 +1141,9 @@ def run_iterative_generation(
     if cfg.run_iter_gen:
         all_args = []
         for gen_args, output_fn in zip(all_gen_args, output_filenames):
-            if not cfg.overwrite_ig and fs.exists(f"{model_dir}/{output_fn}"):
+            ## If first_iter, use overwrite_initg flag rather than overwrite_ig
+            overwrite_flag = cfg.overwrite_initg if first_iter else cfg.overwrite_ig
+            if not overwrite_flag and fs.exists(f"{model_dir}/{output_fn}"):
                 logger.info(f"{model_dir}/{output_fn} already exists. Skipping...")
             else:
                 all_args.append(f"{args} {gen_args} output_filename={output_fn}")
@@ -1142,11 +1162,47 @@ def run_iterative_generation(
         ]
         wait_for_slurm_jobs_to_complete(job_submissions)
         hd = combine_datasets(cfg, fs, output_filepaths, combined_outputs_fp)
+
     if return_seeds:
         return combined_outputs_fp, output_filepaths, hd, seeds_filepaths
     else:
-        return combined_outputs_fp, hd
+        return combined_outputs_fp, output_filepaths, hd
 
+
+
+
+def get_seeds_from_training_data(
+    training_data_fp: str,
+    output_dir: str,
+    sample_size: int,
+    sampling_method: str = "best_scoring",
+    higher_score_particle_field: str = "higher_score_particle",
+    lower_score_particle_field: str = "lower_score_particle",
+    lower_score_field: str = "lower_score",
+    higher_score_field: str = "higher_score",
+    random_seed: int = 0,
+) -> str:
+
+    train_df = pd.read_json(training_data_fp, orient="records", lines=True)
+
+    train_df = train_df.loc[train_df.astype(str).drop_duplicates().index] ## For training data, can select unique
+
+    if sampling_method == "best_scoring":
+        train_df = train_df.sort_values(by=[lower_score_field], ascending=True)[: sample_size]
+    elif sampling_method == "uniform":
+        train_df = train_df.sample(n=min(len(train_df), sample_size), random_state=random_seed)
+    else:
+        raise ValueError(f"Unknown sampling method '{sampling_method}.'")
+
+    train_df_selected = train_df[[lower_score_particle_field, lower_score_field]]
+
+    output_fp = os.path.join(output_dir, f'seeds_from_{os.path.basename(training_data_fp)}')
+
+    ## Rename so that selected particles are used as prompts instead of outputs
+    train_df_selected = train_df_selected.rename(columns={lower_score_particle_field: higher_score_particle_field, lower_score_field: 'score'})
+    train_df_selected.to_json(output_fp, orient="records", lines=True)
+
+    return output_fp
 
 
 
@@ -1163,20 +1219,33 @@ def accept_reject_sample_and_get_likelihoods(
     temps: List[int]=[1.0],
 ) -> str:
 
-    accepted = [] ## List containing indicators for whether each considered proposal sample is accepted
+    n_models = len(model_dir_list)
+
+    # accepted = [] ## List containing indicators for whether each considered proposal sample is accepted
     n_accepted = 0
+
+    ## Initialize data frames for storing data for accepted samples
+    unconstrained_lik_cols = [f'lik_r{i}' for i in range(n_models)]
+    unconstrained_col_names = ['particle', 'score'] + unconstrained_lik_cols
+    accepted_unconstrained_df = pd.DataFrame(columns=unconstrained_col_names)
+
+    constrained_lik_cols = [f'con_lik_r{i}' for i in range(n_models)]
+    constrained_col_names = ['particle', 'score'] + constrained_lik_cols
+    accepted_constrained_df = pd.DataFrame(columns=constrained_col_names)
+
 
     if betas_list[-1] >= 1:
         ## If beta_t >= 1, then using unconstrained policy as proposal
 
         while n_accepted < n_target:
 
-            ## TO DO: Choose num proposals to try to avoid multiple batch generations
+            accepted_curr = []
+
 
             ## Sample using unconstrained model as proposal
-            iter_gen_outputs_combined, iter_gen_outputs_list, hd, seeds_filepaths = run_iterative_generation(
+            _, iter_gen_outputs_list, hd = run_iterative_generation(
                 cfg,
-                file_client,
+                fs,
                 seeds_fp_list[-1], #combined_sft_dataset_fp,
                 ga_data_dir,
                 model_dir_list[-1], #sft_dir,
@@ -1187,28 +1256,30 @@ def accept_reject_sample_and_get_likelihoods(
                 temps=temps
             )
 
+
             ## Compute unconstrained likelihoods for all models on the output proposal samples
-            gen_liks_fp, hd = run_compute_liks_all_models_and_cal_data(
+            gen_liks_fp_list, hd = run_compute_liks_all_models_and_cal_data(
                 cfg,
-                file_client,
+                fs,
                 seeds_fp_list=seeds_fp_list,
                 prev_cal_data_fp_list=[],
                 model_dir_list=model_dir_list,
                 target_fp=iter_gen_outputs_list[-1],
                 temps=[1.0],
             )
+            gen_liks_fp = gen_liks_fp_list[-1]
 
-            gen_liks_df = pd.read_json(gen_liks_fp, orient="records", lines=True)
-            cols_to_keep = [f'lik_r{j}' for j in range(len(model_dir_list))] ## Only keep cols with likelihoods for next step
-            gen_liks_mat = gen_liks_df[cols_to_keep].to_numpy().T ## Shape (t+1, n_prop)
+            gen_liks_df = pd.read_json(gen_liks_fp, orient="records", lines=True)[unconstrained_col_names] #[unconstrained_col_names]
+            gen_liks_mat = gen_liks_df[unconstrained_lik_cols].to_numpy() ## Shape (n_prop, n_models)
             
-            constrained_liks_mat = constrain_likelihoods(gen_liks_mat, betas_list, psis_list)
-            constrained_liks_df = pd.DataFrame(constrained_liks_mat)
+            constrained_liks_mat = constrain_likelihoods(gen_liks_mat, betas_list, psis_list) ## Shape (n_prop, n_models)
+            constrained_liks_df_ = pd.DataFrame(constrained_liks_mat, columns=constrained_lik_cols)
+            constrained_liks_df = pd.concat([gen_liks_df[['particle', 'score']], constrained_liks_df_], axis=1)
 
 
             n_prop = len(gen_liks_df)
 
-            lik_ratios_unconstrained_over_safe = gen_liks_mat[-1] / constrained_liks_mat[-2]
+            lik_ratios_unconstrained_over_safe = gen_liks_mat[:, -1] / constrained_liks_mat[:, -2]
 
             ## Accept or reject each proposal
             # U = np.random.uniform(size=n_prop)
@@ -1216,23 +1287,27 @@ def accept_reject_sample_and_get_likelihoods(
                 u = np.random.uniform()
                 
                 if u < betas_list[-1]/lik_ratios_unconstrained_over_safe[i]:
-                    accepted.append(True)
+                    accepted_curr.append(True)
                     n_accepted += 1
 
                     if n_accepted >= n_target:
                         break
 
                 else:
-                    accepted.append(False)
+                    accepted_curr.append(False)
+
+            
+            accepted_unconstrained_df = pd.concat([accepted_unconstrained_df, gen_liks_df.iloc[:len(accepted_curr)][accepted_curr]])
+            accepted_constrained_df = pd.concat([accepted_constrained_df, constrained_liks_df[:len(accepted_curr)][accepted_curr]])
 
 
-            # ## Save accepted with unconstrained likelihoods
+            ## Save accepted with unconstrained likelihoods
             # accepted_unconstrained_df = gen_liks_df[accepted]
             # accepted_unconstrained_gen_liks_fp = f"accepted_{gen_liks_fp}"
             # accepted_unconstrained_df.to_json(accepted_unconstrained_gen_liks_fp, orient="records", lines=True)
 
-            # ## Save accepted with constrained likelihoods
-            # accepted_constrained_liks_df = pd.DataFrame(constrained_liks_mat[accepted])
+            ## Save accepted with constrained likelihoods
+            # accepted_constrained_liks_df = constrained_liks_df[accepted]
             # accepted_constrained_gen_liks_fp = f"accepted_constrained_{gen_liks_fp}"
             # accepted_constrained_liks_df.to_json(accepted_constrained_gen_liks_fp, orient="records", lines=True)
 
@@ -1241,70 +1316,69 @@ def accept_reject_sample_and_get_likelihoods(
 
         while n_accepted < n_target:
 
-            ## TO DO: Choose num proposals to try to avoid multiple batch generations
+            accepted_curr = []
+
+            ## Choose num proposals to try to avoid multiple batch generations
+            n_target_safe = 1.1 * max(betas_list[-2], 1/betas_list[-2]) * n_target
+
 
             ## Sample using unconstrained model as proposal
-            gen_liks_fp, constrained_gen_liks_fp = accept_reject_sample_and_get_likelihoods(
+            gen_liks_df, gen_liks_fp, constrained_gen_liks_df, constrained_gen_liks_fp = accept_reject_sample_and_get_likelihoods(
                                                         cfg,
                                                         fs,
                                                         model_dir_list[:-1],
                                                         seeds_fp_list[:-1],
                                                         betas_list[:-1],
                                                         psis_list[:-1], ## Normalization constants
-                                                        n_target, 
+                                                        n_target_safe, 
                                                         ga_data_dir,
                                                         temps,
                                                     )
 
-            # ## Compute unconstrained likelihoods for all models on the output proposal samples
-            # gen_liks_fp, hd = run_compute_liks_all_models_and_cal_data(
-            #     cfg,
-            #     file_client,
-            #     seeds_fp_list=seeds_fp_list,
-            #     prev_cal_data_fp_list=[],
-            #     model_dir_list=model_dir_list,
-            #     target_fp=iter_gen_outputs_list[-1],
-            #     temps=[1.0],
-            # )
 
-            gen_liks_df = pd.read_json(gen_liks_fp, orient="records", lines=True)
-            cols_to_keep = [f'lik_r{j}' for j in range(len(model_dir_list))] ## Only keep cols with likelihoods for next step
-            gen_liks_mat = gen_liks_df[cols_to_keep].to_numpy().T ## Shape (t+1, n_prop)
+            gen_liks_df = pd.read_json(gen_liks_fp, orient="records", lines=True)[unconstrained_col_names]
+            gen_liks_mat = gen_liks_df[unconstrained_lik_cols].to_numpy() ## Shape (n_prop, n_models)
             
-            constrained_liks_df = pd.read_json(constrained_gen_liks_fp, orient="records", lines=True)
-            constrained_liks_mat = constrained_liks_df.to_numpy()
+            constrained_liks_df = pd.read_json(constrained_gen_liks_fp, orient="records", lines=True) #[constrained_col_names]
+            constrained_liks_mat = constrained_liks_df[constrained_lik_cols].to_numpy()
+
+
 
             n_prop = len(gen_liks_df)
 
-            lik_ratios_unconstrained_over_safe = gen_liks_mat[-1] / constrained_liks_mat[-2]
+            lik_ratios_unconstrained_over_safe = gen_liks_mat[:, -1] / constrained_liks_mat[:, -2]
 
             ## Accept or reject each proposal
-            # U = np.random.uniform(size=n_prop)
             for i in range(n_prop):
                 u = np.random.uniform()
                 
                 ## NOTE: Different acceptance criteria for different proposal
                 if u < lik_ratios_unconstrained_over_safe[i]/betas_list[-1]:
-                    accepted.append(True)
+                    accepted_curr.append(True)
                     n_accepted += 1
 
                     if n_accepted >= n_target:
                         break
 
                 else:
-                    accepted.append(False)
+                    accepted_curr.append(False)
 
-    ## Save accepted with unconstrained likelihoods
-    accepted_unconstrained_df = gen_liks_df[accepted]
-    accepted_unconstrained_gen_liks_fp = f"accepted_{gen_liks_fp}"
+            accepted_unconstrained_df = pd.concat([accepted_unconstrained_df, gen_liks_df[:len(accepted_curr)][accepted_curr]])
+            accepted_constrained_df = pd.concat([accepted_constrained_df, constrained_liks_df[:len(accepted_curr)][accepted_curr]])
+
+
+    # ## Save accepted with unconstrained likelihoods
+    # accepted_unconstrained_df = gen_liks_df[accepted]
+    accepted_unconstrained_gen_liks_fp = os.path.join(os.path.dirname(gen_liks_fp), f"accepted_{os.path.basename(gen_liks_fp)}")
     accepted_unconstrained_df.to_json(accepted_unconstrained_gen_liks_fp, orient="records", lines=True)
 
-    ## Save accepted with constrained likelihoods
-    accepted_constrained_liks_df = constrained_liks_df[accepted]
-    accepted_constrained_gen_liks_fp = f"accepted_constrained_{gen_liks_fp}"
-    accepted_constrained_liks_df.to_json(accepted_constrained_gen_liks_fp, orient="records", lines=True)
+    # ## Save accepted with constrained likelihoods
+    # accepted_constrained_liks_df = constrained_liks_df[accepted]
+    accepted_constrained_gen_liks_fp = os.path.join(os.path.dirname(gen_liks_fp), f"accepted_constrained_{os.path.basename(gen_liks_fp)}")
+    accepted_constrained_df.to_json(accepted_constrained_gen_liks_fp, orient="records", lines=True)
 
-    return accepted_unconstrained_gen_liks_fp , accepted_constrained_gen_liks_fp 
+    return accepted_unconstrained_df, accepted_unconstrained_gen_liks_fp, accepted_constrained_df, accepted_constrained_gen_liks_fp 
+
 
 
 
@@ -1317,6 +1391,7 @@ def run_conformal_policy_control(
     prev_cal_data_constrained_liks_fp_list: List[str], ## Should contain both cal data and *constrained* likelihoods
     betas_list: List[float],
     psis_list: List[float], ## Normalization constants
+    ga_data_dir: str,
     # target_fp: str,
     # particle_field: str = "higher_score_particle",
     # score_field: str = "score",
@@ -1329,24 +1404,42 @@ def run_conformal_policy_control(
         get_all_strs_from_nested_dict(cfg["conformal_policy_control"]["args"])
     )
 
+    
+
     ## Outer for loop: First try using unconstrained policy as proposal before going to safe policy
     for i, proposal in enumerate(['unconstrained', 'safe']):
         
         if proposal == 'unconstrained':
             betas_list_tmp = betas_list + [np.inf]
-            psis_list_temp = psis_list + [1.0]
-
-            accept_reject_sample_and_get_likelihoods(model_dir_list, seeds_fp_list, betas_list, psis_list)
+            psis_list_tmp = psis_list + [1.0]
 
         else:
             ## Else, use constrained/safe policy as the proposal
             betas_list_tmp = betas_list + [sys.float_info.min]
-            psis_list_temp = psis_list + [sys.float_info.min]
+            psis_list_tmp = psis_list + [sys.float_info.min]
 
-            accept_reject_sample_and_get_likelihoods(model_dir_list, seeds_fp_list, betas_list, psis_list)
+        unconstrained_df, unconstrained_gen_liks_fp, constrained_liks_df, constrained_gen_liks_fp\
+            = accept_reject_sample_and_get_likelihoods(cfg, fs, model_dir_list, seeds_fp_list, \
+                                                       betas_list_tmp, psis_list_tmp, \
+                                                       cfg.conformal_policy_control.accept_reject.n_target,\
+                                                       ga_data_dir)
 
 
-    return output_filepaths, hd
+
+        lik_ratios_unconstrained_over_safe = unconstrained_df.iloc[:, -1] / constrained_liks_df.iloc[:, -2]
+
+        # breakpoint()
+        
+        G = prepare_grid(lik_ratios_unconstrained_over_safe, 
+                         n_grid = cfg.conformal_policy_control.args.n_grid,
+                         proposal = proposal
+                        )
+        ## Temporary
+        beta_hat = betas_list_tmp[-1]
+        psi_hat = psis_list_tmp[-1]
+
+    return G, beta_hat, psi_hat
+    # return output_filepaths, hd
 
 
 
@@ -1427,7 +1520,6 @@ def run_compute_liks_all_models_and_cal_data(
                 logger.info(f"Running compute_likelihoods all models...")
                 all_args.append(f"{args} {gen_args} output_filename={output_fn}")
         all_python_commands = []
-        # breakpoint()
         if len(target_fp) > 0:
             ## Can only run script for updating curr data if provided non-empty filepath
             ## (so, providing empty `target_fp` allows skipping this)
@@ -1591,6 +1683,15 @@ def main(cfg: DictConfig):
         logger.info(f"Trained initial SFT model: {sft_dir}")
         all_model_paths.append(sft_dir)
 
+
+        seeds_fp = get_seeds_from_training_data(
+            training_data_fp=combined_sft_dataset_fp,
+            output_dir=sft_dir,
+            sample_size=cfg.iterative_generation.init_args.sample_size,
+            sampling_method=cfg.iterative_generation.init_args.sampling_method,
+            random_seed = cfg.iterative_generation.init_args.seed,
+        )
+
         # Take best checkpoint of trained model and get calibrated best likelihood range
 
         # if cfg.temperature_scaling:
@@ -1616,10 +1717,10 @@ def main(cfg: DictConfig):
             # temps = [1.0] ## At last init iteration, use only temp=1.0 for sampling initial calibration data
 
     ## Generate examples from initial safe policy
-    iter_gen_outputs_combined, iter_gen_outputs_list, hd, seeds_filepaths = run_iterative_generation(
+    iter_gen_outputs_combined, iter_gen_outputs_list, hd = run_iterative_generation(
         cfg,
         file_client,
-        combined_sft_dataset_fp,
+        seeds_fp, #combined_sft_dataset_fp,
         ga_data_dir,
         sft_dir,
         higher_score_particle_field="higher_score_particle",
@@ -1633,7 +1734,7 @@ def main(cfg: DictConfig):
 
     ## Initialize lists of models and seeds for policy improvement loop
     pi_model_fp_list = [all_model_paths[-1]]
-    pi_seeds_filepaths_list = [seeds_filepaths[-1]]
+    pi_seeds_filepaths_list = [seeds_fp]
 
 
     ## Compute likelihoods for all initial generated data
@@ -1661,6 +1762,8 @@ def main(cfg: DictConfig):
 
     cal_data_fp_list = [cal_output_path]
 
+    betas_list = [np.inf]
+    psis_list = [1.0]
 
 
 
@@ -1668,6 +1771,10 @@ def main(cfg: DictConfig):
     for i in tqdm(range(1, cfg.num_sft_rounds), desc="SFT Policy Improvement Iterations"):
         # n = cfg.num_labels_after_first_round if i > 0 else None
         n = cfg.num_labels_after_first_round
+
+
+        ## TRAINING
+        ## Format data
         sft_dataset_fp = create_propen_sft_dataset(
             cfg, file_client, prev_round_outputs_fp, filename_prefix=f"sft_r{i}", n=n
         )
@@ -1680,6 +1787,8 @@ def main(cfg: DictConfig):
         train_from_scratch = all_model_paths[-1] == cfg.initial_model and hasattr(
             cfg, "initial_model_config"
         )
+
+        ## Train new model
         sft_dir = train_sft(
             cfg,
             file_client,
@@ -1690,11 +1799,22 @@ def main(cfg: DictConfig):
             train_from_scratch=train_from_scratch,
         )
         
-
+        ## Add new trained model to list
         logger.info(f"Trained SFT model: {sft_dir}")
         all_model_paths.append(sft_dir)
+        pi_model_fp_list.append(sft_dir)
 
-        ## TO DO: Conformal Policy Control
+
+
+        ## SELECT PROMPTS: Select new prompts/seeds from recent training data
+        seeds_fp = get_seeds_from_training_data(
+            training_data_fp=combined_sft_dataset_fp,
+            output_dir=sft_dir,
+            sample_size=cfg.iterative_generation.args.sample_size,
+            sampling_method=cfg.iterative_generation.args.sampling_method,
+            random_seed = cfg.iterative_generation.args.seed,
+        )
+        pi_seeds_filepaths_list.append(seeds_fp)
 
 
         if cfg.temperature_scaling:
@@ -1703,11 +1823,30 @@ def main(cfg: DictConfig):
             # temps = [0.6, 0.8, 1.0, 1.2, 1.4, 1.6]
             temps = [1.0]
         logger.info(f"temps: {temps}")
-        # first_iter = True if i == 0 else False ## bool: whether is first iteration (if so, will select seeds uniformly for a safe initial policy)
-        iter_gen_outputs_combined, iter_gen_outputs_list, hd, seeds_filepaths = run_iterative_generation(
+
+
+
+
+        # ## CONFORMAL POLICY CONTROL
+        G, beta_hat, psi_hat = run_conformal_policy_control(
             cfg,
             file_client,
-            combined_sft_dataset_fp,
+            model_dir_list=pi_model_fp_list,
+            seeds_fp_list=pi_seeds_filepaths_list,
+            prev_cal_data_constrained_liks_fp_list=cal_data_fp_list, ## Should contain both cal data and *constrained* likelihoods
+            betas_list=betas_list,
+            psis_list=psis_list, ## Normalization constants
+            ga_data_dir=ga_data_dir
+        )
+
+
+        
+
+        # first_iter = True if i == 0 else False ## bool: whether is first iteration (if so, will select seeds uniformly for a safe initial policy)
+        iter_gen_outputs_combined, iter_gen_outputs_list, hd = run_iterative_generation(
+            cfg,
+            file_client,
+            seeds_fp, #combined_sft_dataset_fp,
             ga_data_dir,
             sft_dir,
             higher_score_particle_field="higher_score_particle",
@@ -1722,11 +1861,7 @@ def main(cfg: DictConfig):
         logger.info(f"iter_gen_outputs_list: {iter_gen_outputs_list}")
 
 
-        if len(seeds_filepaths) > 1:
-            ## Should have len(seeds_filepaths)==1 for now, for simpler implementation
-            logger.info(f"Warning: len(seeds_filepaths)={len(seeds_filepaths)}>1")
-        pi_seeds_filepaths_list.append(seeds_filepaths[-1])
-        pi_model_fp_list.append(all_model_paths[-1])
+
         # pi_model_dirs_list.append(sft_dir)
 
 
@@ -1788,6 +1923,10 @@ def main(cfg: DictConfig):
     '''DPO Policy Improvement Outer Loop, with Policy Control Inner Loop'''
     for i in tqdm(range(1, cfg.num_dpo_rounds), desc="DPO Policy Improvement Iterations"):
         # n = cfg.num_labels_after_first_round if i > 0 else None
+
+
+        ## TRAINING
+        ## Format data
         n = cfg.num_labels_after_first_round
         dpo_dataset_fp = create_propen_preference_dataset(
             cfg, file_client, prev_round_outputs_fp, filename_prefix=f"dpo_r{i}", n=n
@@ -1801,6 +1940,10 @@ def main(cfg: DictConfig):
         train_from_scratch = all_model_paths[-1] == cfg.initial_model and hasattr(
             cfg, "initial_model_config"
         )
+
+
+
+        ## Train new model
         dpo_dir = train_dpo(
             cfg,
             file_client,
@@ -1813,11 +1956,24 @@ def main(cfg: DictConfig):
 
 
         
-
+        ## Add new trained model to list
         logger.info(f"Trained SFT model: {dpo_dir}")
         all_model_paths.append(dpo_dir)
+        pi_model_fp_list.append(dpo_dir)
 
-        ## TO DO: Conformal Policy Control
+
+
+
+        ## SELECT PROMPTS: Select new prompts/seeds from recent training data
+        seeds_fp = get_seeds_from_training_data(
+            training_data_fp=combined_dpo_dataset_fp,
+            output_dir=dpo_dir,
+            sample_size=cfg.iterative_generation.args.sample_size,
+            sampling_method=cfg.iterative_generation.args.sampling_method,
+            random_seed = cfg.iterative_generation.args.seed,
+        )
+        pi_seeds_filepaths_list.append(seeds_fp)
+
 
 
         if cfg.temperature_scaling:
@@ -1826,11 +1982,27 @@ def main(cfg: DictConfig):
             # temps = [0.6, 0.8, 1.0, 1.2, 1.4, 1.6]
             temps = [1.0]
         logger.info(f"temps: {temps}")
-        # first_iter = True if i == 0 else False ## bool: whether is first iteration (if so, will select seeds uniformly for a safe initial policy)
-        iter_gen_outputs_combined, iter_gen_outputs_list, hd, seeds_filepaths = run_iterative_generation(
+
+
+
+        # ## CONFORMAL POLICY CONTROL
+        G, beta_hat, psi_hat = run_conformal_policy_control(
             cfg,
             file_client,
-            combined_dpo_dataset_fp,
+            model_dir_list=pi_model_fp_list,
+            seeds_fp_list=pi_seeds_filepaths_list,
+            prev_cal_data_constrained_liks_fp_list=cal_data_fp_list, ## Should contain both cal data and *constrained* likelihoods
+            betas_list=betas_list,
+            psis_list=psis_list, ## Normalization constants
+            ga_data_dir=ga_data_dir
+        )
+
+
+        # first_iter = True if i == 0 else False ## bool: whether is first iteration (if so, will select seeds uniformly for a safe initial policy)
+        iter_gen_outputs_combined, iter_gen_outputs_list, hd = run_iterative_generation(
+            cfg,
+            file_client,
+            seeds_fp, #combined_dpo_dataset_fp,
             ga_data_dir,
             dpo_dir,
             higher_score_particle_field="higher_score_particle",
@@ -1844,13 +2016,6 @@ def main(cfg: DictConfig):
         logger.info(f"iter_gen_outputs_combined: {iter_gen_outputs_combined}")
         logger.info(f"iter_gen_outputs_list: {iter_gen_outputs_list}")
 
-
-        if len(seeds_filepaths) > 1:
-            ## Should have len(seeds_filepaths)==1 for now, for simpler implementation
-            logger.info(f"Warning: len(seeds_filepaths)={len(seeds_filepaths)}>1")
-        pi_seeds_filepaths_list.append(seeds_filepaths[-1])
-        pi_model_fp_list.append(all_model_paths[-1])
-        # pi_model_dirs_list.append(dpo_dir)
 
         ## Compute likelihoods for all initial generated data
         gen_liks_fp, hd = run_compute_liks_all_models_and_cal_data(
@@ -1956,6 +2121,9 @@ def main(cfg: DictConfig):
     '''MARGE Policy Improvement Outer Loop, with Policy Control Inner Loop'''
     for i in tqdm(range(1, cfg.num_marge_rounds), desc="MargE Iterations"):
         # n = cfg.num_labels_after_first_round if i > 0 else None
+
+        ## TRAINING
+        ## Format data
         n = cfg.num_labels_after_first_round
         marge_dataset_fp = create_propen_sft_dataset(
             cfg, file_client, prev_round_outputs_fp, filename_prefix=f"marge_r{i}", n=n
@@ -1969,6 +2137,9 @@ def main(cfg: DictConfig):
         train_from_scratch = all_model_paths[-1] == cfg.initial_model and hasattr(
             cfg, "initial_model_config"
         )
+
+
+        ## Train new model
         marge_dir = train_marge(
             cfg,
             file_client,
@@ -1980,11 +2151,21 @@ def main(cfg: DictConfig):
         )
 
 
-
+        ## Add new trained model to list
         logger.info(f"Trained MARGE model: {marge_dir}")
         all_model_paths.append(marge_dir)
+        pi_model_fp_list.append(marge_dir)
 
-        ## TO DO: Conformal Policy Control
+
+        ## SELECT PROMPTS: Select new prompts/seeds from recent training data
+        seeds_fp = get_seeds_from_training_data(
+            training_data_fp=combined_marge_dataset_fp,
+            output_dir=marge_dir,
+            sample_size=cfg.iterative_generation.args.sample_size,
+            sampling_method=cfg.iterative_generation.args.sampling_method,
+            random_seed = cfg.iterative_generation.args.seed,
+        )
+        pi_seeds_filepaths_list.append(seeds_fp)
 
 
 
@@ -1994,11 +2175,27 @@ def main(cfg: DictConfig):
             # temps = [0.6, 0.8, 1.0, 1.2, 1.4, 1.6]
             temps = [1.0]
         logger.info(f"temps: {temps}")
-        # first_iter = True if i == 0 else False ## bool: whether is first iteration (if so, will select seeds uniformly for a safe initial policy)
-        iter_gen_outputs_combined, iter_gen_outputs_list, hd, seeds_filepaths = run_iterative_generation(
+
+
+
+        # ## CONFORMAL POLICY CONTROL
+        G, beta_hat, psi_hat = run_conformal_policy_control(
             cfg,
             file_client,
-            combined_marge_dataset_fp,
+            model_dir_list=pi_model_fp_list,
+            seeds_fp_list=pi_seeds_filepaths_list,
+            prev_cal_data_constrained_liks_fp_list=cal_data_fp_list, ## Should contain both cal data and *constrained* likelihoods
+            betas_list=betas_list,
+            psis_list=psis_list, ## Normalization constants
+            ga_data_dir=ga_data_dir
+        )
+
+
+        # first_iter = True if i == 0 else False ## bool: whether is first iteration (if so, will select seeds uniformly for a safe initial policy)
+        iter_gen_outputs_combined, iter_gen_outputs_list, hd = run_iterative_generation(
+            cfg,
+            file_client,
+            seeds_fp, #combined_marge_dataset_fp,
             ga_data_dir,
             marge_dir,
             higher_score_particle_field="higher_score_particle",
@@ -2013,11 +2210,6 @@ def main(cfg: DictConfig):
         logger.info(f"iter_gen_outputs_list: {iter_gen_outputs_list}")
 
 
-        if len(seeds_filepaths) > 1:
-            ## Should have len(seeds_filepaths)==1 for now, for simpler implementation
-            logger.info(f"Warning: len(seeds_filepaths)={len(seeds_filepaths)}>1")
-        pi_seeds_filepaths_list.append(seeds_filepaths[-1])
-        pi_model_fp_list.append(all_model_paths[-1])
         # pi_model_dirs_list.append(marge_dir)
 
 
@@ -2044,7 +2236,6 @@ def main(cfg: DictConfig):
             score_field= "score",
             temps=[1.0],
         )
-        # breakpoint()
 
     
 
@@ -2073,53 +2264,6 @@ def main(cfg: DictConfig):
 
 
 
-    # prev_hd = None
-    # for i in tqdm(range(cfg.num_marge_rounds), desc="MargE iterations"):
-    #     n = cfg.num_labels_after_first_round
-    #     marge_dataset_fp = create_propen_sft_dataset(
-    #         cfg,
-    #         file_client,
-    #         prev_round_outputs_fp,
-    #         filename_prefix=f"marge_r{i}_",
-    #         n=n,
-    #         allow_same_score_pair=False,
-    #     )
-    #     combined_marge_dataset_fp = combine_new_with_old_datasets(
-    #         cfg, file_client, all_prev_sft_datasets, marge_dataset_fp
-    #     )
-    #     logger.info(f"MargE training dataset: {combined_marge_dataset_fp}")
-    #     all_prev_sft_datasets.append(marge_dataset_fp)
-
-    #     marge_dir = train_marge(
-    #         cfg,
-    #         file_client,
-    #         all_model_paths[-1],
-    #         combined_marge_dataset_fp,
-    #         ga_data_dir,
-    #         run_name=f"{cfg.run_name}_marge_r{i}",
-    #     )
-    #     logger.info(f"MargE model trained in {marge_dir}.")
-    #     all_model_paths.append(marge_dir)
-
-    #     temps = get_temperatures(cfg, file_client, marge_dir, prev_hd)
-    #     # temps = [1.0]
-    #     iter_gen_outputs, hd = run_iterative_generation(
-    #         cfg,
-    #         file_client,
-    #         combined_marge_dataset_fp,
-    #         ga_data_dir,
-    #         marge_dir,
-    #         higher_score_particle_field="higher_score_particle",
-    #         lower_score_particle_field="lower_score_particle",
-    #         higher_score_field="higher_score",
-    #         lower_score_field="lower_score",
-    #         temps=temps,
-    #     )
-    #     prev_hd = hd
-    #     logger.info(
-    #         f"Iterative generations output path (from MargE model): {iter_gen_outputs}\nAverage hamming distance: {hd}"
-    #     )
-    #     prev_round_outputs_fp = iter_gen_outputs
 
 
 if __name__ == "__main__":
