@@ -86,6 +86,7 @@ def submit_cmd_to_slurm(
     # setup_str: str = 'wandb login --relogin --host https://genentech.wandb.io \n\n 23fa6435c59b0dcf64957cd8fe26e0aa64fc40c2',  # setup  that goes between sbatch args and running the py_cmd
     setup_str: str = 'export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \n\n export WANDB_INSECURE_DISABLE_SSL=true \n\n export WANDB_API_KEY="23fa6435c59b0dcf64957cd8fe26e0aa64fc40c2" \n\n export WANDB_BASE_URL="https://genentech.wandb.io" \n\n wandb login --relogin --host https://genentech.wandb.io \n\n export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID \n\n export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY',
     path_to_repo: Optional[str] = None,
+    nodes_to_exclude_str: str = 'b200-st-b200-2-4,b200-st-b200-2-23,b200-st-b200-2-38', ## Example: 'b200-st-b200-2-4,b200-st-b200-2-1'
     **slurm_kwargs,
 ) -> Tuple[subprocess.Popen, str]:
     if path_to_repo is None:
@@ -93,6 +94,8 @@ def submit_cmd_to_slurm(
     sbatch_str = (
         f"source ~/.bashrc\ncd {path_to_repo}\nsource .venv/bin/activate\n{py_cmd}"
     )
+    if nodes_to_exclude_str is not None:
+        sbatch_str += f'\n exclude={nodes_to_exclude_str}'
     # add #SBATCH commands on top
     if "output" not in slurm_kwargs:
         slurm_kwargs["output"] = f"{dump_dir}/%x_%j.logs"

@@ -1,7 +1,7 @@
 log_level: info
 run_name: smaller_pythia #smaller_pythia_0.25dist_0.1maxinf_50gen
-parent_output_dir: s3://prescient-pcluster-data/prinstea/llome/parent_output_20250918 #_20250901_evol0.5 #/data/bucket/prinstea/llome/parent_output
-local_output_dir: /homefs/home/prinstea/llome/local_output_20250918 #_20250901_evol0.5
+parent_output_dir: s3://prescient-pcluster-data/prinstea/llome/parent_output_20250918_noCPC #_20250901_evol0.5 #/data/bucket/prinstea/llome/parent_output
+local_output_dir: /homefs/home/prinstea/llome/local_output_20250918_noCPC #_20250901_evol0.5
 overwrite_ga: False ## If False, will only run genetic algorithm when output file does not already exist.
 overwrite_gpt: False ## If False, will only run GPT pretraining when output file does not already exist.
 overwrite_initial_sft: False ## If False, will only run SFT when output file does not already exist.
@@ -22,7 +22,7 @@ run_iter_gen: True
 run_compute_liks_all_models_and_cal_data: True ## Whether to run likelihood computation for all models (for policy control)
 run_contrast_gen: False ## Whether to run contrastive generation
 
-run_conformal_policy_control: True
+run_conformal_policy_control: False #True
 # run_uncon_gen: True ## Whether to run unconditional generation from initial density model
 run_propen_dpo_dataset_formatting: True
 init_generation_sampling_num_return_sequences: 10 #10 ## Number of sequences to sample at each intialization generation stage

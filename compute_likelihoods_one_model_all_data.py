@@ -85,6 +85,17 @@ def compute_likelihoods_one_model_all_data(cfg: DictConfig, logger: logging.Logg
         logger.info("No previous calibration data given (expected if is first iteration), skipping 'compute_likelihoods_one_model_all_data'")
         return
 
+    logger.info(f"torch.cuda.is_available()   : {torch.cuda.is_available()}")
+    logger.info(f"torch.cuda.device_count()   : {torch.cuda.device_count()}")
+    logger.info(f"torch.cuda.current_device() : {torch.cuda.current_device()}")
+
+    # # GPU memory management
+    torch.cuda.empty_cache()
+    # if torch.cuda.is_available():
+    #     torch.cuda.synchronize()
+
+
+    # try:
     ## Load model
     model_client = ModelClient(
         model_name_or_path=cfg.model_name_or_path_list[-1], ## Use most recent model
@@ -93,7 +104,17 @@ def compute_likelihoods_one_model_all_data(cfg: DictConfig, logger: logging.Logg
         max_generate_length=cfg.generation_config.max_new_tokens,
         device="cuda" if torch.cuda.is_available() else "cpu",
     )
+    # logger.info(f"model_client.device() : {model_client.device()}")
 
+    # model_client.to('cuda')
+    # except torch.cuda.OutOfMemoryError:
+    #     logger.warning("CUDA OOM, falling back to CPU")
+    #     self.device = "cpu"
+    #     self.model = self.model.to(self.device)
+    # except torch.cuda.Error as e:
+    #     logger.warning(f"CUDA error: {e}, falling back to CPU")
+    #     self.device = "cpu"
+    #     self.model = self.model.to(self.device)
 
 
     ## Load most recent input prompt seeds
