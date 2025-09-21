@@ -1,16 +1,21 @@
 log_level: info
 run_name: smaller_pythia #smaller_pythia_0.25dist_0.1maxinf_50gen
-parent_output_dir: s3://prescient-pcluster-data/prinstea/llome/parent_output_20250918 #_20250901_evol0.5 #/data/bucket/prinstea/llome/parent_output
-local_output_dir: /homefs/home/prinstea/llome/local_output_20250918 #_20250901_evol0.5
+parent_output_dir: s3://prescient-pcluster-data/prinstea/llome/parent_output_20250918_noCPC #_20250901_evol0.5 #/data/bucket/prinstea/llome/parent_output
+local_output_dir: /homefs/home/prinstea/llome/local_output_20250918_noCPC #_20250901_evol0.5
 overwrite_ga: False ## If False, will only run genetic algorithm when output file does not already exist.
 overwrite_gpt: False ## If False, will only run GPT pretraining when output file does not already exist.
 overwrite_initial_sft: False ## If False, will only run SFT when output file does not already exist.
-overwrite_sft: False ## If False, will only run SFT when output file does not already exist.
 overwrite_initg: False #False ## If False, will only run initial generation when output file does not already exist.
+overwrite_init_sft_formatter: False
+
+overwrite_sft: False ## If False, will only run SFT when output file does not already exist.
 overwrite_ig: False ## If False, will only run iterative generation when output file does not already exist.
 overwrite_cg: False ## If False, will only run contrastive generation when output file does not already exist.
 overwrite_cmp_lik_all: False #False #True ## If False, will only run compute_likelihoods_all_models when output file doesn't exist.
+overwrite_sft_formatter: False
+overwrite_dpo_formatter: False
 overwrite: False  # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
+
 
 run_evol_dataset_gen: True
 run_propen_sft_dataset_formatting: True
@@ -42,11 +47,14 @@ path_to_repo: null # /scratch/ac5968/llome
 
 ## Conformal policy control params
 random_seed: 0 ## For train/cal set splits
-num_cal_init: 200 ## Num of calibration samples to draw from original "safe" policy (if available)
-num_train_pi_sft0: 200 ## Num of training samples to use in first policy improvement (if available)
-cal_frac: 0.05 ## Fraction of generated outputs to place in calibration data (rather than training) at each time
+num_cal_init: 500 ## Num of calibration samples to draw from original "safe" policy (if available)
+num_train_pi_sft0: 500 ## Num of training samples to use in first policy improvement (if available)
+cal_frac: 0.5 #0.05 ## Fraction of generated outputs to place in calibration data (rather than training) at each time
+num_cal_per_step: 10
+num_train_per_step: 40
 train_frac_from_non_cal: 0.1 ## Fraction of *non-cal, deduplicated* generated outputs to place in training data (rather than calibration) at each time
-
+temperature: 1.0
+temperature_init: 1.0
 
 # # Only include this section if the initial model should be trained from scratch!
 # initial_model_config:
@@ -430,8 +438,8 @@ iterative_generation:
   num_jobs: 6  # number of generation jobs to parallelize this over
   init_args:
     ## init args just for first iteration:
-    sample_size: 10 #100 #20
-    max_iterations: 100 #50 #100 #200
+    sample_size: 20 #100 #20
+    max_iterations: 200 #50 #100 #200
     sampling_method: "uniform"
     seed: 0
   args:
@@ -461,9 +469,10 @@ iterative_generation:
 
 
 conformal_policy_control:
-  alpha: 0.3
+  alpha: 0.5
   args:
-    n_grid: 50 ## Approx size of grid to search over for lik-ratio bound
+    n_grid: 20 ## Approx size of grid to search over for lik-ratio bound
+    n_grid_safe_actions: 20
   accept_reject:
     n_target: 1000
 
