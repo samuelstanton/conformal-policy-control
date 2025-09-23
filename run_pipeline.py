@@ -718,7 +718,7 @@ def train_marge(
         else "null"
     )
     trained_model_dir = model_already_trained(cfg, fs, s3_output_dir, output_dir)
-    if trained_model_dir is not None and not cfg.overwrite:
+    if trained_model_dir is not None and not cfg.overwrite_marge:
         logger.info(f"Trained model already exists in {trained_model_dir}. Skipping...")
         return trained_model_dir
     else:
@@ -726,7 +726,7 @@ def train_marge(
             logger.info(f"Did not find trained model, Continuing to train...")
         else:
             trained_model_dir = None
-            logger.info(f"Config says to overwrite model (cfg.overwrite={cfg.overwrite}), Continuing to train...")
+            logger.info(f"Config says to overwrite model (cfg.overwrite_marge={cfg.overwrite_marge}), Continuing to train...")
     args = f"--config-name=pythia-2.8b-marge "
     args += " ".join(get_all_strs_from_nested_dict(cfg["marge"]["args"])) + " "
     args += f"data_fp={data_fp} "
@@ -1247,7 +1247,7 @@ def get_num_safe_actions(cfg, cal_infeasible_indicators, cal_lik_numerator, cal_
     w_test = np.mean(prop_lik_numerator / prop_lik_denominator)
 
     for n in range(1, n_target + 1)[::-1]:
-        w_test_curr = n * w_test
+        w_test_curr = n * w_test #* (1 + cfg.conformal_policy_control.alpha)
 
         sum_w_cal_test = sum_w_cal + w_test_curr
 
@@ -1541,6 +1541,8 @@ def run_conformal_policy_control(
     unconstrained_lik_cols = [f'lik_r{i}' for i in range(n_cal_sets)]
     constrained_lik_cols = [f'con_lik_r{i}' for i in range(n_cal_sets)]
 
+    #pd.read_json(prev_cal_data_unconstrained_liks_fp_list[2], orient="records", lines=True)
+
     for i in range(1, n_cal_sets):
         cal_data_constrained_curr = pd.read_json(prev_cal_data_constrained_liks_fp_list[i], orient="records", lines=True)
         cal_data_unconstrained_curr = pd.read_json(prev_cal_data_unconstrained_liks_fp_list[i], orient="records", lines=True)
@@ -1627,8 +1629,16 @@ def run_conformal_policy_control(
         cal_scores = cal_data_constrained_all['score'].to_numpy()
         cal_infeasible_indicators = np.isnan(cal_scores) | np.isinf(cal_scores)
 
+        
         n_safe_actions = get_num_safe_actions(cfg, cal_infeasible_indicators, cal_data_constrained_all.iloc[:,-1].to_numpy(), cal_mixture_constrained_density, constrained_liks_df.iloc[:, -2].to_numpy(), prop_mixture_constrained_density, cfg.conformal_policy_control.accept_reject.n_target)
+        # n_safe_actions_uncon = get_num_safe_actions(cfg, cal_infeasible_indicators, cal_data_unconstrained_all.iloc[:,-1].to_numpy(), cal_mixture_constrained_density, unconstrained_df.iloc[:, -2].to_numpy(), prop_mixture_constrained_density, cfg.conformal_policy_control.accept_reject.n_target)
+        # for steps_back_to_safe in range(1, len(cal_data_constrained_all.columns)+1):
+        #     n_safe_actions = get_num_safe_actions(cfg, cal_infeasible_indicators, cal_data_constrained_all.iloc[:,-steps_back_to_safe].to_numpy(), cal_mixture_constrained_density, constrained_liks_df.iloc[:, -(steps_back_to_safe+1)].to_numpy(), prop_mixture_constrained_density, cfg.conformal_policy_control.accept_reject.n_target)
+        #     # n_safe_actions_uncon = get_num_safe_actions(cfg, cal_infeasible_indicators, cal_data_unconstrained_all.iloc[:,-steps_back_to_safe].to_numpy(), cal_mixture_constrained_density, unconstrained_df.iloc[:, -(steps_back_to_safe+1)].to_numpy(), prop_mixture_constrained_density, cfg.conformal_policy_control.accept_reject.n_target)
+        
+        # breakpoint()
 
+        # n_safe_actions_curr = (n_safe_actions + n_safe_actions_uncon) / 2 if n_safe_actions_uncon < n_safe_actions else n_safe_actions
 
         if n_safe_actions == 0:
             ## If cannot take any actions under the safe policy, then that's the best can do and return with safe policy
@@ -1649,99 +1659,96 @@ def run_conformal_policy_control(
             
             return beta_t, psi_hat_t, n_safe_actions, constrained_liks_df_beta_hat, constrained_liks_df_beta_hat_fp, unconstrained_df, unconstrained_liks_df_beta_hat_fp
 
-        k = max(int(n_safe_actions/ cfg.conformal_policy_control.args.n_grid_safe_actions), 1)
-
-        G_n_safe_actions = list(range(n_safe_actions))[::-k]
 
 
-        for n_, n_safe_actions_curr in enumerate(G_n_safe_actions):
+        # n_safe_actions_curr = n_safe_actions
+        G = np.concatenate((G, [sys.float_info.min]))
 
-            if n_ == len(G_n_safe_actions) - 1:
+        # k = max(int(n_safe_actions/ cfg.conformal_policy_control.args.n_grid_safe_actions), 1)
 
-                G = np.concatenate((G, [sys.float_info.min]))
-
-            ## Search over grid for largest bound that satisfies conformal constraint
-            for b, beta_t in enumerate(G):
+        # G_n_safe_actions = list(range(n_safe_actions))[::-k]
 
 
+        # for n_, n_safe_actions_curr in enumerate(G_n_safe_actions):
+
+        #     if n_ == len(G_n_safe_actions) - 1:
+
+        #         G = np.concatenate((G, [sys.float_info.min]))
+
+
+
+        ## Search over grid for largest bound that satisfies conformal constraint
+        for b, beta_t in enumerate(G):
+
+
+            ## Estimate normalization constant via IWMCI
+            psi_hat_t = importance_weighted_monte_carlo_integration(lik_ratios_unconstrained_over_safe, beta_t)
+
+            ## Compute constrained likelihoods for cal data on current candidate bound, beta_t
+            cal_constrained_liks_curr = constrain_likelihoods(cal_data_tmin1_safe_and_t_unconstrained_liks, [betas_list[-1]] + [beta_t], [psis_list[-1]] + [psi_hat_t])
+            prop_constrained_liks_curr = constrain_likelihoods(prop_data_tmin1_safe_and_t_unconstrained_liks, [betas_list[-1]] + [beta_t], [psis_list[-1]] + [psi_hat_t])
+
+
+            ## Compute (unnormalized) CP weights for cal data: current constrained likelihoods over mixture density
+            w_cal = cal_constrained_liks_curr[:,-1].flatten() / cal_mixture_constrained_density
+
+            ## Compute estimated test point weight as the expectation of the ratio, with probabilities in the expectation given by prop_constrained_liks_curr[:,-1]
+            prop_constrained_liks_curr_t = prop_constrained_liks_curr[:,-1].flatten()
+            w_test = np.mean(prop_constrained_liks_curr_t / prop_mixture_constrained_density)
+            # w_test = np.max(prop_constrained_liks_curr_t / prop_mixture_constrained_density)
+
+
+                
+
+
+
+            w_test *= n_safe_actions_curr # * cfg.cal_frac
+
+
+            ## Concatenate and normalize
+            sum_w_cal_test = np.sum(w_cal) + w_test
+            w_cal_normalized = w_cal / sum_w_cal_test
+            w_test_normalized = w_test / sum_w_cal_test
+
+
+            # if b % 10 == 0:
+            #     breakpoint()
+
+            ## Check if constraint is satisfied
+            if (np.sum(w_cal_normalized[cal_infeasible_indicators]) + w_test_normalized <= cfg.conformal_policy_control.alpha):
+
+            # if (min(np.sum(w_cal_normalized[cal_infeasible_indicators]) + 2*w_test_normalized, 1) <= cfg.conformal_policy_control.alpha):
+                # breakpoint()
                 ## Estimate normalization constant via IWMCI
                 psi_hat_t = importance_weighted_monte_carlo_integration(lik_ratios_unconstrained_over_safe, beta_t)
 
+                logger.info(f"Selected beta_t = {beta_t}, psi_hat_t = {psi_hat_t}")
+                logger.info(f"cal weights normalized sum : {np.sum(w_cal_normalized[cal_infeasible_indicators])}")
+                logger.info(f"w_test_normalized sum : {w_test_normalized}")
+
+
                 ## Compute constrained likelihoods for cal data on current candidate bound, beta_t
-                cal_constrained_liks_curr = constrain_likelihoods(cal_data_tmin1_safe_and_t_unconstrained_liks, [betas_list[-1]] + [beta_t], [psis_list[-1]] + [psi_hat_t])
-                prop_constrained_liks_curr = constrain_likelihoods(prop_data_tmin1_safe_and_t_unconstrained_liks, [betas_list[-1]] + [beta_t], [psis_list[-1]] + [psi_hat_t])
-
-
-                ## Compute (unnormalized) CP weights for cal data: current constrained likelihoods over mixture density
-                w_cal = cal_constrained_liks_curr[:,-1].flatten() / cal_mixture_constrained_density
-
-                ## Compute estimated test point weight as the expectation of the ratio, with probabilities in the expectation given by prop_constrained_liks_curr[:,-1]
-                prop_constrained_liks_curr_t = prop_constrained_liks_curr[:,-1].flatten()
-                # w_test = np.sum((prop_constrained_liks_curr_t / prop_mixture_constrained_density) * prop_constrained_liks_curr_t) 
-                w_test = np.mean(prop_constrained_liks_curr_t / prop_mixture_constrained_density)
-
-
-                    
+                # cal_constrained_liks_curr = constrain_likelihoods(cal_data_tmin1_safe_and_t_unconstrained_liks,[betas_list[-1]] + [beta_t], [psis_list[-1]] + [psi_hat_t])
 
 
 
-
-                # n_sample = cfg.num_cal_per_step + cfg.num_train_per_step
-                # w_test *= 2*n_sample
-                # w_test *= 2
-                w_test *= n_safe_actions_curr # * cfg.cal_frac
-                # w_test *= (n_safe_actions - 1) #* cfg.cal_frac
-
-                # w_test = max(prop_constrained_liks_curr_t / prop_mixture_constrained_density)
-
-                ## Concatenate and normalize
-                # w_cal_test = np.concatenate((w_cal, w_test))
-                # w_cal_test_sum = np.sum(w_cal_test)
-                # w_cal_test_normalized = w_cal_test / w_cal_test_sum
-                sum_w_cal_test = np.sum(w_cal) + w_test
-                w_cal_normalized = w_cal / sum_w_cal_test
-                w_test_normalized = w_test / sum_w_cal_test
+                # prop_constrained_liks_curr = constrain_likelihoods(prop_data_tmin1_safe_and_t_unconstrained_liks,[betas_list[-1]] + [beta_t], [psis_list[-1]] + [psi_hat_t])
 
 
-                # if b % 10 == 0:
-                #     breakpoint()
+                ## Save proposals with cpc-constrained likelihoods
+                
+                constrained_liks_df_beta_hat = pd.concat([constrained_liks_df.iloc[:, :-1], pd.DataFrame({f'con_lik_r{n_cal_sets}' : prop_constrained_liks_curr[:,-1]})], axis=1)
+                constrained_liks_df_beta_hat_fp = os.path.join(os.path.dirname(constrained_gen_liks_fp), f"cpc_prop_alpha{cfg.conformal_policy_control.alpha}_beta{betas_list[-1]:.3g}_{constrained_gen_liks_fp}")
+                constrained_liks_df_beta_hat.to_json(constrained_liks_df_beta_hat_fp, orient="records", lines=True)
 
+                ## Also save proposals with unconstrained likelihoods
+                unconstrained_liks_df_beta_hat_fp = os.path.join(os.path.dirname(unconstrained_gen_liks_fp), f"cpc_prop_alpha{cfg.conformal_policy_control.alpha}_beta{betas_list[-1]:.3g}_{unconstrained_gen_liks_fp}")
+                unconstrained_df.to_json(unconstrained_liks_df_beta_hat_fp, orient="records", lines=True)
 
-                ## Check if constraint is satisfied
-                if (np.sum(w_cal_normalized[cal_infeasible_indicators]) + w_test_normalized <= cfg.conformal_policy_control.alpha):
-
-                # if (min(np.sum(w_cal_normalized[cal_infeasible_indicators]) + 2*w_test_normalized, 1) <= cfg.conformal_policy_control.alpha):
-                    # breakpoint()
-                    ## Estimate normalization constant via IWMCI
-                    psi_hat_t = importance_weighted_monte_carlo_integration(lik_ratios_unconstrained_over_safe, beta_t)
-
-                    logger.info(f"Selected beta_t = {beta_t}, psi_hat_t = {psi_hat_t}")
-                    logger.info(f"cal weights normalized sum : {np.sum(w_cal_normalized[cal_infeasible_indicators])}")
-                    logger.info(f"w_test_normalized sum : {w_test_normalized}")
-
-
-                    ## Compute constrained likelihoods for cal data on current candidate bound, beta_t
-                    # cal_constrained_liks_curr = constrain_likelihoods(cal_data_tmin1_safe_and_t_unconstrained_liks,[betas_list[-1]] + [beta_t], [psis_list[-1]] + [psi_hat_t])
-
-
-
-                    # prop_constrained_liks_curr = constrain_likelihoods(prop_data_tmin1_safe_and_t_unconstrained_liks,[betas_list[-1]] + [beta_t], [psis_list[-1]] + [psi_hat_t])
-
-
-                    ## Save proposals with cpc-constrained likelihoods
-                    
-                    constrained_liks_df_beta_hat = pd.concat([constrained_liks_df.iloc[:, :-1], pd.DataFrame({f'con_lik_r{n_cal_sets}' : prop_constrained_liks_curr[:,-1]})], axis=1)
-                    constrained_liks_df_beta_hat_fp = os.path.join(os.path.dirname(constrained_gen_liks_fp), f"cpc_prop_alpha{cfg.conformal_policy_control.alpha}_beta{betas_list[-1]:.3g}_{constrained_gen_liks_fp}")
-                    constrained_liks_df_beta_hat.to_json(constrained_liks_df_beta_hat_fp, orient="records", lines=True)
-
-                    ## Also save proposals with unconstrained likelihoods
-                    unconstrained_liks_df_beta_hat_fp = os.path.join(os.path.dirname(unconstrained_gen_liks_fp), f"cpc_prop_alpha{cfg.conformal_policy_control.alpha}_beta{betas_list[-1]:.3g}_{unconstrained_gen_liks_fp}")
-                    unconstrained_df.to_json(unconstrained_liks_df_beta_hat_fp, orient="records", lines=True)
-
-                    check_col_names(constrained_liks_df_beta_hat)
-                    check_col_names(unconstrained_df)
-                    
-                    return beta_t, psi_hat_t, n_safe_actions_curr, constrained_liks_df_beta_hat, constrained_liks_df_beta_hat_fp, unconstrained_df, unconstrained_liks_df_beta_hat_fp
+                check_col_names(constrained_liks_df_beta_hat)
+                check_col_names(unconstrained_df)
+                
+                return beta_t, psi_hat_t, n_safe_actions_curr, constrained_liks_df_beta_hat, constrained_liks_df_beta_hat_fp, unconstrained_df, unconstrained_liks_df_beta_hat_fp
 
             
     ## If does not find a risk-controlling policy:
@@ -1865,8 +1872,14 @@ def run_compute_liks_all_models_and_cal_data(
                 file_exists = fs.exists(target_fp)
                 target_df = pd.read_json(target_fp, orient="records", lines=True)
 
+                if file_exists:
+                    ## If file exists, check if already has all likelihoods computed for models trying to compute for
+                    all_liks_computed = True
+                    for m in model_indices:
+                        all_liks_computed = all_liks_computed and f"lik_r{m}" in target_df.columns
+
                 ## If not overwriting, file exists, and contains updated likelihoods (for most recent model), then don't overwrite
-                if not cfg.overwrite_cmp_lik_all and file_exists and f"lik_r{model_indices[-1]}" in target_df.columns:
+                if not cfg.overwrite_cmp_lik_all and file_exists and all_liks_computed:
                     logger.info(f"target_fp {target_fp} already exists with likelihoods computed. Skipping likelihoods computation...")
                 else:
                     logger.info(f"Running compute_likelihoods all models...")
