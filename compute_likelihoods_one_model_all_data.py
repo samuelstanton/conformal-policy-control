@@ -128,13 +128,20 @@ def compute_likelihoods_one_model_all_data(cfg: DictConfig, logger: logging.Logg
 
     # last_timestep_idx = len(cfg.prev_target_data_path_list) - 1
 
-    ## For each model, compute likelihoods of each target sequence, averaged over seeds
-    # all_timestep_likelihoods = [] 
-    num_prev_cal = len(cfg.prev_target_data_path_list)
+    ## This will also be model idx; eg, if 3 prev cal sets {0, 1, 2}, then current model idx is 3
+    num_prev_cal = len(cfg.prev_target_data_path_list) 
+    
+
     for i, target_data_path in enumerate(cfg.prev_target_data_path_list):
 
         ## Load target data
         target_df = pd.read_json(target_data_path, orient="records", lines=True)
+
+        ## Ensure that only get previous target data with 
+        lik_col_names_prev = [f'lik_r{c}' for c in range(num_prev_cal)]
+        target_df = target_df[['particle', 'score'] + lik_col_names_prev]
+
+        
         target_data = target_df.to_dict("list")
         # breakpoint()
         formatted_targets = formatting_texts_func_single_seq(target_data)

@@ -1,20 +1,24 @@
 log_level: info
 run_name: smaller_pythia #smaller_pythia_0.25dist_0.1maxinf_50gen
-parent_output_dir: s3://prescient-pcluster-data/prinstea/llome/parent_output_20250918_noCPC #_20250901_evol0.5 #/data/bucket/prinstea/llome/parent_output
-local_output_dir: /homefs/home/prinstea/llome/local_output_20250918_noCPC #_20250901_evol0.5
+parent_output_dir: s3://prescient-pcluster-data/prinstea/llome/parent_output_20250924_wtest #parent_output_20250918_noCPC  #parent_output_20250923 #_20250901_evol0.5 #/data/bucket/prinstea/llome/parent_output
+local_output_dir: /homefs/home/prinstea/llome/local_output_20250924_wtest #local_output_20250918_noCPC  #local_output_20250923 #_20250901_evol0.5
 overwrite_ga: False ## If False, will only run genetic algorithm when output file does not already exist.
 overwrite_gpt: False ## If False, will only run GPT pretraining when output file does not already exist.
 overwrite_initial_sft: False ## If False, will only run SFT when output file does not already exist.
-overwrite_initg: False #False ## If False, will only run initial generation when output file does not already exist.
 overwrite_init_sft_formatter: False
+overwrite_initg: False #False ## If False, will only run initial generation when output file does not already exist.
+overwrite_split_init: False
+
 
 overwrite_sft: False ## If False, will only run SFT when output file does not already exist.
 overwrite_ig: False ## If False, will only run iterative generation when output file does not already exist.
-overwrite_cg: False ## If False, will only run contrastive generation when output file does not already exist.
+overwrite_split: False
+overwrite_cg: True ## If False, will only run contrastive generation when output file does not already exist.
 overwrite_cmp_lik_all: False #False #True ## If False, will only run compute_likelihoods_all_models when output file doesn't exist.
-overwrite_sft_formatter: False
-overwrite_dpo_formatter: False
-overwrite: False  # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
+overwrite_sft_formatter: True
+overwrite_dpo_formatter: True
+overwrite_marge: True # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
+overwrite: True # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
 
 
 run_evol_dataset_gen: True
@@ -52,9 +56,9 @@ num_train_pi_sft0: 500 ## Num of training samples to use in first policy improve
 cal_frac: 0.5 #0.05 ## Fraction of generated outputs to place in calibration data (rather than training) at each time
 num_cal_per_step: 10
 num_train_per_step: 40
-train_frac_from_non_cal: 0.1 ## Fraction of *non-cal, deduplicated* generated outputs to place in training data (rather than calibration) at each time
-temperature: 1.0
-temperature_init: 1.0
+train_frac_from_non_cal: 1.0 ## Fraction of *non-cal, deduplicated* generated outputs to place in training data (rather than calibration) at each time
+temperature_init: 0.8 #1.0
+temperature: 1.2
 
 # # Only include this section if the initial model should be trained from scratch!
 # initial_model_config:
@@ -81,7 +85,7 @@ evol_dataset_gen:
   args:
     optimizer:
       num_particles: 5000 #10000 #1000
-      mutation_prob: 0.05 #0.005
+      mutation_prob: 0.05 #0.05 #0.005
     test_function:
       num_states: 32
       dim: 32
@@ -248,7 +252,7 @@ gpt:
 initial_sft:
   args:
     training_args:
-      num_train_epochs: 2 #10 #2 #10
+      num_train_epochs: 5 #10 #2 #10
       seed: 0
       eval_steps: 0.1
       save_steps: 0.2
@@ -469,9 +473,9 @@ iterative_generation:
 
 
 conformal_policy_control:
-  alpha: 0.5
+  alpha: 0.51 #0.5 #1.0 #0.25 #0.5 #0.3 #1.0 #0.5
   args:
-    n_grid: 20 ## Approx size of grid to search over for lik-ratio bound
+    n_grid: 100 ## Approx size of grid to search over for lik-ratio bound
     n_grid_safe_actions: 20
   accept_reject:
     n_target: 1000

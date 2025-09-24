@@ -22,13 +22,10 @@ def check_col_names(df):
     for c in df.columns:
         if (c[0] == 'l' and c[1]=='i') or c[0] == 'c':
             lik_cols.append(c)
-        # if c == 'd':
-        #     breakpoint()
-    # breakpoint()
+
     col_indices = [int(c[-1]) for c in lik_cols]
     for i in range(len(col_indices)):
-        # if i == 'd':
-        #     breakpoint()
+
         if i > 0 and col_indices[i] - col_indices[i-1] != 1:
             raise ValueError(f"col indices not increasing {df.columns}")
 
@@ -207,7 +204,6 @@ def create_propen_sft_dataset(
     if n is not None:
         opts_str += f"n={n} "
     python_cmd_str += f"{opts_str} "
-    # breakpoint()
     overwrite_sft_flag = cfg.overwrite_init_sft_formatter if initial_sft else cfg.overwrite_sft_formatter
     if not overwrite_sft_flag and fs.exists(output_fp):
         logger.info(f"{output_fp} already exists. Skipping...")
@@ -264,7 +260,6 @@ def create_propen_preference_dataset(
         opts_str += f"n={n} "
 
     python_cmd_str += f"{opts_str} "
-    # breakpoint()
     if not cfg.overwrite_dpo_formatter and fs.exists(output_fp):
         logger.info(f"{output_fp} already exists. Skipping...")
         return output_fp
@@ -311,36 +306,50 @@ def gpt_model_already_trained(
     return None
 
 
-def train_cal_split_gen_outputs(cfg: DictConfig, gen_outputs : str, sft_dir : str, sample_num_cal: int = None, sample_num_train: int = None, first_iter: bool = False):
+def train_cal_split_gen_outputs(cfg: DictConfig, fs: LocalOrS3Client, gen_outputs : str, sft_dir : str, sample_num_cal: int = None, sample_num_train: int = None, first_iter: bool = False):
     gen_outputs_df = pd.read_json(gen_outputs, orient="records", lines=True)
     # if first_iter:
     #     output_filename_suffix = f"gens_likelihood_{cfg.iterative_generation.init_args.sample_size}sample_{cfg.iterative_generation.init_args.max_iterations}iter"
     # else:
     # output_filename_suffix = f"gens_likelihood_{cfg.iterative_generation.args.sample_size}sample_{cfg.iterative_generation.args.max_iterations}iter"
 
-    ## Cal data (sample exchangeably, without replacement, from generated samples)
-    if sample_num_cal is not None:
-        ## If want to sample desired number, and 2x that desired number is available
-        cal_df = gen_outputs_df.sample(n=sample_num_cal, random_state=cfg.random_seed)
-    else:
-        cal_df = gen_outputs_df.sample(frac=cfg.cal_frac, random_state=cfg.random_seed)
+
     cal_output_path = os.path.join(sft_dir, f"alpha{cfg.conformal_policy_control.alpha}_cal_gens_all_likelihoods_temp1.0.jsonl")
-    # cal_output_path = "cal_gens_all_likelihoods_temp1.0.jsonl"
-    cal_df = cal_df
-    cal_df.to_json(cal_output_path, orient="records", lines=True)
-
-
-    ## Training data (sample exchangeably, w/o replacement, from *non-cal, deduplicated* generated samples)
-    non_cal_gen_outputs_df = gen_outputs_df.drop(cal_df.index) ## non cal
-    non_cal_gen_outputs_df_unique = non_cal_gen_outputs_df.drop_duplicates(subset=["particle"]) ## de-duplicate
-    if sample_num_train is not None:
-        train_df = non_cal_gen_outputs_df_unique.sample(n=sample_num_train, random_state=cfg.random_seed)
-    else:
-        train_df = non_cal_gen_outputs_df_unique.sample(frac=cfg.train_frac_from_non_cal, random_state=cfg.random_seed)
     train_output_path = os.path.join(sft_dir, f"alpha{cfg.conformal_policy_control.alpha}_train_gens_all_likelihoods_temp1.0.jsonl")
-    # train_output_path = "cal_gens_all_likelihoods_temp1.0.jsonl"
-    train_df.to_json(train_output_path, orient="records", lines=True)
 
+    overwrite_split_flag = cfg.overwrite_split_init if first_iter else cfg.overwrite_split
+
+    if not overwrite_split_flag and fs.exists(cal_output_path) and fs.exists(train_output_path):
+        ## If not overwriting and both files exist, then load and return dataframes and paths
+        cal_df = pd.read_json(cal_output_path, orient="records", lines=True)
+        train_df = pd.read_json(train_output_path, orient="records", lines=True)
+
+    else:
+        ## Else, either overwriting or files do not exist, so create them
+
+        ## Cal data (sample exchangeably, without replacement, from generated samples)
+        if sample_num_cal is not None:
+            ## If want to sample desired number, and 2x that desired number is available
+            cal_df = gen_outputs_df.sample(n=sample_num_cal, random_state=cfg.random_seed)
+        else:
+            cal_df = gen_outputs_df.sample(frac=cfg.cal_frac, random_state=cfg.random_seed)
+        # cal_output_path = "cal_gens_all_likelihoods_temp1.0.jsonl"
+        cal_df = cal_df
+        cal_df.to_json(cal_output_path, orient="records", lines=True)
+
+
+        ## Training data (sample exchangeably, w/o replacement, from *non-cal, deduplicated* generated samples)
+        non_cal_gen_outputs_df = gen_outputs_df.drop(cal_df.index) ## non cal
+        non_cal_gen_outputs_df_unique = non_cal_gen_outputs_df.drop_duplicates(subset=["particle"]) ## de-duplicate
+        if sample_num_train is not None:
+            train_df = non_cal_gen_outputs_df_unique.sample(n=sample_num_train, random_state=cfg.random_seed)
+        else:
+            if cfg.train_frac_from_non_cal < 1.0:
+                train_df = non_cal_gen_outputs_df_unique.sample(frac=cfg.train_frac_from_non_cal, random_state=cfg.random_seed)
+            else:
+                train_df = non_cal_gen_outputs_df_unique
+        # train_output_path = "cal_gens_all_likelihoods_temp1.0.jsonl"
+        train_df.to_json(train_output_path, orient="records", lines=True)
 
     return cal_df, cal_output_path, train_df, train_output_path
 
@@ -1109,8 +1118,7 @@ def run_iterative_generation(
     """
     Runs iterative generation jobs, combines the outputs, and returns the combined output filepath.
     """
-    # if model_dir[-1] == '0':
-        # breakpoint()
+
 
     if output_dir == None:
         output_dir = model_dir
@@ -1247,7 +1255,7 @@ def get_num_safe_actions(cfg, cal_infeasible_indicators, cal_lik_numerator, cal_
     w_test = np.mean(prop_lik_numerator / prop_lik_denominator)
 
     for n in range(1, n_target + 1)[::-1]:
-        w_test_curr = n * w_test #* (1 + cfg.conformal_policy_control.alpha)
+        w_test_curr = n * w_test # * 2 #* (1 + cfg.conformal_policy_control.alpha)
 
         sum_w_cal_test = sum_w_cal + w_test_curr
 
@@ -1257,7 +1265,6 @@ def get_num_safe_actions(cfg, cal_infeasible_indicators, cal_lik_numerator, cal_
 
         if (np.sum(w_cal_normalized[cal_infeasible_indicators]) + w_test_curr_normalized <= cfg.conformal_policy_control.alpha):
             return n
-    # breakpoint()
     return 0
 
 
@@ -1563,7 +1570,7 @@ def run_conformal_policy_control(
             logger.info(f"cal_data_constrained_curr.columns : {cal_data_constrained_curr.columns}")
             logger.info(f"cal_data_unconstrained_all.columns : {cal_data_unconstrained_all.columns}")
             logger.info(f"cal_data_unconstrained_curr.columns : {cal_data_unconstrained_curr.columns}")
-            raise ValueError(f"Error: cal_data_constrained_all.columns.equals(cal_data_constrained_curr.columns) : {cal_data_constrained_all.columns.equals(cal_data_constrained_curr.columns)}")
+            raise ValueError(f"Error: cal_data_constrained_all.columns. equals(cal_data_constrained_curr.columns) : {cal_data_constrained_all.columns.equals(cal_data_constrained_curr.columns)}")
 
     check_col_names(cal_data_constrained_all)
     check_col_names(cal_data_unconstrained_all)
@@ -1572,7 +1579,6 @@ def run_conformal_policy_control(
     # cal_data_tmin1_safe_and_t_unconstrained_liks = pd.concat([cal_data_constrained_all[constrained_lik_cols[-2]], cal_data_unconstrained_all[unconstrained_lik_cols[-1]]], axis=1).to_numpy()
     # cal_data_tmin1_safe_and_t_unconstrained_liks = pd.concat([cal_data_constrained_all.iloc[:,-2], cal_data_unconstrained_all.iloc[:,-1]], axis=1).to_numpy()
     cal_data_tmin1_safe_and_t_unconstrained_liks = pd.concat([cal_data_constrained_all.iloc[:,-1], cal_data_unconstrained_all.iloc[:,-1]], axis=1).to_numpy()  ## Double check this
-
 
     ## For cal data: Use constrained likelihoods to compute mixture distribution
     cal_data_constrained_all_liks = cal_data_constrained_all[constrained_lik_cols].to_numpy()
@@ -1631,14 +1637,15 @@ def run_conformal_policy_control(
 
         
         n_safe_actions = get_num_safe_actions(cfg, cal_infeasible_indicators, cal_data_constrained_all.iloc[:,-1].to_numpy(), cal_mixture_constrained_density, constrained_liks_df.iloc[:, -2].to_numpy(), prop_mixture_constrained_density, cfg.conformal_policy_control.accept_reject.n_target)
-        # n_safe_actions_uncon = get_num_safe_actions(cfg, cal_infeasible_indicators, cal_data_unconstrained_all.iloc[:,-1].to_numpy(), cal_mixture_constrained_density, unconstrained_df.iloc[:, -2].to_numpy(), prop_mixture_constrained_density, cfg.conformal_policy_control.accept_reject.n_target)
+        n_safe_actions_uncon = get_num_safe_actions(cfg, cal_infeasible_indicators, cal_data_unconstrained_all.iloc[:,-1].to_numpy(), cal_mixture_constrained_density, unconstrained_df.iloc[:, -2].to_numpy(), prop_mixture_constrained_density, cfg.conformal_policy_control.accept_reject.n_target)
         # for steps_back_to_safe in range(1, len(cal_data_constrained_all.columns)+1):
         #     n_safe_actions = get_num_safe_actions(cfg, cal_infeasible_indicators, cal_data_constrained_all.iloc[:,-steps_back_to_safe].to_numpy(), cal_mixture_constrained_density, constrained_liks_df.iloc[:, -(steps_back_to_safe+1)].to_numpy(), prop_mixture_constrained_density, cfg.conformal_policy_control.accept_reject.n_target)
         #     # n_safe_actions_uncon = get_num_safe_actions(cfg, cal_infeasible_indicators, cal_data_unconstrained_all.iloc[:,-steps_back_to_safe].to_numpy(), cal_mixture_constrained_density, unconstrained_df.iloc[:, -(steps_back_to_safe+1)].to_numpy(), prop_mixture_constrained_density, cfg.conformal_policy_control.accept_reject.n_target)
         
-        # breakpoint()
 
-        # n_safe_actions_curr = (n_safe_actions + n_safe_actions_uncon) / 2 if n_safe_actions_uncon < n_safe_actions else n_safe_actions
+        # n_safe_actions_curr = n_safe_actions
+
+        n_safe_actions_curr = (n_safe_actions + n_safe_actions_uncon) / 2 if n_safe_actions_uncon < n_safe_actions else n_safe_actions
 
         if n_safe_actions == 0:
             ## If cannot take any actions under the safe policy, then that's the best can do and return with safe policy
@@ -1711,8 +1718,8 @@ def run_conformal_policy_control(
             w_test_normalized = w_test / sum_w_cal_test
 
 
-            # if b % 10 == 0:
-            #     breakpoint()
+            if b % 10 == 0:
+                breakpoint()
 
             ## Check if constraint is satisfied
             if (np.sum(w_cal_normalized[cal_infeasible_indicators]) + w_test_normalized <= cfg.conformal_policy_control.alpha):
@@ -2119,45 +2126,65 @@ def main(cfg: DictConfig):
     )
 
 
+    ## Check that initial model is empirically safe
+    init_gen_outputs_df = pd.read_json(iter_gen_outputs_list[0], orient="records", lines=True)
+    init_gen_scores = init_gen_outputs_df['score'].to_numpy()
+    cal_infeasible_indicators = np.isnan(init_gen_scores) | np.isinf(init_gen_scores)
+
+
     ## Initialize lists of models and seeds for policy improvement loop
     pi_model_fp_list = [all_model_paths[-1]]
     pi_seeds_filepaths_list = [seeds_fp]
 
 
-    ## Compute likelihoods for all initial generated data
-    gen_liks_fp, hd = run_compute_liks_all_models_and_cal_data(
-        cfg,
-        file_client,
-        seeds_fp_list=pi_seeds_filepaths_list,
-        prev_cal_data_fp_list=[],
-        model_dir_list=pi_model_fp_list,
-        target_fp=iter_gen_outputs_list[-1],
-        temps=[cfg.temperature],
-    )
+    # ## Compute likelihoods for all initial generated data
+    # gen_liks_fp, hd = run_compute_liks_all_models_and_cal_data(
+    #     cfg,
+    #     file_client,
+    #     seeds_fp_list=pi_seeds_filepaths_list,
+    #     prev_cal_data_fp_list=[],
+    #     model_dir_list=pi_model_fp_list,
+    #     target_fp=iter_gen_outputs_list[-1],
+    #     temps=[cfg.temperature],
+    # )
     # gen_liks_df = pd.read_json(gen_liks_fp, orient="records", lines=True)
 
-    
 
     '''Split last batch of generated outputs into training and calibration data'''
     cal_df, cal_unconstrained_output_path, train_df, train_output_path = \
-        train_cal_split_gen_outputs(cfg, iter_gen_outputs_list[0], sft_dir, first_iter=True) #, sample_num_cal=cfg.num_cal_per_step, sample_num_train=cfg.num_train_per_step)
+        train_cal_split_gen_outputs(cfg, file_client, iter_gen_outputs_list[0], sft_dir, first_iter=True) #, sample_num_cal=cfg.num_cal_per_step, sample_num_train=cfg.num_train_per_step)
     prev_round_outputs_fp = train_output_path ## Hereon, prev_round_outputs_fp will only contain training data
     # cal_data_fp_list.append(cal_output_path)
     logger.info(f"cal_r0 (n_cal{i}={len(cal_df)}) output path: {cal_unconstrained_output_path}")
     logger.info(f"train_r0 (n_tr{i}={len(train_df)}) output path: {train_output_path}")
 
+
+    ## Compute likelihoods for all initial generated data
+    cal_unconstrained_output_path_list, hd = run_compute_liks_all_models_and_cal_data(
+        cfg,
+        file_client,
+        seeds_fp_list=pi_seeds_filepaths_list,
+        prev_cal_data_fp_list=[],
+        model_dir_list=pi_model_fp_list,
+        target_fp=cal_unconstrained_output_path,
+        temps=[cfg.temperature],
+    )
+    cal_unconstrained_output_path = cal_unconstrained_output_path_list[0]
+
     ## Keep track of calibration data with *unconstrained* liklihoods
     cal_data_unconstrained_fp_list = [cal_unconstrained_output_path]
     
-
+    cal_df = pd.read_json(cal_unconstrained_output_path_list[0], orient="records", lines=True)
     ## Save initial calibration data with constrained likelihoods  
     cal_constrained_liks_df = cal_df.copy(deep=True)
+    cal_constrained_liks_df = cal_constrained_liks_df[['particle', 'score', 'lik_r0']]
     cal_constrained_liks_df = cal_constrained_liks_df.rename(columns={'lik_r0' : 'con_lik_r0'})
     cal_constrained_output_path = os.path.join(os.path.dirname(cal_unconstrained_output_path), f'constrained_{os.path.basename(cal_unconstrained_output_path)}')
     cal_constrained_liks_df.to_json(cal_constrained_output_path, orient="records", lines=True)
 
     ## Keep track of calibration data with *constrained* liklihoods
     cal_data_constrained_fp_list = [cal_constrained_output_path]
+
 
 
     betas_list = [np.inf]
@@ -2332,7 +2359,7 @@ def main(cfg: DictConfig):
 
         '''Split last batch of generated outputs into training and calibration data'''
         cal_df, cal_unconstrained_output_path, train_df, train_output_path = \
-            train_cal_split_gen_outputs(cfg, iter_gen_outputs_list[0], sft_dir) #, sample_num_cal=cfg.num_cal_per_step, sample_num_train=cfg.num_train_per_step)
+            train_cal_split_gen_outputs(cfg, file_client, iter_gen_outputs_list[0], sft_dir) #, sample_num_cal=cfg.num_cal_per_step, sample_num_train=cfg.num_train_per_step)
         prev_round_outputs_fp = train_output_path ## Hereon, prev_round_outputs_fp will only contain training data
         cal_data_unconstrained_fp_list.append(cal_unconstrained_output_path)
         logger.info(f"cal_r0 (n_cal{i}={len(cal_df)}) output path: {cal_unconstrained_output_path}")
@@ -2518,7 +2545,7 @@ def main(cfg: DictConfig):
 
         '''Split last batch of generated outputs into training and calibration data'''
         cal_df, cal_unconstrained_output_path, train_df, train_output_path = \
-            train_cal_split_gen_outputs(cfg, unconstrained_liks_df_beta_hat_fp, dpo_dir) #, sample_num_cal=cfg.num_cal_per_step, sample_num_train=cfg.num_train_per_step)
+            train_cal_split_gen_outputs(cfg, file_client, unconstrained_liks_df_beta_hat_fp, dpo_dir) #, sample_num_cal=cfg.num_cal_per_step, sample_num_train=cfg.num_train_per_step)
         prev_round_outputs_fp = train_output_path ## Hereon, prev_round_outputs_fp will only contain training data
         cal_data_unconstrained_fp_list.append(cal_unconstrained_output_path)
         logger.info(f"cal_r0 (n_cal{i}={len(cal_df)}) output path: {cal_unconstrained_output_path}")
@@ -2609,7 +2636,6 @@ def main(cfg: DictConfig):
             cfg, "initial_model_config"
         )
 
-
         ## Train new model
         marge_dir = train_marge(
             cfg,
@@ -2648,7 +2674,6 @@ def main(cfg: DictConfig):
             temps = [cfg.temperature]
         logger.info(f"temps: {temps}")
 
-        # breakpoint()
 
         ## Add curr model unconstrained likelihoods to previously collected calibration data
         cal_all_liks_fp, hd = run_compute_liks_all_models_and_cal_data(
@@ -2665,7 +2690,6 @@ def main(cfg: DictConfig):
         )
         logger.info(f"cal_all_liks_fp : {cal_all_liks_fp}")
 
-        # breakpoint()
 
 
         ### CONFORMAL POLICY CONTROL
@@ -2710,14 +2734,11 @@ def main(cfg: DictConfig):
             check_col_names(cal_data_constrained_curr)
             check_col_names(cal_data_unconstrained_curr)
 
-            # breakpoint()
 
             cal_liks_df_tmin1_safe_and_t_unconstrained_mat = pd.concat([cal_data_constrained_curr.iloc[:, -1], cal_data_unconstrained_curr.iloc[:,-1]], axis=1).to_numpy() ## Double check this
 
             ## Compute constrained likelihoods, only starting from most recent safe likelihoods
-            # breakpoint()
             cal_constrained_t_curr = constrain_likelihoods(cal_liks_df_tmin1_safe_and_t_unconstrained_mat, betas_list, psis_list)
-
 
             cal_constrained_liks_df_beta_hat = pd.concat([cal_data_constrained_curr, pd.DataFrame({f'con_lik_r{i}' : cal_constrained_t_curr[:,-1]})], axis=1)
             check_col_names(cal_constrained_liks_df_beta_hat)
@@ -2769,8 +2790,8 @@ def main(cfg: DictConfig):
 
         '''Split last batch of generated outputs into training and calibration data'''
         cal_df, cal_unconstrained_output_path, train_df, train_output_path = \
-            train_cal_split_gen_outputs(cfg, unconstrained_gen_liks_fp, marge_dir) #, sample_num_cal=cfg.num_cal_per_step, sample_num_train=cfg.num_train_per_step)
-            # train_cal_split_gen_outputs(cfg, unconstrained_liks_df_beta_hat_fp, marge_dir)
+            train_cal_split_gen_outputs(cfg, file_client, unconstrained_gen_liks_fp, marge_dir) #, sample_num_cal=cfg.num_cal_per_step, sample_num_train=cfg.num_train_per_step)
+            # train_cal_split_gen_outputs(cfg, file_client, unconstrained_liks_df_beta_hat_fp, marge_dir)
         prev_round_outputs_fp = train_output_path ## Hereon, prev_round_outputs_fp will only contain training data
         cal_data_unconstrained_fp_list.append(cal_unconstrained_output_path)
         logger.info(f"cal_r0 (n_cal{i}={len(cal_df)}) output path: {cal_unconstrained_output_path}")
