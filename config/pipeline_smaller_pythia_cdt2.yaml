@@ -1,7 +1,7 @@
 log_level: info
 run_name: smaller_pythia #smaller_pythia_0.25dist_0.1maxinf_50gen
-parent_output_dir: s3://prescient-pcluster-data/prinstea/llome/parent_output_20250924_wtest #parent_output_20250918_noCPC  #parent_output_20250923 #_20250901_evol0.5 #/data/bucket/prinstea/llome/parent_output
-local_output_dir: /homefs/home/prinstea/llome/local_output_20250924_wtest #local_output_20250918_noCPC  #local_output_20250923 #_20250901_evol0.5
+parent_output_dir: s3://prescient-pcluster-data/prinstea/llome/parent_output_20250926 #parent_output_20250918_noCPC  #parent_output_20250923 #_20250901_evol0.5 #/data/bucket/prinstea/llome/parent_output
+local_output_dir: /homefs/home/prinstea/llome/local_output_20250926 #local_output_20250918_noCPC  #local_output_20250923 #_20250901_evol0.5
 overwrite_ga: False ## If False, will only run genetic algorithm when output file does not already exist.
 overwrite_gpt: False ## If False, will only run GPT pretraining when output file does not already exist.
 overwrite_initial_sft: False ## If False, will only run SFT when output file does not already exist.
@@ -10,15 +10,15 @@ overwrite_initg: False #False ## If False, will only run initial generation when
 overwrite_split_init: False
 
 
-overwrite_sft: True ## If False, will only run SFT when output file does not already exist.
-overwrite_ig: True ## If False, will only run iterative generation when output file does not already exist.
-overwrite_split: True
-overwrite_cg: True ## If False, will only run contrastive generation when output file does not already exist.
-overwrite_cmp_lik_all: True #False #True ## If False, will only run compute_likelihoods_all_models when output file doesn't exist.
+overwrite_sft: False ## If False, will only run SFT when output file does not already exist.
+overwrite_ig: False ## If False, will only run iterative generation when output file does not already exist.
+overwrite_split: False
+overwrite_cg: False ## If False, will only run contrastive generation when output file does not already exist.
+overwrite_cmp_lik_all: False #False #True ## If False, will only run compute_likelihoods_all_models when output file doesn't exist.
 overwrite_sft_formatter: False
-overwrite_dpo_formatter: True
+overwrite_dpo_formatter: False
 overwrite_marge: False # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
-overwrite: True # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
+overwrite: False # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
 
 
 run_evol_dataset_gen: True
@@ -83,16 +83,16 @@ temperature: 1.0 #1.0
 #   hidden_size: 64
 #   vocab_size: 512
 
-num_dpo_rounds: 10
+num_dpo_rounds: 0
 num_init_sft_rounds: 1 #5 #10
 num_sft_rounds: 0 #10
-num_marge_rounds:  0 #10
+num_marge_rounds:  10 #10
 
 evol_dataset_gen:
   args:
     optimizer:
-      num_particles: 1000 #10000 #1000
-      mutation_prob: 0.1 #0.05 #0.05 #0.005
+      num_particles: 2000 #10000 #1000
+      mutation_prob: 0.05 #0.05 #0.05 #0.005
     test_function:
       num_states: 32
       dim: 32
@@ -459,7 +459,7 @@ iterative_generation:
     seed: 0
     test_fn_type: "ehrlich"  # [ehrlich, mt_fuji]
     subsample_seeds: True ## Whether to subsample input seeds (with replacement), or to iterate through all of them
-    sample_size: 1 #10 #100 #200  # initial number of seeds to use for iterative generation
+    sample_size: 10 #10 #100 #200  # initial number of seeds to use for iterative generation
     max_iterations: 100 #50 #100 #10
     sampling_method: "best_scoring" ## Method for selecting seeds # "uniform", "combination", "best_scoring"
     generation_config:
@@ -480,7 +480,7 @@ iterative_generation:
 
 
 conformal_policy_control:
-  alpha: 0.4 #0.5 #1.0 #0.25 #0.5 #0.3 #1.0 #0.5
+  alpha: 0.3 #0.5 #1.0 #0.25 #0.5 #0.3 #1.0 #0.5
   args:
     n_grid: 100 ## Approx size of grid to search over for lik-ratio bound
     n_grid_safe_actions: 20

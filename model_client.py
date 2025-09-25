@@ -13,6 +13,7 @@ from tqdm import tqdm
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 from typing import Dict, List, Any, Optional, Tuple, Union
 
+import sys
 
 class ModelClient:
     def __init__(
@@ -541,6 +542,7 @@ class ModelClient:
                 outputs = self.model(**tokenized)
                 scores = outputs.logits / self.temperature
 
+
                 # probs = torch.exp(torch.nn.functional.log_softmax(scores, dim=-1)) ## Seems unnecessary to do exp(log(softmax)) ??
                 probs = torch.nn.functional.log_softmax(scores, dim=-1)
 
@@ -548,7 +550,8 @@ class ModelClient:
 
                 # get probs and mask out both padding and input tokens
                 inputs_tokenized = self._tokenize_batch(inputs[start_index:end_index])
-                input_seq_lens = inputs_tokenized.attention_mask.sum(-1)
+                input_seq_lens = inputs_tokenized.attention_mask.sum(-1) ## length = 75 
+                # logger.info(f"input_seq_lens : {input_seq_lens}")
                 input_tokens_mask = torch.LongTensor(
                     [
                         [0 for _ in range(input_seq_lens[i].item())]
@@ -562,6 +565,19 @@ class ModelClient:
                     ]
                 ).to(self.device)
                 indexes = tokenized.input_ids[:, 1:]
+                # logger.info(f"probs.shape : {probs.shape}")
+                # # logger.info(f"probs : {probs}")
+                # logger.info(f"indexes.unsqueeze(-1).shape : {indexes.unsqueeze(-1).shape}")
+                # # logger.info(f"indexes.unsqueeze(-1).shape : {indexes.unsqueeze(-1).shape}")
+                # logger.info(f"probs[:,:,:100] : {probs[:,:,:100]}")
+                # logger.info(f"torch.sum(exp(probs), dim=2) : {torch.sum(np.exp(probs), dim=2)}")
+
+
+                # logger.info(f"torch.gather(probs, -1, indexes.unsqueeze(-1)).shape : {torch.gather(probs, -1, indexes.unsqueeze(-1))[:, 74:84]}")
+                # logger.info(f"tokenized.attention_mask[:, 1:] : {tokenized.attention_mask[:, 74:84]}")
+                # logger.info(f"input_tokens_mask[:, 1:] : {input_tokens_mask[:, 74:84]}")
+                # logger.info(f"torch.gather(probs, -1, indexes.unsqueeze(-1)) : {torch.gather(probs, -1, indexes.unsqueeze(-1))}")
+
                 next_token_probs = (
                     torch.gather(probs, -1, indexes.unsqueeze(-1)).squeeze(-1)
                     * tokenized.attention_mask[:, 1:]
@@ -569,20 +585,47 @@ class ModelClient:
                 )
                 next_token_probs = next_token_probs.cpu().numpy()
                 targets_tokenized = self._tokenize_batch(targets[start_index:end_index])
-                targets_seq_lens = targets_tokenized.attention_mask.sum(-1).cpu().numpy()
-                log_likelihoods_batch = list(next_token_probs.sum(-1) / targets_seq_lens)
+                targets_seq_lens = targets_tokenized.attention_mask.sum(-1).cpu().numpy()  ## length = 75 
+                # logger.info(f"targets_seq_lens : {targets_seq_lens}")
+                log_likelihoods_batch = list(next_token_probs.sum(-1)) # / targets_seq_lens)
+
+                # logger.info(f"start_index : {start_index}, end_index : {end_index}")
+                # logger.info(f"targets_tokenized : {targets_tokenized}")
+
+                # logger.info(f"next_token_probs.sum(-1) : {next_token_probs.sum(-1)}")
+                # logger.info(f"targets_seq_lens : {targets_seq_lens}")
+                # logger.info(f"sum log_likelihoods_batch      : {log_likelihoods_batch}")
+                # logger.info(f"likelihoods_batch      : {np.exp(log_likelihoods_batch)}")
+
+
+                # logger.info("\n\n\n")
+                # logger.info(f"next_token_probs.shape : {next_token_probs.shape}")
+                # # logger.info(f"next_token_probs       : {next_token_probs}")
+                # logger.info(f"sum log_liks next token       : {np.sum(next_token_probs[:, 74:])}")
+                # logger.info(f"exp sum log_liks next token   : {np.exp(np.sum(next_token_probs[:, 74:]))}")
+                # logger.info(f"input_seq_lens : {input_seq_lens}")
+                # logger.info(f"prod next_token_probs       : {np.prod(next_token_probs[input_seq_lens:end_index])}")
+
+
+
 
                 log_likelihoods_target.extend(log_likelihoods_batch)
 
                 # seq_log_likelihoods = list(next_token_probs.prod(-1) / targets_seq_lens)
                 # all_log_likelihoods.extend(avg_log_likelihoods)
-                # logger.info(f"log_likelihoods_target len : {len(log_likelihoods_target)}")
+            #     logger.info(f"likelihoods_target len : {len(log_likelihoods_target)}")
+
+            # logger.info(f"likelihoods_target : {log_likelihoods_target}")
+            all_likelihoods.append(max(np.exp(log_likelihoods_target).mean(), sys.float_info.min)) ## Clip likelihoods at minimum float value for now (if was generated, then actual likelihood is positive)
+            # all_likelihoods.append(torch.mean(log_likelihoods_target))
+            # all_likelihoods.append(likelihoods_target.prod())
+
 
             # logger.info(f"np.exp(log_likelihoods_target) : {np.exp(log_likelihoods_target)}")
-            all_likelihoods.append(np.exp(log_likelihoods_target).mean())
             # logger.info(f"seq likelihood : {all_likelihoods[-1]}")
             # logger.info(f"len(all_likelihoods) : {len(all_likelihoods)}")
-            
+
+
                 
         return all_likelihoods
 

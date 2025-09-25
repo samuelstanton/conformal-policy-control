@@ -73,30 +73,30 @@ def prepare_grid(
     n_grid: int = 100, ## int, approximately how many values want to have in resulting grid
     proposal: str = 'unconstrained', ## str, 'unconstrained' or 'safe' to indicate prop dist
 ):
-    G = np.sort(V)[::-1]
+    G = np.sort(np.unique(V))[::-1]
     max_G = G[0]
 
     ## If wanted to return power-series decreasing grid, rather than based on empirical quantiles
     # return np.concatenate(([np.inf], [v / (1.2**(i)) for i, v in enumerate(np.linspace(sys.float_info.min, max_G, num=n_grid)[::-1])]))
 
     if proposal == 'unconstrained':
-        # G = G[G>1] ## For unconstrained, only consider bounds at least equal to 1
+        G = G[G>1] ## For unconstrained, only consider bounds at least equal to 1
 
         ## Coarsen grid to approximately n_grid elements
         n_curr = len(G)
         k = max(int(n_curr / n_grid), 1)
         G = G[::k]
-        # G = np.concatenate(([np.inf], G, [1])) ## For unconstrained, ensure also consider unconstrained policy in grid (np.inf) and 1 as bounds
-        G = np.concatenate(([np.inf], G)) ## For unconstrained, ensure also consider unconstrained policy in grid (np.inf) and 1 as bounds
+        G = np.concatenate(([np.inf], G, [1])) ## For unconstrained, ensure also consider unconstrained policy in grid (np.inf) and 1 as bounds
+        # G = np.concatenate(([np.inf], G)) ## For unconstrained, ensure also consider unconstrained policy in grid (np.inf) and 1 as bounds
 
     else:
-        # G = G[G<1] ## For safe policy, only consider bounds no greater than 1
+        G = G[G<1] ## For safe policy, only consider bounds no greater than 1
 
         ## Coarsen grid to approximately n_grid elements
         n_curr = len(G)
         k = max(int(n_curr / n_grid), 1) #if n_curr / int(n_curr / n_grid) > n_grid else 1
         G = G[::k]
-        # G = np.concatenate((G, [sys.float_info.min])) ## For safe, ensure that include minimum positive float value
+        G = np.concatenate((G, [sys.float_info.min])) ## For safe, ensure that include minimum positive float value
 
     return G
 
@@ -1702,7 +1702,7 @@ def run_conformal_policy_control(
 
 
         n_safe_actions_curr = n_safe_actions
-        G = np.concatenate((G, [sys.float_info.min]))
+        # G = np.concatenate((G, [sys.float_info.min]))
 
         # k = max(int(n_safe_actions/ cfg.conformal_policy_control.args.n_grid_safe_actions), 1)
 

@@ -55,6 +55,7 @@ def score(cfg: DictConfig, logger: logging.Logger = None):
     formatted_targets = formatting_texts_func_single_seq(target_data)
     # formatted_targets = [json.dumps(target) for target in data[cfg.target_field]]
     # avg_likelihoods = model_client.compute_likelihoods(
+    # breakpoint()
     avg_likelihoods = model_client.compute_likelihoods_avg(
         formatted_inputs,
         formatted_targets,

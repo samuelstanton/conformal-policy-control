@@ -1,9 +1,12 @@
-input_data_path: null #s3://prescient-pcluster-data/prinstea/llome/parent_output_20250908_moreSFT/smaller_pythia/smaller_pythia_sft_r1/seeds_gens_likelihood_10sample_100iter_temp1.0_10seqs.jsonl
-target_data_path: null #s3://prescient-pcluster-data/prinstea/llome/parent_output_20250908_moreSFT/smaller_pythia/smaller_pythia_sft_r1/cal_r0_gens_likelihood_10sample_100iter.jsonl
+input_data_path: s3://prescient-pcluster-data/prinstea/llome/parent_output_20250924/seeds_from_sft_init_r0_dense_neighborhood_pairs_xthres0.3_maxinfs0.05_30nn.jsonl
+#null #s3://prescient-pcluster-data/prinstea/llome/parent_output_20250908_moreSFT/smaller_pythia/smaller_pythia_sft_r1/seeds_gens_likelihood_10sample_100iter_temp1.0_10seqs.jsonl
+target_data_path: s3://prescient-pcluster-data/prinstea/llome/parent_output_20250925/smaller_pythia/smaller_pythia_alpha0.6_dpo_r4/cpc_constrained_alpha0.6_cal_gens_all_likelihoods_temp1.0.jsonl
+#null #s3://prescient-pcluster-data/prinstea/llome/parent_output_20250908_moreSFT/smaller_pythia/smaller_pythia_sft_r1/cal_r0_gens_likelihood_10sample_100iter.jsonl
 
 #s3://prescient-pcluster-data/prinstea/llome/parent_output_20250901_temp1/smaller_pythia/sft_r9_20250901dense_neighborhood_pairs_xthres0.3_maxinfs0.1_30nn.jsonl
 #s3://prescient-data-dev/sandbox/chena78/pipelines/sft_EleutherAI/pythia-2.8b_ehrlich_s8_d128_m8_l8_r10_s2000_ga_steps30_p1000_pm0.005_xthres0.25/sft_r0_dense_neighborhood_pairs_xthres0.25_maxinfs0.1_30nn.jsonl
-model_name_or_path: null #s3://prescient-pcluster-data/prinstea/llome/parent_output_20250908_moreSFT/smaller_pythia/smaller_pythia_sft_r1/
+model_name_or_path: /data/bucket/prinstea/llome/parent_output_20250925/smaller_pythia/smaller_pythia_alpha0.6_dpo_r4
+#null #s3://prescient-pcluster-data/prinstea/llome/parent_output_20250908_moreSFT/smaller_pythia/smaller_pythia_sft_r1/
 model_timestep: null ## Model's time index
 #s3://prescient-data-dev/sandbox/chena78/pipelines/sft_EleutherAI/pythia-2.8b_ehrlich_s8_d128_m8_l8_r10_s2000_ga_steps30_p1000_pm0.005_xthres0.25/sft_EleutherAI/pythia-2.8b_ehrlich_s8_d128_m8_l8_r10_s2000_ga_steps30_p1000_pm0.005_xthres0.25_sft_r0/
 batch_size: 10 #4
