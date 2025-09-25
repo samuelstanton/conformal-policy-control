@@ -615,8 +615,15 @@ def formatting_texts_func_single_seq(
         particle_field = 'higher_score_particle'
     elif 'lower_score_particle' in examples:
         particle_field = 'lower_score_particle'
-    else:
+    elif 'chosen' in examples:
+        particle_field = 'chosen'
+    elif 'prompt' in examples:
+        particle_field = 'prompt'
+    elif 'particle' in examples:
         particle_field = 'particle'
+    else:
+        raise ValueError("No recognized particle field")
+    
     if 'higher_score_particle_score' in examples:
         score_field = 'higher_score_particle_score'
     elif 'lower_score_particle_score' in examples:

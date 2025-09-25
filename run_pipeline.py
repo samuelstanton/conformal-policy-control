@@ -76,7 +76,7 @@ def prepare_grid(
     G = np.sort(V)[::-1]
     max_G = G[0]
 
-    # ## If wanted to return power-series decreasing grid, rather than based on empirical quantiles
+    ## If wanted to return power-series decreasing grid, rather than based on empirical quantiles
     # return np.concatenate(([np.inf], [v / (1.2**(i)) for i, v in enumerate(np.linspace(sys.float_info.min, max_G, num=n_grid)[::-1])]))
 
     if proposal == 'unconstrained':
@@ -314,8 +314,12 @@ def train_cal_split_gen_outputs(cfg: DictConfig, fs: LocalOrS3Client, gen_output
     # output_filename_suffix = f"gens_likelihood_{cfg.iterative_generation.args.sample_size}sample_{cfg.iterative_generation.args.max_iterations}iter"
 
 
-    cal_output_path = os.path.join(sft_dir, f"alpha{cfg.conformal_policy_control.alpha}_cal_gens_all_likelihoods_temp1.0.jsonl")
-    train_output_path = os.path.join(sft_dir, f"alpha{cfg.conformal_policy_control.alpha}_train_gens_all_likelihoods_temp1.0.jsonl")
+    if first_iter:
+        cal_output_path = os.path.join(sft_dir, f"alpha{cfg.conformal_policy_control.alpha}_cal_gens_all_likelihoods_temp{cfg.temperature_init}.jsonl")
+        train_output_path = os.path.join(sft_dir, f"alpha{cfg.conformal_policy_control.alpha}_train_gens_all_likelihoods_temp{cfg.temperature_init}.jsonl")
+    else:
+        cal_output_path = os.path.join(sft_dir, f"alpha{cfg.conformal_policy_control.alpha}_cal_gens_all_likelihoods_temp{cfg.temperature}.jsonl")
+        train_output_path = os.path.join(sft_dir, f"alpha{cfg.conformal_policy_control.alpha}_train_gens_all_likelihoods_temp{cfg.temperature}.jsonl")
 
     overwrite_split_flag = cfg.overwrite_split_init if first_iter else cfg.overwrite_split
 
@@ -332,7 +336,7 @@ def train_cal_split_gen_outputs(cfg: DictConfig, fs: LocalOrS3Client, gen_output
             ## If want to sample desired number, and 2x that desired number is available
             cal_df = gen_outputs_df.sample(n=sample_num_cal, random_state=cfg.random_seed)
         else:
-            cal_df = gen_outputs_df.sample(frac=cfg.cal_frac, random_state=cfg.random_seed)
+            cal_df = gen_outputs_df.sample(frac=cfg.split.cal_frac, random_state=cfg.random_seed)
         # cal_output_path = "cal_gens_all_likelihoods_temp1.0.jsonl"
         cal_df = cal_df
         cal_df.to_json(cal_output_path, orient="records", lines=True)
@@ -341,13 +345,22 @@ def train_cal_split_gen_outputs(cfg: DictConfig, fs: LocalOrS3Client, gen_output
         ## Training data (sample exchangeably, w/o replacement, from *non-cal, deduplicated* generated samples)
         non_cal_gen_outputs_df = gen_outputs_df.drop(cal_df.index) ## non cal
         non_cal_gen_outputs_df_unique = non_cal_gen_outputs_df.drop_duplicates(subset=["particle"]) ## de-duplicate
-        if sample_num_train is not None:
-            train_df = non_cal_gen_outputs_df_unique.sample(n=sample_num_train, random_state=cfg.random_seed)
+
+        if cfg.split.train_sampling_method == "uniform":
+            ## Randomly sample sequences for training set
+            if sample_num_train is not None:
+                train_df = non_cal_gen_outputs_df_unique.sample(n=sample_num_train, random_state=cfg.random_seed)
+            elif cfg.split.train_frac_from_non_cal < 1.0:
+                train_df = non_cal_gen_outputs_df_unique.sample(frac=cfg.split.train_frac_from_non_cal, random_state=cfg.random_seed)
+        elif cfg.split.train_sampling_method == "best_scoring":
+            ## Deterministically select top scoring sequences
+            if sample_num_train is not None:
+                train_df = non_cal_gen_outputs_df_unique.nlargest(sample_num_train, "score")
+            elif cfg.split.train_frac_from_non_cal < 1.0:
+                num_train = int(cfg.split.train_frac_from_non_cal * len(non_cal_gen_outputs_df_unique))
+                train_df = non_cal_gen_outputs_df_unique.nlargest(num_train, "score")
         else:
-            if cfg.train_frac_from_non_cal < 1.0:
-                train_df = non_cal_gen_outputs_df_unique.sample(frac=cfg.train_frac_from_non_cal, random_state=cfg.random_seed)
-            else:
-                train_df = non_cal_gen_outputs_df_unique
+            train_df = non_cal_gen_outputs_df_unique
         # train_output_path = "cal_gens_all_likelihoods_temp1.0.jsonl"
         train_df.to_json(train_output_path, orient="records", lines=True)
 
@@ -1296,7 +1309,11 @@ def accept_reject_sample_and_get_likelihoods(
     n_target: int, 
     ga_data_dir: str,
     temps: List[int]=[1.0],
-    depth: int = 0 ## Recursion depth
+    depth: int = 0, ## Recursion depth
+    higher_score_particle_field: str ="higher_score_particle",
+    lower_score_particle_field: str ="lower_score_particle",
+    higher_score_field:str ="higher_score",
+    lower_score_field: str ="lower_score",
 ) -> str:
 
     n_models = len(model_dir_list)
@@ -1325,6 +1342,7 @@ def accept_reject_sample_and_get_likelihoods(
 
             temps_curr = temps if len(model_dir_list) > 1 else [cfg.temperature_init]
 
+            # breakpoint()
             ## Sample using unconstrained model as proposal
             _, iter_gen_outputs_list, hd = run_iterative_generation(
                 cfg,
@@ -1333,13 +1351,15 @@ def accept_reject_sample_and_get_likelihoods(
                 ga_data_dir,
                 model_dir_list[-1], #sft_dir,
                 output_dir,
-                higher_score_particle_field="higher_score_particle",
-                lower_score_particle_field="lower_score_particle",
-                higher_score_field="higher_score",
-                lower_score_field="lower_score",
+                higher_score_particle_field=higher_score_particle_field,
+                lower_score_particle_field=lower_score_particle_field,
+                higher_score_field=higher_score_field,
+                lower_score_field=lower_score_field,
                 temps=temps_curr,
                 call_idx=call_idx ## Index for this generation has been called, including current, for same model directory
             )
+
+            # breakpoint()
 
             ## Compute unconstrained likelihoods for all models on the output proposal samples
             gen_liks_fp_list, hd = run_compute_liks_all_models_and_cal_data(
@@ -1428,7 +1448,11 @@ def accept_reject_sample_and_get_likelihoods(
                                             n_target, 
                                             ga_data_dir,
                                             temps,
-                                            depth + 1
+                                            depth + 1,
+                                            higher_score_particle_field=higher_score_particle_field,
+                                            lower_score_particle_field=lower_score_particle_field,
+                                            higher_score_field=higher_score_field,
+                                            lower_score_field=lower_score_field,
                                         )
 
             ## Compute unconstrained likelihoods for most recent model (not passed to recursion) on output proposal samples
@@ -1495,8 +1519,8 @@ def accept_reject_sample_and_get_likelihoods(
 
     if depth == 0:
         ## Only write to disk if depth == 0, meaning isn't part of recursion
-        accepted_unconstrained_gen_liks_fp = os.path.join(os.path.dirname(gen_liks_fp), f"{depth}u{os.path.basename(gen_liks_fp)}")
-        accepted_constrained_gen_liks_fp = os.path.join(os.path.dirname(gen_liks_fp), f"{depth}c{os.path.basename(gen_liks_fp)}")
+        accepted_unconstrained_gen_liks_fp = os.path.join(os.path.dirname(gen_liks_fp), f"beta{betas_list[-1]}_{depth}u_{os.path.basename(gen_liks_fp)}")
+        accepted_constrained_gen_liks_fp = os.path.join(os.path.dirname(gen_liks_fp), f"beta{betas_list[-1]}_{depth}c_{os.path.basename(gen_liks_fp)}")
     else:
         accepted_unconstrained_gen_liks_fp = os.path.join(os.path.dirname(gen_liks_fp), f"{depth}u_{os.path.basename(gen_liks_fp)}")
         accepted_constrained_gen_liks_fp = os.path.join(os.path.dirname(gen_liks_fp), f"{depth}c_{os.path.basename(gen_liks_fp)}")
@@ -1522,6 +1546,10 @@ def run_conformal_policy_control(
     betas_list: List[float],
     psis_list: List[float], ## Normalization constants
     ga_data_dir: str,
+    higher_score_particle_field: str ="higher_score_particle",
+    lower_score_particle_field: str ="lower_score_particle",
+    higher_score_field:str ="higher_score",
+    lower_score_field: str ="lower_score",
     # target_fp: str,
     # particle_field: str = "higher_score_particle",
     # score_field: str = "score",
@@ -1607,7 +1635,10 @@ def run_conformal_policy_control(
             = accept_reject_sample_and_get_likelihoods(cfg, fs, model_dir_list, seeds_fp_list, model_dir_list[-1],\
                                                        betas_list_tmp, psis_list_tmp, \
                                                        cfg.conformal_policy_control.accept_reject.n_target,\
-                                                       ga_data_dir)
+                                                       ga_data_dir, higher_score_particle_field=higher_score_particle_field,\
+                                                       lower_score_particle_field=lower_score_particle_field,
+                                                       higher_score_field=higher_score_field,
+                                                       lower_score_field=lower_score_field,)
         ## NOTE/Warning: for proposal == 'unconstrained', should have unconstrained_df == constrained_liks_df (identical); else, should have constrained_liks_df.iloc[:,-1] == constrained_liks_df.iloc[:,-2] (fully constrained)
         check_col_names(unconstrained_df)
         check_col_names(constrained_liks_df)
@@ -1625,7 +1656,9 @@ def run_conformal_policy_control(
         prop_data_tmin1_safe_and_t_unconstrained_liks = pd.concat([constrained_liks_df.iloc[:, -2], unconstrained_df.iloc[:, -1]], axis=1).to_numpy()
 
 
-        G = prepare_grid(lik_ratios_unconstrained_over_safe, 
+        lik_ratios_unconstrained_over_safe_cal_and_prop = np.concatenate((np.array(lik_ratios_unconstrained_over_safe), np.array(cal_data_unconstrained_all.iloc[:, -1] / cal_data_unconstrained_all.iloc[:, -2])))
+
+        G = prepare_grid(lik_ratios_unconstrained_over_safe_cal_and_prop, #lik_ratios_unconstrained_over_safe, 
                          n_grid = cfg.conformal_policy_control.args.n_grid,
                          proposal = proposal
                         )
@@ -1637,38 +1670,38 @@ def run_conformal_policy_control(
 
         
         n_safe_actions = get_num_safe_actions(cfg, cal_infeasible_indicators, cal_data_constrained_all.iloc[:,-1].to_numpy(), cal_mixture_constrained_density, constrained_liks_df.iloc[:, -2].to_numpy(), prop_mixture_constrained_density, cfg.conformal_policy_control.accept_reject.n_target)
-        n_safe_actions_uncon = get_num_safe_actions(cfg, cal_infeasible_indicators, cal_data_unconstrained_all.iloc[:,-1].to_numpy(), cal_mixture_constrained_density, unconstrained_df.iloc[:, -2].to_numpy(), prop_mixture_constrained_density, cfg.conformal_policy_control.accept_reject.n_target)
-        # for steps_back_to_safe in range(1, len(cal_data_constrained_all.columns)+1):
-        #     n_safe_actions = get_num_safe_actions(cfg, cal_infeasible_indicators, cal_data_constrained_all.iloc[:,-steps_back_to_safe].to_numpy(), cal_mixture_constrained_density, constrained_liks_df.iloc[:, -(steps_back_to_safe+1)].to_numpy(), prop_mixture_constrained_density, cfg.conformal_policy_control.accept_reject.n_target)
-        #     # n_safe_actions_uncon = get_num_safe_actions(cfg, cal_infeasible_indicators, cal_data_unconstrained_all.iloc[:,-steps_back_to_safe].to_numpy(), cal_mixture_constrained_density, unconstrained_df.iloc[:, -(steps_back_to_safe+1)].to_numpy(), prop_mixture_constrained_density, cfg.conformal_policy_control.accept_reject.n_target)
+        # n_safe_actions_uncon = get_num_safe_actions(cfg, cal_infeasible_indicators, cal_data_unconstrained_all.iloc[:,-1].to_numpy(), cal_mixture_constrained_density, unconstrained_df.iloc[:, -2].to_numpy(), prop_mixture_constrained_density, cfg.conformal_policy_control.accept_reject.n_target)
+        # # for steps_back_to_safe in range(1, len(cal_data_constrained_all.columns)+1):
+        # #     n_safe_actions = get_num_safe_actions(cfg, cal_infeasible_indicators, cal_data_constrained_all.iloc[:,-steps_back_to_safe].to_numpy(), cal_mixture_constrained_density, constrained_liks_df.iloc[:, -(steps_back_to_safe+1)].to_numpy(), prop_mixture_constrained_density, cfg.conformal_policy_control.accept_reject.n_target)
+        # #     # n_safe_actions_uncon = get_num_safe_actions(cfg, cal_infeasible_indicators, cal_data_unconstrained_all.iloc[:,-steps_back_to_safe].to_numpy(), cal_mixture_constrained_density, unconstrained_df.iloc[:, -(steps_back_to_safe+1)].to_numpy(), prop_mixture_constrained_density, cfg.conformal_policy_control.accept_reject.n_target)
         
 
-        # n_safe_actions_curr = n_safe_actions
+        # # n_safe_actions_curr = n_safe_actions
 
-        n_safe_actions_curr = (n_safe_actions + n_safe_actions_uncon) / 2 if n_safe_actions_uncon < n_safe_actions else n_safe_actions
+        # n_safe_actions_curr = (n_safe_actions + n_safe_actions_uncon) / 2 if n_safe_actions_uncon < n_safe_actions else n_safe_actions
 
-        if n_safe_actions == 0:
-            ## If cannot take any actions under the safe policy, then that's the best can do and return with safe policy
-            beta_t = sys.float_info.min
-            psi_hat_t = importance_weighted_monte_carlo_integration(lik_ratios_unconstrained_over_safe, beta_t)
-                        ## Save proposals with cpc-constrained likelihoods
+        # if n_safe_actions == 0:
+        #     ## If cannot take any actions under the safe policy, then that's the best can do and return with safe policy
+        #     beta_t = sys.float_info.min
+        #     psi_hat_t = importance_weighted_monte_carlo_integration(lik_ratios_unconstrained_over_safe, beta_t)
+        #                 ## Save proposals with cpc-constrained likelihoods
             
-            constrained_liks_df_beta_hat = pd.concat([constrained_liks_df.iloc[:, :-1], pd.DataFrame({f'con_lik_r{n_cal_sets}' : prop_constrained_liks_curr[:,-1]})], axis=1)
-            constrained_liks_df_beta_hat_fp = os.path.join(os.path.dirname(constrained_gen_liks_fp), f"cpc_prop_alpha{cfg.conformal_policy_control.alpha}_beta{betas_list[-1]:.3g}_{constrained_gen_liks_fp}")
-            constrained_liks_df_beta_hat.to_json(constrained_liks_df_beta_hat_fp, orient="records", lines=True)
+        #     constrained_liks_df_beta_hat = pd.concat([constrained_liks_df.iloc[:, :-1], pd.DataFrame({f'con_lik_r{n_cal_sets}' : prop_constrained_liks_curr[:,-1]})], axis=1)
+        #     constrained_liks_df_beta_hat_fp = os.path.join(os.path.dirname(constrained_gen_liks_fp), f"cpc_prop_alpha{cfg.conformal_policy_control.alpha}_beta{betas_list[-1]:.3g}_{constrained_gen_liks_fp}")
+        #     constrained_liks_df_beta_hat.to_json(constrained_liks_df_beta_hat_fp, orient="records", lines=True)
 
-            ## Also save proposals with unconstrained likelihoods
-            unconstrained_liks_df_beta_hat_fp = os.path.join(os.path.dirname(unconstrained_gen_liks_fp), f"cpc_prop_alpha{cfg.conformal_policy_control.alpha}_beta{betas_list[-1]:.3g}_{unconstrained_gen_liks_fp}")
-            unconstrained_df.to_json(unconstrained_liks_df_beta_hat_fp, orient="records", lines=True)
+        #     ## Also save proposals with unconstrained likelihoods
+        #     unconstrained_liks_df_beta_hat_fp = os.path.join(os.path.dirname(unconstrained_gen_liks_fp), f"cpc_prop_alpha{cfg.conformal_policy_control.alpha}_beta{betas_list[-1]:.3g}_{unconstrained_gen_liks_fp}")
+        #     unconstrained_df.to_json(unconstrained_liks_df_beta_hat_fp, orient="records", lines=True)
 
-            check_col_names(constrained_liks_df_beta_hat)
-            check_col_names(unconstrained_df)
+        #     check_col_names(constrained_liks_df_beta_hat)
+        #     check_col_names(unconstrained_df)
             
-            return beta_t, psi_hat_t, n_safe_actions, constrained_liks_df_beta_hat, constrained_liks_df_beta_hat_fp, unconstrained_df, unconstrained_liks_df_beta_hat_fp
+        #     return beta_t, psi_hat_t, n_safe_actions, constrained_liks_df_beta_hat, constrained_liks_df_beta_hat_fp, unconstrained_df, unconstrained_liks_df_beta_hat_fp
 
 
 
-        # n_safe_actions_curr = n_safe_actions
+        n_safe_actions_curr = n_safe_actions
         G = np.concatenate((G, [sys.float_info.min]))
 
         # k = max(int(n_safe_actions/ cfg.conformal_policy_control.args.n_grid_safe_actions), 1)
@@ -1701,16 +1734,15 @@ def run_conformal_policy_control(
 
             ## Compute estimated test point weight as the expectation of the ratio, with probabilities in the expectation given by prop_constrained_liks_curr[:,-1]
             prop_constrained_liks_curr_t = prop_constrained_liks_curr[:,-1].flatten()
-            w_test = np.mean(prop_constrained_liks_curr_t / prop_mixture_constrained_density)
-            # w_test = np.max(prop_constrained_liks_curr_t / prop_mixture_constrained_density)
-
+            # w_test = np.mean(prop_constrained_liks_curr_t / prop_mixture_constrained_density)
+            w_test = np.max(prop_constrained_liks_curr_t / prop_mixture_constrained_density)
 
                 
 
 
 
-            w_test *= n_safe_actions_curr # * cfg.cal_frac
-
+            # w_test *= n_safe_actions_curr # * cfg.cal_frac
+            w_test *= 2
 
             ## Concatenate and normalize
             sum_w_cal_test = np.sum(w_cal) + w_test
@@ -1718,8 +1750,8 @@ def run_conformal_policy_control(
             w_test_normalized = w_test / sum_w_cal_test
 
 
-            if b % 10 == 0:
-                breakpoint()
+            # if b % 10 == 0:
+            #     breakpoint()
 
             ## Check if constraint is satisfied
             if (np.sum(w_cal_normalized[cal_infeasible_indicators]) + w_test_normalized <= cfg.conformal_policy_control.alpha):
@@ -2086,6 +2118,8 @@ def main(cfg: DictConfig):
             random_seed = cfg.iterative_generation.init_args.seed,
         )
 
+
+
         # Take best checkpoint of trained model and get calibrated best likelihood range
 
         # if cfg.temperature_scaling:
@@ -2157,7 +2191,6 @@ def main(cfg: DictConfig):
     # cal_data_fp_list.append(cal_output_path)
     logger.info(f"cal_r0 (n_cal{i}={len(cal_df)}) output path: {cal_unconstrained_output_path}")
     logger.info(f"train_r0 (n_tr{i}={len(train_df)}) output path: {train_output_path}")
-
 
     ## Compute likelihoods for all initial generated data
     cal_unconstrained_output_path_list, hd = run_compute_liks_all_models_and_cal_data(
@@ -2434,6 +2467,10 @@ def main(cfg: DictConfig):
             output_dir=dpo_dir,
             sample_size=cfg.iterative_generation.args.sample_size,
             sampling_method=cfg.iterative_generation.args.sampling_method,
+            higher_score_particle_field="prompt",
+            lower_score_particle_field="chosen",
+            higher_score_field="prompt_score",
+            lower_score_field="chosen_score",
             random_seed = cfg.iterative_generation.args.seed,
         )
         pi_seeds_filepaths_list.append(seeds_fp)
@@ -2474,8 +2511,16 @@ def main(cfg: DictConfig):
             prev_cal_data_constrained_liks_fp_list=cal_data_constrained_fp_list, ## Should contain both cal data and *constrained* likelihoods
             betas_list=betas_list,
             psis_list=psis_list, ## Normalization constants
-            ga_data_dir=ga_data_dir
+            ga_data_dir=ga_data_dir,
+            higher_score_particle_field="prompt",
+            lower_score_particle_field="chosen",
+            higher_score_field="prompt_score",
+            lower_score_field="chosen_score"
         )
+
+       ## For now, just dealing with this edge case by continuing to next step with one action
+        n_safe_actions = max(1, n_safe_actions)
+
         betas_list.append(beta_t)
         psis_list.append(psi_hat_t)
 
@@ -2484,75 +2529,57 @@ def main(cfg: DictConfig):
             raise ValueError(f"constrained_liks_df_beta_hat.iloc[0,0] ({constrained_liks_df_beta_hat.iloc[0,0]}) != ({unconstrained_df.iloc[0,0]}) unconstrained_df.iloc[0,0]")
         
 
+
+
+        check_col_names(constrained_liks_df_beta_hat)
+        check_col_names(unconstrained_df)
+        
+
         ## Add constrained likelihoods for the current model to previous calibration data
-        for c_i, cal_dat_constrained_fp in enumerate(cal_data_constrained_fp_list):
+        for c_i, cal_data_constrained_fp in enumerate(cal_data_constrained_fp_list):
             cal_data_constrained_curr   = pd.read_json(cal_data_constrained_fp, orient="records", lines=True)
             cal_data_unconstrained_curr = pd.read_json(cal_data_unconstrained_fp_list[c_i], orient="records", lines=True)
+
+            check_col_names(cal_data_constrained_curr)
+            check_col_names(cal_data_unconstrained_curr)
+
 
             cal_liks_df_tmin1_safe_and_t_unconstrained_mat = pd.concat([cal_data_constrained_curr.iloc[:, -1], cal_data_unconstrained_curr.iloc[:,-1]], axis=1).to_numpy() ## Double check this
 
             ## Compute constrained likelihoods, only starting from most recent safe likelihoods
             cal_constrained_t_curr = constrain_likelihoods(cal_liks_df_tmin1_safe_and_t_unconstrained_mat, betas_list, psis_list)
 
+            cal_constrained_liks_df_beta_hat = pd.concat([cal_data_constrained_curr, pd.DataFrame({f'con_lik_r{i}' : cal_constrained_t_curr[:,-1]})], axis=1)
+            check_col_names(cal_constrained_liks_df_beta_hat)
 
-            constrained_liks_df_beta_hat = pd.concat([cal_data_constrained_curr, pd.DataFrame({f'con_lik_r{i}' : cal_constrained_t_curr[:,-1]})], axis=1)
             # constrained_liks_df_beta_hat_fp = os.path.join(os.path.dirname(constrained_gen_liks_fp), f"cpc_prop_{constrained_gen_liks_fp}")
-            constrained_liks_df_beta_hat.to_json(cal_dat_constrained_fp, orient="records", lines=True)
-
-        # # first_iter = True if i == 0 else False ## bool: whether is first iteration (if so, will select seeds uniformly for a safe initial policy)
-        # iter_gen_outputs_combined, iter_gen_outputs_list, hd = run_iterative_generation(
-        #     cfg,
-        #     file_client,
-        #     seeds_fp, #combined_dpo_dataset_fp,
-        #     ga_data_dir,
-        #     dpo_dir,
-        #     higher_score_particle_field="higher_score_particle",
-        #     lower_score_particle_field="lower_score_particle",
-        #     higher_score_field="higher_score",
-        #     lower_score_field="lower_score",
-        #     temps=temps
-        # )
-        # prev_hd = hd
-
-        # logger.info(f"iter_gen_outputs_combined: {iter_gen_outputs_combined}")
-        # logger.info(f"iter_gen_outputs_list: {iter_gen_outputs_list}")
+            cal_constrained_liks_df_beta_hat.to_json(cal_data_constrained_fp, orient="records", lines=True)
+        
 
 
-        ## Compute likelihoods for all initial generated data
-        gen_liks_fp, hd = run_compute_liks_all_models_and_cal_data(
-            cfg,
-            file_client,
-            seeds_fp_list=pi_seeds_filepaths_list,
-            prev_cal_data_fp_list=[], ## Empty because not updating previous cal data likelihoods here
-            model_dir_list=pi_model_fp_list,
-            target_fp=iter_gen_outputs_list[-1],
-            temps=[cfg.temperature],
-        )
+        ## Sample with conformal policy control
+        unconstrained_df, unconstrained_gen_liks_fp, constrained_liks_df, constrained_gen_liks_fp\
+            = accept_reject_sample_and_get_likelihoods(cfg, file_client, pi_model_fp_list, pi_seeds_filepaths_list, dpo_dir,\
+                                                       betas_list, psis_list, \
+                                                       cfg.conformal_policy_control.accept_reject.n_target,\
+                                                       ga_data_dir, higher_score_particle_field="prompt",
+                                                       lower_score_particle_field="chosen",
+                                                       higher_score_field="prompt_score",
+                                                       lower_score_field="chosen_score")
 
-        # ## Contrastive generation to get test point weight
-        # contrast_gen_outputs, hd = run_contrastive_generation(
-        #     cfg,
-        #     file_client,
-        #     data_fp_list=pi_seeds_filepaths_list,
-        #     data_dir=ga_data_dir,
-        #     model_dir_list=pi_model_fp_list,
-        #     particle_field= "higher_score_particle",
-        #     score_field= "score",
-        #     temps=[1.0],
-        # )
-
-    
 
         '''Split last batch of generated outputs into training and calibration data'''
         cal_df, cal_unconstrained_output_path, train_df, train_output_path = \
-            train_cal_split_gen_outputs(cfg, file_client, unconstrained_liks_df_beta_hat_fp, dpo_dir) #, sample_num_cal=cfg.num_cal_per_step, sample_num_train=cfg.num_train_per_step)
+            train_cal_split_gen_outputs(cfg, file_client, unconstrained_gen_liks_fp, dpo_dir) #, sample_num_cal=cfg.num_cal_per_step, sample_num_train=cfg.num_train_per_step)
         prev_round_outputs_fp = train_output_path ## Hereon, prev_round_outputs_fp will only contain training data
         cal_data_unconstrained_fp_list.append(cal_unconstrained_output_path)
         logger.info(f"cal_r0 (n_cal{i}={len(cal_df)}) output path: {cal_unconstrained_output_path}")
         logger.info(f"train_r0 (n_tr{i}={len(train_df)}) output path: {train_output_path}")
 
+
         ## Save new calibration data with constrained likelihoods  
-        cal_constrained_liks_df = constrained_liks_df_beta_hat.loc[cal_df.index]
+        # cal_constrained_liks_df = constrained_liks_df_beta_hat.loc[cal_df.index]
+        cal_constrained_liks_df = constrained_liks_df.loc[cal_df.index]
         cal_constrained_liks_df = cal_constrained_liks_df.rename(columns={'lik_r0' : 'con_lik_r0'})
         cal_constrained_output_path = os.path.join(os.path.dirname(cal_unconstrained_output_path), f'cpc_constrained_{os.path.basename(cal_unconstrained_output_path)}')
         cal_constrained_liks_df.to_json(cal_constrained_output_path, orient="records", lines=True)
@@ -2563,54 +2590,57 @@ def main(cfg: DictConfig):
 
 
 
+        # ## Add constrained likelihoods for the current model to previous calibration data
+        # for c_i, cal_dat_constrained_fp in enumerate(cal_data_constrained_fp_list):
+        #     cal_data_constrained_curr   = pd.read_json(cal_data_constrained_fp, orient="records", lines=True)
+        #     cal_data_unconstrained_curr = pd.read_json(cal_data_unconstrained_fp_list[c_i], orient="records", lines=True)
 
+        #     cal_liks_df_tmin1_safe_and_t_unconstrained_mat = pd.concat([cal_data_constrained_curr.iloc[:, -1], cal_data_unconstrained_curr.iloc[:,-1]], axis=1).to_numpy() ## Double check this
+
+        #     ## Compute constrained likelihoods, only starting from most recent safe likelihoods
+        #     cal_constrained_t_curr = constrain_likelihoods(cal_liks_df_tmin1_safe_and_t_unconstrained_mat, betas_list, psis_list)
+
+
+        #     constrained_liks_df_beta_hat = pd.concat([cal_data_constrained_curr, pd.DataFrame({f'con_lik_r{i}' : cal_constrained_t_curr[:,-1]})], axis=1)
+        #     # constrained_liks_df_beta_hat_fp = os.path.join(os.path.dirname(constrained_gen_liks_fp), f"cpc_prop_{constrained_gen_liks_fp}")
+        #     constrained_liks_df_beta_hat.to_json(cal_dat_constrained_fp, orient="records", lines=True)
+
+ 
+
+        # ## Compute likelihoods for all initial generated data
+        # gen_liks_fp, hd = run_compute_liks_all_models_and_cal_data(
+        #     cfg,
+        #     file_client,
+        #     seeds_fp_list=pi_seeds_filepaths_list,
+        #     prev_cal_data_fp_list=[], ## Empty because not updating previous cal data likelihoods here
+        #     model_dir_list=pi_model_fp_list,
+        #     target_fp=iter_gen_outputs_list[-1],
+        #     temps=[cfg.temperature],
+        # )
 
 
     
 
-    # all_prev_pref_datasets = []
-    # prev_hd = None
-    # for i in tqdm(range(cfg.num_dpo_rounds), desc="DPO iterations"):
-    #     n = cfg.num_labels_after_first_round
-    #     dpo_dataset_fp = create_propen_preference_dataset(
-    #         cfg, file_client, prev_round_outputs_fp, filename_prefix=f"dpo_r{i}_", n=n
-    #     )
-    #     combined_dpo_dataset_fp = combine_new_with_old_datasets(
-    #         cfg, file_client, all_prev_pref_datasets, dpo_dataset_fp
-    #     )
-    #     logger.info(f"DPO training dataset: {combined_dpo_dataset_fp}")
-    #     all_prev_pref_datasets.append(dpo_dataset_fp)
+        # '''Split last batch of generated outputs into training and calibration data'''
+        # cal_df, cal_unconstrained_output_path, train_df, train_output_path = \
+        #     train_cal_split_gen_outputs(cfg, file_client, unconstrained_liks_df_beta_hat_fp, dpo_dir) #, sample_num_cal=cfg.num_cal_per_step, sample_num_train=cfg.num_train_per_step)
+        # prev_round_outputs_fp = train_output_path ## Hereon, prev_round_outputs_fp will only contain training data
+        # cal_data_unconstrained_fp_list.append(cal_unconstrained_output_path)
+        # logger.info(f"cal_r0 (n_cal{i}={len(cal_df)}) output path: {cal_unconstrained_output_path}")
+        # logger.info(f"train_r0 (n_tr{i}={len(train_df)}) output path: {train_output_path}")
 
-    #     # Consider picking last checkpoint that generated >90% parsable particles w/ correct length and vals in range
-    #     dpo_dir = train_dpo(
-    #         cfg,
-    #         file_client,
-    #         all_model_paths[-1],
-    #         combined_dpo_dataset_fp,
-    #         ga_data_dir,
-    #         run_name=f"{cfg.run_name}_dpo_r{i}",
-    #     )
-    #     logger.info(f"DPO model trained in {dpo_dir}.")
-    #     all_model_paths.append(dpo_dir)
+        # ## Save new calibration data with constrained likelihoods  
+        # cal_constrained_liks_df = constrained_liks_df_beta_hat.loc[cal_df.index]
+        # cal_constrained_liks_df = cal_constrained_liks_df.rename(columns={'lik_r0' : 'con_lik_r0'})
+        # cal_constrained_output_path = os.path.join(os.path.dirname(cal_unconstrained_output_path), f'cpc_constrained_{os.path.basename(cal_unconstrained_output_path)}')
+        # cal_constrained_liks_df.to_json(cal_constrained_output_path, orient="records", lines=True)
 
-    #     temps = get_temperatures(cfg, file_client, dpo_dir, prev_hd)
-    #     iter_gen_outputs, hd = run_iterative_generation(
-    #         cfg,
-    #         file_client,
-    #         combined_dpo_dataset_fp,
-    #         ga_data_dir,
-    #         dpo_dir,
-    #         higher_score_particle_field="prompt",
-    #         lower_score_particle_field="chosen",
-    #         higher_score_field="prompt_score",
-    #         lower_score_field="chosen_score",
-    #         temps=temps,
-    #     )
-    #     prev_hd = hd
-    #     logger.info(
-    #         f"Iterative generations output path (from DPO model): {iter_gen_outputs}"
-    #     )
-    #     prev_round_outputs_fp = iter_gen_outputs
+        # ## Keep track of calibration data with *constrained* liklihoods
+        # cal_data_constrained_fp_list.append(cal_constrained_output_path)
+
+
+
+
 
 
 
@@ -2721,9 +2751,6 @@ def main(cfg: DictConfig):
 
         check_col_names(constrained_liks_df_beta_hat)
         check_col_names(unconstrained_df)
-
-
-
         
 
         ## Add constrained likelihoods for the current model to previous calibration data
@@ -2746,45 +2773,13 @@ def main(cfg: DictConfig):
             # constrained_liks_df_beta_hat_fp = os.path.join(os.path.dirname(constrained_gen_liks_fp), f"cpc_prop_{constrained_gen_liks_fp}")
             cal_constrained_liks_df_beta_hat.to_json(cal_data_constrained_fp, orient="records", lines=True)
         
-        # # first_iter = True if i == 0 else False ## bool: whether is first iteration (if so, will select seeds uniformly for a safe initial policy)
-        # iter_gen_outputs_combined, iter_gen_outputs_list, hd = run_iterative_generation(
-        #     cfg,
-        #     file_client,
-        #     seeds_fp, #combined_marge_dataset_fp,
-        #     ga_data_dir,
-        #     marge_dir,
-        #     higher_score_particle_field="higher_score_particle",
-        #     lower_score_particle_field="lower_score_particle",
-        #     higher_score_field="higher_score",
-        #     lower_score_field="lower_score",
-        #     temps=temps
-        # )
-        # prev_hd = hd
-
-        # logger.info(f"iter_gen_outputs_combined: {iter_gen_outputs_combined}")
-        # logger.info(f"iter_gen_outputs_list: {iter_gen_outputs_list}")
-
-
-        # pi_model_dirs_list.append(marge_dir)
-
-        # ## Compute likelihoods for all initial generated data
-        # gen_liks_fp, hd = run_compute_liks_all_models_and_cal_data(
-        #     cfg,
-        #     file_client,
-        #     seeds_fp_list=pi_seeds_filepaths_list,
-        #     prev_cal_data_fp_list=[], ## Empty because not updating previous cal data likelihoods here
-        #     model_dir_list=pi_model_fp_list,
-        #     target_fp=iter_gen_outputs_list[-1],
-        #     temps=[1.0],
-        # )
-
 
 
         ## Sample with conformal policy control
         unconstrained_df, unconstrained_gen_liks_fp, constrained_liks_df, constrained_gen_liks_fp\
             = accept_reject_sample_and_get_likelihoods(cfg, file_client, pi_model_fp_list, pi_seeds_filepaths_list, marge_dir,\
                                                        betas_list, psis_list, \
-                                                       n_safe_actions,\
+                                                       cfg.conformal_policy_control.accept_reject.n_target,\
                                                        ga_data_dir)
 
 
@@ -2807,21 +2802,6 @@ def main(cfg: DictConfig):
 
         ## Keep track of calibration data with *constrained* liklihoods
         cal_data_constrained_fp_list.append(cal_constrained_output_path)
-
-
-        # ## Contrastive generation to get test point weight
-        # contrast_gen_outputs, hd = run_contrastive_generation(
-        #     cfg,
-        #     file_client,
-        #     data_fp_list=pi_seeds_filepaths_list,
-        #     data_dir=ga_data_dir,
-        #     model_dir_list=pi_model_fp_list,
-        #     particle_field= "higher_score_particle",
-        #     score_field= "score",
-        #     temps=[1.0],
-        # )
-
-    
 
 
 

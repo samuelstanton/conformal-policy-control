@@ -31,6 +31,9 @@ dpo_config:  # trl.DPOConfig
   remove_unused_columns: False
   save_total_limit: 1
   log_level: "info"
+  # self_normalize_weights: True ## Drew added
+  # reinforce_style: False
+
 
 model_config:
   attn_implementation: "eager"

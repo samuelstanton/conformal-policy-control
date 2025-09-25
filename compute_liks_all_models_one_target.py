@@ -80,6 +80,7 @@ def compute_likelihoods_all_models_one_target(cfg: DictConfig, logger: logging.L
 
     ## Format target
     target_data = target_df.to_dict("list")
+    
     formatted_targets = formatting_texts_func_single_seq(target_data)
 
         # lik_col_names_old_in_new = []

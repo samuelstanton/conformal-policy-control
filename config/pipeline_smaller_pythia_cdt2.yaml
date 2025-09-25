@@ -10,14 +10,14 @@ overwrite_initg: False #False ## If False, will only run initial generation when
 overwrite_split_init: False
 
 
-overwrite_sft: False ## If False, will only run SFT when output file does not already exist.
-overwrite_ig: False ## If False, will only run iterative generation when output file does not already exist.
-overwrite_split: False
+overwrite_sft: True ## If False, will only run SFT when output file does not already exist.
+overwrite_ig: True ## If False, will only run iterative generation when output file does not already exist.
+overwrite_split: True
 overwrite_cg: True ## If False, will only run contrastive generation when output file does not already exist.
-overwrite_cmp_lik_all: False #False #True ## If False, will only run compute_likelihoods_all_models when output file doesn't exist.
-overwrite_sft_formatter: True
+overwrite_cmp_lik_all: True #False #True ## If False, will only run compute_likelihoods_all_models when output file doesn't exist.
+overwrite_sft_formatter: False
 overwrite_dpo_formatter: True
-overwrite_marge: True # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
+overwrite_marge: False # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
 overwrite: True # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
 
 
@@ -51,14 +51,21 @@ path_to_repo: null # /scratch/ac5968/llome
 
 ## Conformal policy control params
 random_seed: 0 ## For train/cal set splits
-num_cal_init: 500 ## Num of calibration samples to draw from original "safe" policy (if available)
-num_train_pi_sft0: 500 ## Num of training samples to use in first policy improvement (if available)
-cal_frac: 0.5 #0.05 ## Fraction of generated outputs to place in calibration data (rather than training) at each time
-num_cal_per_step: 10
-num_train_per_step: 40
-train_frac_from_non_cal: 1.0 ## Fraction of *non-cal, deduplicated* generated outputs to place in training data (rather than calibration) at each time
-temperature_init: 0.8 #1.0
-temperature: 1.2
+
+
+## For how to split cal vs train sets
+split:
+  # num_cal_init: 500 ## Num of calibration samples to draw from original "safe" policy (if available)
+  # num_train_pi_sft0: 500 ## Num of training samples to use in first policy improvement (if available)
+  cal_frac: 0.1 #0.05 ## Fraction of generated outputs to place in calibration data (rather than training) at each time
+  train_frac_from_non_cal: 0.5 ## Fraction of *non-cal, deduplicated* generated outputs to place in training data (rather than calibration) at each time
+  train_sampling_method: "best_scoring" # "best_scoring", "uniform"
+  num_cal_per_step: 10
+  num_train_per_step: 40
+
+
+temperature_init: 1.0 #1.0 #0.8 #1.0
+temperature: 1.0 #1.0
 
 # # Only include this section if the initial model should be trained from scratch!
 # initial_model_config:
@@ -76,16 +83,16 @@ temperature: 1.2
 #   hidden_size: 64
 #   vocab_size: 512
 
-num_dpo_rounds: 0
+num_dpo_rounds: 10
 num_init_sft_rounds: 1 #5 #10
 num_sft_rounds: 0 #10
-num_marge_rounds:  10 #10
+num_marge_rounds:  0 #10
 
 evol_dataset_gen:
   args:
     optimizer:
-      num_particles: 5000 #10000 #1000
-      mutation_prob: 0.05 #0.05 #0.005
+      num_particles: 1000 #10000 #1000
+      mutation_prob: 0.1 #0.05 #0.05 #0.005
     test_function:
       num_states: 32
       dim: 32
@@ -123,7 +130,7 @@ evol_dataset_gen:
 propen_dataset_formatting_sft:
   args:
     dist_x_threshold: 0.3 #0.32 #0.25
-    max_proportion_infeasible: 0.05 #0.1  # the maximum proportion of the dataset that infeasible examples
+    max_proportion_infeasible: 0.0 #0.05 #0.1  # the maximum proportion of the dataset that infeasible examples
                                     # or pairs containing infeasible examples can be
     distance_metric: "hamming"
     seed: 0
@@ -149,7 +156,7 @@ propen_dataset_formatting_sft:
 propen_dataset_formatting_initial_sft:
   args:
     dist_x_threshold: 0.3 #0.32 #0.25
-    max_proportion_infeasible: 0.05 #0.1  # the maximum proportion of the dataset that infeasible examples
+    max_proportion_infeasible: 0.0 #5 #0.1  # the maximum proportion of the dataset that infeasible examples
                                     # or pairs containing infeasible examples can be
     distance_metric: "hamming"
     seed: 0
@@ -174,7 +181,7 @@ propen_dataset_formatting_initial_sft:
 propen_dataset_formatting_preference:
   args:
     dist_x_threshold: 0.3 #0.25
-    max_proportion_infeasible: 0.05 #0.1  # the maximum proportion of the dataset that infeasible examples
+    max_proportion_infeasible: 0.0 # 0.05 #0.1  # the maximum proportion of the dataset that infeasible examples
                                     # or pairs containing infeasible examples can be
     distance_metric: "hamming"
     seed: 0
@@ -452,7 +459,7 @@ iterative_generation:
     seed: 0
     test_fn_type: "ehrlich"  # [ehrlich, mt_fuji]
     subsample_seeds: True ## Whether to subsample input seeds (with replacement), or to iterate through all of them
-    sample_size: 10 #10 #100 #200  # initial number of seeds to use for iterative generation
+    sample_size: 1 #10 #100 #200  # initial number of seeds to use for iterative generation
     max_iterations: 100 #50 #100 #10
     sampling_method: "best_scoring" ## Method for selecting seeds # "uniform", "combination", "best_scoring"
     generation_config:
@@ -473,7 +480,7 @@ iterative_generation:
 
 
 conformal_policy_control:
-  alpha: 0.51 #0.5 #1.0 #0.25 #0.5 #0.3 #1.0 #0.5
+  alpha: 0.4 #0.5 #1.0 #0.25 #0.5 #0.3 #1.0 #0.5
   args:
     n_grid: 100 ## Approx size of grid to search over for lik-ratio bound
     n_grid_safe_actions: 20
@@ -517,8 +524,8 @@ dpo:
       num_train_epochs: 1
       eval_steps: 0.1
       save_steps: 0.2
-      self_normalize_weights: True
-      reinforce_style: False
+      # self_normalize_weights: True
+      # reinforce_style: False
       max_length: 512
       max_prompt_length: 256
       log_level: "info"

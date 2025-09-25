@@ -506,6 +506,7 @@ class ModelClient:
         Compute likelihoods of target sequences, averaged over all provided seeds
         """
 
+        logger.info(f"temperature : {self.temperature}")
 
         # Compute length-normalized likelihoods of target tokens given the input
         # TODO: write test to check that the logprobs match what model.generate and compute_transition_scores gives!
@@ -538,7 +539,7 @@ class ModelClient:
                     self.device
                 )
                 outputs = self.model(**tokenized)
-                scores = outputs.logits
+                scores = outputs.logits / self.temperature
 
                 # probs = torch.exp(torch.nn.functional.log_softmax(scores, dim=-1)) ## Seems unnecessary to do exp(log(softmax)) ??
                 probs = torch.nn.functional.log_softmax(scores, dim=-1)
