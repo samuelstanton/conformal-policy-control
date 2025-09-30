@@ -10,7 +10,7 @@ model_name_or_path: s3://prescient-pcluster-data/prinstea/llome/parent_output_20
 model_timestep: null ## Model's time index
 #s3://prescient-data-dev/sandbox/chena78/pipelines/sft_EleutherAI/pythia-2.8b_ehrlich_s8_d128_m8_l8_r10_s2000_ga_steps30_p1000_pm0.005_xthres0.25/sft_EleutherAI/pythia-2.8b_ehrlich_s8_d128_m8_l8_r10_s2000_ga_steps30_p1000_pm0.005_xthres0.25_sft_r0/
 batch_size: 10 #4
-output_dir: null #s3://prescient-pcluster-data/prinstea/llome/parent_output_20250908_moreSFT/smaller_pythia/smaller_pythia_sft_r1/
+output_dir: s3://prescient-pcluster-data/prinstea/llome/parent_output_20250928/smaller_pythia/smaller_pythia_sft_init_r0 #s3://prescient-pcluster-data/prinstea/llome/parent_output_20250908_moreSFT/smaller_pythia/smaller_pythia_sft_r1/
 #s3://prescient-data-dev/sandbox/chena78/pipelines/sft_EleutherAI/pythia-2.8b_ehrlich_s8_d128_m8_l8_r10_s2000_ga_steps30_p1000_pm0.005_xthres0.25/sft_EleutherAI/pythia-2.8b_ehrlich_s8_d128_m8_l8_r10_s2000_ga_steps30_p1000_pm0.005_xthres0.25_sft_r0/
 output_filename: scores_of_cal_data.jsonl
 log_level: info

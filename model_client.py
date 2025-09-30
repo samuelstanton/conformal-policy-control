@@ -523,7 +523,8 @@ class ModelClient:
         else:
             device = self.device
 
-        all_likelihoods = []
+        # all_likelihoods = []
+        all_likelihoods_torch = torch.zeros(len(targets), dtype=torch.float64)
 
         ## Looping over target sequences
         for t, target in enumerate(tqdm(targets, desc="Computing log likelihoods averaged over inputs...")):
@@ -542,10 +543,22 @@ class ModelClient:
                 )
                 outputs = self.model(**tokenized)
                 scores = outputs.logits / self.temperature
-
+                
 
                 # probs = torch.exp(torch.nn.functional.log_softmax(scores, dim=-1)) ## Seems unnecessary to do exp(log(softmax)) ??
                 probs = torch.nn.functional.log_softmax(scores, dim=-1)
+
+                # probs = torch.clip(torch.nn.functional.softmax(scores, dim=-1), min=sys.float_info.min) ## Clip probabilities at minimum float value
+
+
+
+                # logger.info(f"torch.nn.functional.softmax(scores, dim=-1) : {torch.nn.functional.softmax(scores, dim=-1).shape}")
+                # logger.info(f"clipped probs : {probs.shape}")
+
+                # # probs = torch.log(scores)
+
+                # logger.info(f"log clipped probs : {probs.shape}")
+
 
                 ## TO DO: Compute probabilities averaged over input sequences
 
@@ -584,6 +597,7 @@ class ModelClient:
                     * tokenized.attention_mask[:, 1:]
                     * input_tokens_mask[:, 1:]
                 )
+                
                 next_token_probs = next_token_probs.cpu().numpy()
                 targets_tokenized = self._tokenize_batch(targets[start_index:end_index])
                 targets_seq_lens = targets_tokenized.attention_mask.sum(-1).cpu().numpy()  ## length = 75 
@@ -591,7 +605,7 @@ class ModelClient:
                 log_likelihoods_batch = list(next_token_probs.sum(-1)) # / targets_seq_lens)
 
                 # logger.info(f"start_index : {start_index}, end_index : {end_index}")
-                # logger.info(f"targets_tokenized : {targets_tokenized}")
+                # logger.info(f"next_token_probs : {next_token_probs}")
 
                 # logger.info(f"next_token_probs.sum(-1) : {next_token_probs.sum(-1)}")
                 # logger.info(f"targets_seq_lens : {targets_seq_lens}")
@@ -615,7 +629,7 @@ class ModelClient:
                 # seq_log_likelihoods = list(next_token_probs.prod(-1) / targets_seq_lens)
                 # all_log_likelihoods.extend(avg_log_likelihoods)
             #     logger.info(f"likelihoods_target len : {len(log_likelihoods_target)}")
-            log_likelihoods_target_scaled = np.array(log_likelihoods_target) / self.max_generate_length
+            # log_likelihoods_target_scaled = np.array(log_likelihoods_target) #/ self.max_generate_length
             # logger.info(f"likelihoods_target : {log_likelihoods_target}")
             # logger.info(f"self.max_generate_length : {self.max_generate_length}")
             # logger.info(f"log_likelihoods_target : {log_likelihoods_target}")
@@ -624,21 +638,27 @@ class ModelClient:
             # logger.info(f"likelihoods_target_scaled : {log_likelihoods_target_scaled}")
             # logger.info(f"likelihoods_scaled_avg    : {max(np.exp(log_likelihoods_target_scaled).mean(), sys.float_info.min)}")
             # all_likelihoods.append(max(np.exp(log_likelihoods_target_scaled).mean(), sys.float_info.min)) ## Clip likelihoods at minimum float value for now (if was generated, then actual likelihood is positive)
-            all_likelihoods.append(np.exp(log_likelihoods_target_scaled).mean()) ## Clip likelihoods at minimum float value for now (if was generated, then actual likelihood is positive)
+            # logger.info(f"log_likelihoods_target : {log_likelihoods_target}")
+            # logger.info(f"exp(log_likelihoods_target)   : {torch.exp(torch.tensor(log_likelihoods_target, dtype=torch.float64))}")
+            
+            # all_likelihoods.append(torch.exp(torch.tensor(log_likelihoods_target, dtype=torch.float64)).mean()) ## Clip likelihoods at minimum float value for now (if was generated, then actual likelihood is positive)
+            all_likelihoods_torch[t] = torch.exp(torch.tensor(log_likelihoods_target, dtype=torch.float64)).mean()
 
             # all_likelihoods.append(torch.mean(log_likelihoods_target))
             # all_likelihoods.append(likelihoods_target.prod())
 
-            # raise ValueError("Stopping for debugging")
 
             # logger.info(f"np.exp(log_likelihoods_target) : {np.exp(log_likelihoods_target)}")
             # logger.info(f"liks prior to avg : {np.exp(log_likelihoods_target_scaled)}")
             # logger.info(f"seq likelihood : {all_likelihoods[-1]}")
+            # logger.info(f"all_likelihoods : {all_likelihoods}")
             # logger.info(f"len(all_likelihoods) : {len(all_likelihoods)}")
 
+            # if t == 2:
+            #     raise ValueError("Stopping for debugging")
 
                 
-        return all_likelihoods
+        return all_likelihoods_torch.tolist()
 
 
 

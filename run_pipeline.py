@@ -58,11 +58,12 @@ def constrain_likelihoods(
     constrained_likelihoods_mat = np.zeros((n_prop, n_models))
 
     ## First col of likelihoods_mat should already be safe/constrained
-    constrained_likelihoods_mat[:, 0] = likelihoods_mat[:, 0] 
+    constrained_likelihoods_mat[:, 0] = likelihoods_mat[:, 0]  
+
 
     ## Compute constrained likelihoods for each subsequent policy and bound
     for i in range(1, n_models):
-        constrained_likelihoods_mat[:, i] = np.where(likelihoods_mat[:, i] / constrained_likelihoods_mat[:, i-1] < betas[i], likelihoods_mat[:, i] / psis[i], betas[i] * constrained_likelihoods_mat[:, i-1] / psis[i])
+        constrained_likelihoods_mat[:, i] = np.where(likelihoods_mat[:, i] / constrained_likelihoods_mat[:, i-1] < betas[i], likelihoods_mat[:, i] / psis[i], constrained_likelihoods_mat[:, i-1] * (betas[i] / psis[i]))
     
     return constrained_likelihoods_mat
 
@@ -96,7 +97,7 @@ def prepare_grid(
         n_curr = len(G)
         k = max(int(n_curr / n_grid), 1) #if n_curr / int(n_curr / n_grid) > n_grid else 1
         G = G[::k]
-        G = np.concatenate((G, [sys.float_info.min])) ## For safe, ensure that include minimum positive float value
+        G = np.concatenate(([sys.float_info.min], G)) ## For safe, ensure that include minimum positive float value
 
     return G
 
@@ -1133,6 +1134,7 @@ def run_iterative_generation(
     temps: List[float] = [0.6, 0.8, 1.0, 1.2, 1.4, 1.6],
     return_seeds: bool = False,
     first_iter: bool = False,
+    model_idx: int = 0, ## Time index of model using for (unconstrained) generation
     call_idx: int = 0, ## Index for this generation has been called, including current, for same model directory
     # proposal: str = 'unconstrained',
 ):
@@ -1165,7 +1167,7 @@ def run_iterative_generation(
         args += f"sample_size={cfg.iterative_generation.args.sample_size} "
         args += f"max_iterations={cfg.iterative_generation.args.max_iterations} "
         args += f"sampling_method={cfg.iterative_generation.args.sampling_method} "
-        output_filename_prefix = f"alpha{cfg.conformal_policy_control.alpha}_gens_likelihood_cn{call_idx}_{cfg.iterative_generation.args.sample_size}sample_{cfg.iterative_generation.args.max_iterations}iter"
+        output_filename_prefix = f"alpha{cfg.conformal_policy_control.alpha}_model{model_idx}_cn{call_idx}_gens_likelihood_{cfg.iterative_generation.args.sample_size}sample_{cfg.iterative_generation.args.max_iterations}iter"
 
 
     greedy_decoding_gen_args = f"generation_config.do_sample=False generation_config.num_beams=1 batch_size={cfg.greedy_gen_batch_size}"
@@ -1372,7 +1374,8 @@ def accept_reject_sample_and_get_likelihoods(
                 higher_score_field=higher_score_field,
                 lower_score_field=lower_score_field,
                 temps=temps_curr,
-                call_idx=call_idx ## Index for this generation has been called, including current, for same model directory
+                model_idx = len(model_dir_list) - 1, ## Index for model being called for generation
+                call_idx=call_idx ## Index for times this generation has been called, including current, for same model directory
             )
 
             # breakpoint()
@@ -1668,7 +1671,7 @@ def run_conformal_policy_control(
                                                        ga_data_dir, higher_score_particle_field=higher_score_particle_field,\
                                                        lower_score_particle_field=lower_score_particle_field,
                                                        higher_score_field=higher_score_field,
-                                                       lower_score_field=lower_score_field,)
+                                                       lower_score_field=lower_score_field)
         ## NOTE/Warning: for proposal == 'unconstrained', should have unconstrained_df == constrained_liks_df (identical); else, should have constrained_liks_df.iloc[:,-1] == constrained_liks_df.iloc[:,-2] (fully constrained)
         check_col_names(unconstrained_df)
         check_col_names(constrained_liks_df)
@@ -1779,7 +1782,8 @@ def run_conformal_policy_control(
             w_cal_normalized = w_cal / sum_w_cal_test
             w_test_normalized = w_test / sum_w_cal_test
 
-            # breakpoint()
+            # if b % 10 == 0:
+            #     breakpoint()
 
             ## Check if accept null or reach fully unconstrained policy (beta_t == np.inf)
             if (np.sum(w_cal_normalized[cal_infeasible_indicators]) + w_test_normalized > cfg.conformal_policy_control.alpha or beta_t == np.inf):

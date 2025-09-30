@@ -62,8 +62,9 @@ def score(cfg: DictConfig, logger: logging.Logger = None):
         batch_size=cfg.batch_size,
         logger=logger,
     )
+    
     output_fp = os.path.join(cfg.output_dir, cfg.output_filename)
-    data = df.to_dict("records")
+    data = target_df.to_dict("records")
     for avg_likelihood, record in zip(avg_likelihoods, data):
         record["likelihood"] = avg_likelihood
     output_df = pd.DataFrame(data)
