@@ -73,11 +73,11 @@ def prepare_grid(
     n_grid: int = 100, ## int, approximately how many values want to have in resulting grid
     proposal: str = 'unconstrained', ## str, 'unconstrained' or 'safe' to indicate prop dist
 ):
-    G = np.sort(np.unique(V))[::-1]
+    G = np.sort(np.unique(V)) ## Want to search in increasing order for fixed-sequence testing (ie, most promising to least promising)
     max_G = G[0]
 
     ## If wanted to return power-series decreasing grid, rather than based on empirical quantiles
-    # return np.concatenate(([np.inf], [v / (1.2**(i)) for i, v in enumerate(np.linspace(sys.float_info.min, max_G, num=n_grid)[::-1])]))
+    # return np.concatenate(([np.inf], [v / (1.2**(i)) for i, v in enumerate(np.linspace(sys.float_info.min, max_G, num=n_grid))]))
 
     if proposal == 'unconstrained':
         G = G[G>1] ## For unconstrained, only consider bounds at least equal to 1
@@ -86,7 +86,7 @@ def prepare_grid(
         n_curr = len(G)
         k = max(int(n_curr / n_grid), 1)
         G = G[::k]
-        G = np.concatenate(([np.inf], G, [1])) ## For unconstrained, ensure also consider unconstrained policy in grid (np.inf) and 1 as bounds
+        G = np.concatenate(([1], G, [np.inf])) ## For unconstrained, ensure also consider unconstrained policy in grid (np.inf) and 1 as bounds
         # G = np.concatenate(([np.inf], G)) ## For unconstrained, ensure also consider unconstrained policy in grid (np.inf) and 1 as bounds
 
     else:
@@ -99,10 +99,6 @@ def prepare_grid(
         G = np.concatenate((G, [sys.float_info.min])) ## For safe, ensure that include minimum positive float value
 
     return G
-
-
-
-
 
 
 
@@ -306,7 +302,15 @@ def gpt_model_already_trained(
     return None
 
 
-def train_cal_split_gen_outputs(cfg: DictConfig, fs: LocalOrS3Client, gen_outputs : str, sft_dir : str, sample_num_cal: int = None, sample_num_train: int = None, first_iter: bool = False):
+def train_cal_split_gen_outputs(cfg: DictConfig, 
+                                fs: LocalOrS3Client, 
+                                gen_outputs : str, 
+                                sft_dir : str, 
+                                sample_num_cal: int = None, 
+                                sample_num_train: int = None, 
+                                first_iter: bool = False, 
+                                optimizer_name_and_lr: str = "sft"):
+
     gen_outputs_df = pd.read_json(gen_outputs, orient="records", lines=True)
     # if first_iter:
     #     output_filename_suffix = f"gens_likelihood_{cfg.iterative_generation.init_args.sample_size}sample_{cfg.iterative_generation.init_args.max_iterations}iter"
@@ -315,11 +319,11 @@ def train_cal_split_gen_outputs(cfg: DictConfig, fs: LocalOrS3Client, gen_output
 
 
     if first_iter:
-        cal_output_path = os.path.join(sft_dir, f"alpha{cfg.conformal_policy_control.alpha}_cal_gens_all_likelihoods_temp{cfg.temperature_init}.jsonl")
-        train_output_path = os.path.join(sft_dir, f"alpha{cfg.conformal_policy_control.alpha}_train_gens_all_likelihoods_temp{cfg.temperature_init}.jsonl")
+        cal_output_path = os.path.join(sft_dir, f"{optimizer_name_and_lr}_alpha{cfg.conformal_policy_control.alpha}_cal_gens_all_likelihoods_temp{cfg.temperature_init}.jsonl")
+        train_output_path = os.path.join(sft_dir, f"{optimizer_name_and_lr}_alpha{cfg.conformal_policy_control.alpha}_train_gens_all_likelihoods_temp{cfg.temperature_init}.jsonl")
     else:
-        cal_output_path = os.path.join(sft_dir, f"alpha{cfg.conformal_policy_control.alpha}_cal_gens_all_likelihoods_temp{cfg.temperature}.jsonl")
-        train_output_path = os.path.join(sft_dir, f"alpha{cfg.conformal_policy_control.alpha}_train_gens_all_likelihoods_temp{cfg.temperature}.jsonl")
+        cal_output_path = os.path.join(sft_dir, f"{optimizer_name_and_lr}_alpha{cfg.conformal_policy_control.alpha}_cal_gens_all_likelihoods_temp{cfg.temperature}.jsonl")
+        train_output_path = os.path.join(sft_dir, f"{optimizer_name_and_lr}_alpha{cfg.conformal_policy_control.alpha}_train_gens_all_likelihoods_temp{cfg.temperature}.jsonl")
 
     overwrite_split_flag = cfg.overwrite_split_init if first_iter else cfg.overwrite_split
 
@@ -338,7 +342,7 @@ def train_cal_split_gen_outputs(cfg: DictConfig, fs: LocalOrS3Client, gen_output
         else:
             cal_df = gen_outputs_df.sample(frac=cfg.split.cal_frac, random_state=cfg.random_seed)
         # cal_output_path = "cal_gens_all_likelihoods_temp1.0.jsonl"
-        cal_df = cal_df
+        # cal_df = cal_df
         cal_df.to_json(cal_output_path, orient="records", lines=True)
 
 
@@ -352,6 +356,8 @@ def train_cal_split_gen_outputs(cfg: DictConfig, fs: LocalOrS3Client, gen_output
                 train_df = non_cal_gen_outputs_df_unique.sample(n=sample_num_train, random_state=cfg.random_seed)
             elif cfg.split.train_frac_from_non_cal < 1.0:
                 train_df = non_cal_gen_outputs_df_unique.sample(frac=cfg.split.train_frac_from_non_cal, random_state=cfg.random_seed)
+            else:
+                train_df = non_cal_gen_outputs_df_unique
         elif cfg.split.train_sampling_method == "best_scoring":
             ## Deterministically select top scoring sequences
             if sample_num_train is not None:
@@ -359,8 +365,10 @@ def train_cal_split_gen_outputs(cfg: DictConfig, fs: LocalOrS3Client, gen_output
             elif cfg.split.train_frac_from_non_cal < 1.0:
                 num_train = int(cfg.split.train_frac_from_non_cal * len(non_cal_gen_outputs_df_unique))
                 train_df = non_cal_gen_outputs_df_unique.nlargest(num_train, "score")
+            else:
+                train_df = non_cal_gen_outputs_df_unique
         else:
-            train_df = non_cal_gen_outputs_df_unique
+            raise ValueError("cfg.split.train_sampling_method {cfg.split.train_sampling_method} not recognized")
         # train_output_path = "cal_gens_all_likelihoods_temp1.0.jsonl"
         train_df.to_json(train_output_path, orient="records", lines=True)
 
@@ -1233,12 +1241,14 @@ def get_seeds_from_training_data(
     lower_score_particle_field: str = "lower_score_particle",
     lower_score_field: str = "lower_score",
     higher_score_field: str = "higher_score",
+    pi_optimizer_name: str = "sft",
     random_seed: int = 0,
 ) -> str:
 
     train_df = pd.read_json(training_data_fp, orient="records", lines=True)
 
-    train_df = train_df.loc[train_df.astype(str).drop_duplicates().index] ## For training data, can select unique
+    train_df = train_df.loc[train_df[lower_score_particle_field].astype(str).drop_duplicates().index]
+
 
     if sampling_method == "best_scoring":
         train_df = train_df.sort_values(by=[lower_score_field], ascending=True)[: sample_size]
@@ -1253,6 +1263,12 @@ def get_seeds_from_training_data(
 
     ## Rename so that selected particles are used as prompts instead of outputs
     train_df_selected = train_df_selected.rename(columns={lower_score_particle_field: higher_score_particle_field, lower_score_field: 'score'})
+    # train_df_selected = train_df_selected.rename(columns={lower_score_particle_field: higher_score_particle_field, lower_score_field: 'score'})
+    
+    if pi_optimizer_name == "dpo":
+        train_df_selected = train_df_selected.rename(columns={higher_score_particle_field : 'prompt', lower_score_particle_field: 'chosen',higher_score_field : 'prompt_score', lower_score_field: 'chosen_score'})
+
+    output_fp = os.path.join(os.path.dirname(output_fp), f"{pi_optimizer_name}_{os.path.basename(output_fp)}")
     train_df_selected.to_json(output_fp, orient="records", lines=True)
 
     return output_fp
@@ -1615,19 +1631,33 @@ def run_conformal_policy_control(
 
 
 
-    ## Outer for loop: First try using unconstrained policy as proposal before going to safe policy
-    for i, proposal in enumerate(['unconstrained', 'safe']):
+    if cfg.run_conformal_policy_control:
+        policy_names = ['safe', 'unconstrained']
 
+    else:
+        policy_names = ['unconstrained']
+
+    ## Outer for loop: First try using unconstrained policy as proposal before going to safe policy
+    for i, proposal in enumerate(policy_names):
 
         
-        if proposal == 'unconstrained':
-            betas_list_tmp = betas_list + [np.inf]
-            psis_list_tmp = psis_list + [1.0]
-
-        else:
-            ## Else, use constrained/safe policy as the proposal
+        if proposal == 'safe':
+            ## Use constrained/safe policy as the proposal
             betas_list_tmp = betas_list + [sys.float_info.min]
             psis_list_tmp = psis_list + [sys.float_info.min]
+            # model_dir_list_tmp = model_dir_list[:-1]
+            # seeds_fp_list_tmp = seeds_fp_list[:-1]
+            # model_fp_tmp = model_dir_list[-2]
+
+
+        else:
+            ## Else, use unconstrained policy as the proposal
+            betas_list_tmp = betas_list + [np.inf]
+            psis_list_tmp = psis_list + [1.0]
+            # model_dir_list_tmp = model_dir_list
+            # seeds_fp_list_tmp = seeds_fp_list
+            # model_fp_tmp = model_dir_list[-1]
+
 
 
         ## Get proposal samples, unconstrained likelihoods, and constrained likelihoods
@@ -1658,18 +1688,22 @@ def run_conformal_policy_control(
 
         lik_ratios_unconstrained_over_safe_cal_and_prop = np.concatenate((np.array(lik_ratios_unconstrained_over_safe), np.array(cal_data_unconstrained_all.iloc[:, -1] / cal_data_unconstrained_all.iloc[:, -2])))
 
-        G = prepare_grid(lik_ratios_unconstrained_over_safe_cal_and_prop, #lik_ratios_unconstrained_over_safe, 
+
+        if cfg.run_conformal_policy_control:
+            G = prepare_grid(lik_ratios_unconstrained_over_safe_cal_and_prop, #lik_ratios_unconstrained_over_safe, 
                          n_grid = cfg.conformal_policy_control.args.n_grid,
                          proposal = proposal
                         )
-
+        else:
+            G = [np.inf]
+    
 
         ## Get infeasibility indicators for calibration data
         cal_scores = cal_data_constrained_all['score'].to_numpy()
         cal_infeasible_indicators = np.isnan(cal_scores) | np.isinf(cal_scores)
 
         
-        n_safe_actions = get_num_safe_actions(cfg, cal_infeasible_indicators, cal_data_constrained_all.iloc[:,-1].to_numpy(), cal_mixture_constrained_density, constrained_liks_df.iloc[:, -2].to_numpy(), prop_mixture_constrained_density, cfg.conformal_policy_control.accept_reject.n_target)
+        # n_safe_actions = get_num_safe_actions(cfg, cal_infeasible_indicators, cal_data_constrained_all.iloc[:,-1].to_numpy(), cal_mixture_constrained_density, constrained_liks_df.iloc[:, -2].to_numpy(), prop_mixture_constrained_density, cfg.conformal_policy_control.accept_reject.n_target)
         # n_safe_actions_uncon = get_num_safe_actions(cfg, cal_infeasible_indicators, cal_data_unconstrained_all.iloc[:,-1].to_numpy(), cal_mixture_constrained_density, unconstrained_df.iloc[:, -2].to_numpy(), prop_mixture_constrained_density, cfg.conformal_policy_control.accept_reject.n_target)
         # # for steps_back_to_safe in range(1, len(cal_data_constrained_all.columns)+1):
         # #     n_safe_actions = get_num_safe_actions(cfg, cal_infeasible_indicators, cal_data_constrained_all.iloc[:,-steps_back_to_safe].to_numpy(), cal_mixture_constrained_density, constrained_liks_df.iloc[:, -(steps_back_to_safe+1)].to_numpy(), prop_mixture_constrained_density, cfg.conformal_policy_control.accept_reject.n_target)
@@ -1701,7 +1735,7 @@ def run_conformal_policy_control(
 
 
 
-        n_safe_actions_curr = n_safe_actions
+        # n_safe_actions_curr = n_safe_actions
         # G = np.concatenate((G, [sys.float_info.min]))
 
         # k = max(int(n_safe_actions/ cfg.conformal_policy_control.args.n_grid_safe_actions), 1)
@@ -1738,10 +1772,6 @@ def run_conformal_policy_control(
             w_test = np.max(prop_constrained_liks_curr_t / prop_mixture_constrained_density)
 
                 
-
-
-
-            # w_test *= n_safe_actions_curr # * cfg.cal_frac
             w_test *= 2
 
             ## Concatenate and normalize
@@ -1749,16 +1779,13 @@ def run_conformal_policy_control(
             w_cal_normalized = w_cal / sum_w_cal_test
             w_test_normalized = w_test / sum_w_cal_test
 
+            # breakpoint()
 
-            # if b % 10 == 0:
-            #     breakpoint()
+            ## Check if accept null or reach fully unconstrained policy (beta_t == np.inf)
+            if (np.sum(w_cal_normalized[cal_infeasible_indicators]) + w_test_normalized > cfg.conformal_policy_control.alpha or beta_t == np.inf):
 
-            ## Check if constraint is satisfied
-            if (np.sum(w_cal_normalized[cal_infeasible_indicators]) + w_test_normalized <= cfg.conformal_policy_control.alpha):
+                beta_t = G[b-1] if b > 0 else G[b] ## Upon first acceptance, set beta_t to most recent member of rejection set
 
-            # if (min(np.sum(w_cal_normalized[cal_infeasible_indicators]) + 2*w_test_normalized, 1) <= cfg.conformal_policy_control.alpha):
-                # breakpoint()
-                ## Estimate normalization constant via IWMCI
                 psi_hat_t = importance_weighted_monte_carlo_integration(lik_ratios_unconstrained_over_safe, beta_t)
 
                 logger.info(f"Selected beta_t = {beta_t}, psi_hat_t = {psi_hat_t}")
@@ -1787,7 +1814,7 @@ def run_conformal_policy_control(
                 check_col_names(constrained_liks_df_beta_hat)
                 check_col_names(unconstrained_df)
                 
-                return beta_t, psi_hat_t, n_safe_actions_curr, constrained_liks_df_beta_hat, constrained_liks_df_beta_hat_fp, unconstrained_df, unconstrained_liks_df_beta_hat_fp
+                return beta_t, psi_hat_t, constrained_liks_df_beta_hat, constrained_liks_df_beta_hat_fp, unconstrained_df, unconstrained_liks_df_beta_hat_fp
 
             
     ## If does not find a risk-controlling policy:
@@ -1806,7 +1833,7 @@ def run_conformal_policy_control(
     check_col_names(constrained_liks_df_beta_hat)
     check_col_names(unconstrained_df)
     
-    return beta_t, psi_hat_t, n_safe_actions, constrained_liks_df_beta_hat, constrained_liks_df_beta_hat_fp, unconstrained_df, unconstrained_liks_df_beta_hat_fp
+    return beta_t, psi_hat_t, constrained_liks_df_beta_hat, constrained_liks_df_beta_hat_fp, unconstrained_df, unconstrained_liks_df_beta_hat_fp
 
 
     #     ## Temporary
@@ -1880,6 +1907,7 @@ def run_compute_liks_all_models_and_cal_data(
     # args += f"test_fn_fp={data_dir}/ehrlich.jsonl "
     # args += f"particle_field={particle_field} "
     # args += f"score_field={score_field} "
+    args += f"generation_config.max_new_tokens={cfg.compute_likelihooods_all_models.args.generation_config.max_new_tokens} "
     args += f"sanity_check={cfg.sanity_check} "
 
     # output_filename_prefix = f"cal_gens_all_likelihoods"
@@ -2074,6 +2102,20 @@ def main(cfg: DictConfig):
     # )
 
 
+    ## Get name of policy improvement optimizer(s)
+    pi_optimizer_name_and_lr = ""
+    pi_optimizer_name = ""
+    if cfg.num_sft_rounds > 0:
+        pi_optimizer_name += "sft"
+        pi_optimizer_name_and_lr += "sft_lr" + str(cfg.sft.args.training_args.learning_rate)
+    elif cfg.num_dpo_rounds > 0:
+        pi_optimizer_name += "dpo"
+        pi_optimizer_name_and_lr += "dpo" + str(cfg.dpo.args.dpo_config.learning_rate)
+    elif cfg.num_marge_rounds > 0:
+        pi_optimizer_name += "marge"
+        pi_optimizer_name_and_lr += "marge" + str(cfg.marge.args.marge_config.learning_rate)
+    else:
+        raise ValueError("Must have at least one optimization round")
 
 
     '''Initialization: SFT pre-training, where generation has uniformly selected seeds to improve pretrained model'''
@@ -2109,14 +2151,18 @@ def main(cfg: DictConfig):
         logger.info(f"Trained initial SFT model: {sft_dir}")
         all_model_paths.append(sft_dir)
 
+        
+
         seeds_fp = get_seeds_from_training_data(
             cfg, file_client,
             training_data_fp=combined_sft_dataset_fp,
             output_dir=sft_dir,
             sample_size=cfg.iterative_generation.init_args.sample_size,
             sampling_method=cfg.iterative_generation.init_args.sampling_method,
+            pi_optimizer_name=pi_optimizer_name,
             random_seed = cfg.iterative_generation.init_args.seed,
         )
+
 
 
 
@@ -2144,6 +2190,19 @@ def main(cfg: DictConfig):
             ## Last iteration of initialization SFT/generation will be treated as the first iterative generation/policy improvement iteration, which is "safer"
             # temps = [1.0] ## At last init iteration, use only temp=1.0 for sampling initial calibration data
 
+
+    if pi_optimizer_name == "dpo":
+        higher_score_particle_field="prompt"
+        lower_score_particle_field="chosen"
+        higher_score_field="prompt_score"
+        lower_score_field="chosen_score"
+    else:
+        higher_score_particle_field="higher_score_particle"
+        lower_score_particle_field="lower_score_particle"
+        higher_score_field="higher_score"
+        lower_score_field="lower_score"
+
+
     ## Generate examples from initial safe policy
     iter_gen_outputs_combined, iter_gen_outputs_list, hd = run_iterative_generation(
         cfg,
@@ -2151,10 +2210,10 @@ def main(cfg: DictConfig):
         seeds_fp, #combined_sft_dataset_fp,
         ga_data_dir,
         sft_dir,
-        higher_score_particle_field="higher_score_particle",
-        lower_score_particle_field="lower_score_particle",
-        higher_score_field="higher_score",
-        lower_score_field="lower_score",
+        higher_score_particle_field=higher_score_particle_field,
+        lower_score_particle_field=lower_score_particle_field,
+        higher_score_field=higher_score_field,
+        lower_score_field=lower_score_field,
         temps=[cfg.temperature_init],
         first_iter = True
     )
@@ -2186,7 +2245,7 @@ def main(cfg: DictConfig):
 
     '''Split last batch of generated outputs into training and calibration data'''
     cal_df, cal_unconstrained_output_path, train_df, train_output_path = \
-        train_cal_split_gen_outputs(cfg, file_client, iter_gen_outputs_list[0], sft_dir, first_iter=True) #, sample_num_cal=cfg.num_cal_per_step, sample_num_train=cfg.num_train_per_step)
+        train_cal_split_gen_outputs(cfg, file_client, iter_gen_outputs_list[0], sft_dir, first_iter=True, optimizer_name_and_lr=pi_optimizer_name_and_lr) #, sample_num_cal=cfg.num_cal_per_step, sample_num_train=cfg.num_train_per_step)
     prev_round_outputs_fp = train_output_path ## Hereon, prev_round_outputs_fp will only contain training data
     # cal_data_fp_list.append(cal_output_path)
     logger.info(f"cal_r0 (n_cal{i}={len(cal_df)}) output path: {cal_unconstrained_output_path}")
@@ -2234,7 +2293,7 @@ def main(cfg: DictConfig):
         ## TRAINING
         ## Format data
         sft_dataset_fp = create_propen_sft_dataset(
-            cfg, file_client, prev_round_outputs_fp, filename_prefix=f"sft_r{i}", n=n
+            cfg, file_client, prev_round_outputs_fp, filename_prefix=f"sft_lr{cfg.sft.args.training_args.learning_rate}_r{i}", n=n
         )
         combined_sft_dataset_fp = combine_new_with_old_datasets(
             cfg, file_client, all_prev_sft_datasets, sft_dataset_fp
@@ -2252,7 +2311,7 @@ def main(cfg: DictConfig):
             file_client,
             combined_sft_dataset_fp,
             ga_data_dir,
-            sft_run_name=f"{cfg.run_name}_alpha{cfg.conformal_policy_control.alpha}_sft_r{i}",
+            sft_run_name=f"{cfg.run_name}_alpha{cfg.conformal_policy_control.alpha}_sft_lr{cfg.sft.args.training_args.learning_rate}_r{i}",
             model_dir=all_model_paths[-1],
             train_from_scratch=train_from_scratch,
         )
@@ -2303,7 +2362,7 @@ def main(cfg: DictConfig):
 
 
         # ## CONFORMAL POLICY CONTROL
-        beta_t, psi_hat_t, n_safe_actions, constrained_liks_df_beta_hat, constrained_liks_df_beta_hat_fp, unconstrained_df, unconstrained_liks_df_beta_hat_fp = run_conformal_policy_control(
+        beta_t, psi_hat_t, constrained_liks_df_beta_hat, constrained_liks_df_beta_hat_fp, unconstrained_df, unconstrained_liks_df_beta_hat_fp = run_conformal_policy_control(
             cfg,
             file_client,
             model_dir_list=pi_model_fp_list,
@@ -2392,7 +2451,7 @@ def main(cfg: DictConfig):
 
         '''Split last batch of generated outputs into training and calibration data'''
         cal_df, cal_unconstrained_output_path, train_df, train_output_path = \
-            train_cal_split_gen_outputs(cfg, file_client, iter_gen_outputs_list[0], sft_dir) #, sample_num_cal=cfg.num_cal_per_step, sample_num_train=cfg.num_train_per_step)
+            train_cal_split_gen_outputs(cfg, file_client, iter_gen_outputs_list[0], sft_dir, optimizer_name_and_lr=pi_optimizer_name_and_lr) #, sample_num_cal=cfg.num_cal_per_step, sample_num_train=cfg.num_train_per_step)
         prev_round_outputs_fp = train_output_path ## Hereon, prev_round_outputs_fp will only contain training data
         cal_data_unconstrained_fp_list.append(cal_unconstrained_output_path)
         logger.info(f"cal_r0 (n_cal{i}={len(cal_df)}) output path: {cal_unconstrained_output_path}")
@@ -2425,7 +2484,7 @@ def main(cfg: DictConfig):
         ## Format data
         n = cfg.num_labels_after_first_round
         dpo_dataset_fp = create_propen_preference_dataset(
-            cfg, file_client, prev_round_outputs_fp, filename_prefix=f"alpha{cfg.conformal_policy_control.alpha}_dpo_r{i}", n=n
+            cfg, file_client, prev_round_outputs_fp, filename_prefix=f"alpha{cfg.conformal_policy_control.alpha}_dpo_lr{cfg.dpo.args.dpo_config.learning_rate}_r{i}", n=n
         )
         combined_dpo_dataset_fp = combine_new_with_old_datasets(
             cfg, file_client, all_prev_dpo_datasets, dpo_dataset_fp
@@ -2445,7 +2504,7 @@ def main(cfg: DictConfig):
             file_client,
             data_fp=combined_dpo_dataset_fp,
             ga_data_dir=ga_data_dir,
-            run_name=f"{cfg.run_name}_alpha{cfg.conformal_policy_control.alpha}_dpo_r{i}",
+            run_name=f"{cfg.run_name}_alpha{cfg.conformal_policy_control.alpha}_dpo_lr{cfg.dpo.args.dpo_config.learning_rate}_r{i}",
             ref_model_path=all_model_paths[-1],
             # train_from_scratch=train_from_scratch,
         )
@@ -2502,7 +2561,7 @@ def main(cfg: DictConfig):
 
 
         # ## CONFORMAL POLICY CONTROL
-        beta_t, psi_hat_t, n_safe_actions, constrained_liks_df_beta_hat, constrained_liks_df_beta_hat_fp, unconstrained_df, unconstrained_liks_df_beta_hat_fp = run_conformal_policy_control(
+        beta_t, psi_hat_t, constrained_liks_df_beta_hat, constrained_liks_df_beta_hat_fp, unconstrained_df, unconstrained_liks_df_beta_hat_fp = run_conformal_policy_control(
             cfg,
             file_client,
             model_dir_list=pi_model_fp_list,
@@ -2519,7 +2578,7 @@ def main(cfg: DictConfig):
         )
 
        ## For now, just dealing with this edge case by continuing to next step with one action
-        n_safe_actions = max(1, n_safe_actions)
+        # n_safe_actions = max(1, n_safe_actions)
 
         betas_list.append(beta_t)
         psis_list.append(psi_hat_t)
@@ -2570,7 +2629,7 @@ def main(cfg: DictConfig):
 
         '''Split last batch of generated outputs into training and calibration data'''
         cal_df, cal_unconstrained_output_path, train_df, train_output_path = \
-            train_cal_split_gen_outputs(cfg, file_client, unconstrained_gen_liks_fp, dpo_dir) #, sample_num_cal=cfg.num_cal_per_step, sample_num_train=cfg.num_train_per_step)
+            train_cal_split_gen_outputs(cfg, file_client, unconstrained_gen_liks_fp, dpo_dir, optimizer_name_and_lr=pi_optimizer_name_and_lr) #, sample_num_cal=cfg.num_cal_per_step, sample_num_train=cfg.num_train_per_step)
         prev_round_outputs_fp = train_output_path ## Hereon, prev_round_outputs_fp will only contain training data
         cal_data_unconstrained_fp_list.append(cal_unconstrained_output_path)
         logger.info(f"cal_r0 (n_cal{i}={len(cal_df)}) output path: {cal_unconstrained_output_path}")
@@ -2654,7 +2713,7 @@ def main(cfg: DictConfig):
         ## Format data
         n = cfg.num_labels_after_first_round
         marge_dataset_fp = create_propen_sft_dataset(
-            cfg, file_client, prev_round_outputs_fp, filename_prefix=f"marge_r{i}", n=n
+            cfg, file_client, prev_round_outputs_fp, filename_prefix=f"alpha{cfg.conformal_policy_control.alpha}_marge_lr{cfg.marge.args.marge_config.learning_rate}__r{i}", n=n
         )
         combined_marge_dataset_fp = combine_new_with_old_datasets(
             cfg, file_client, all_prev_marge_datasets, marge_dataset_fp
@@ -2672,7 +2731,7 @@ def main(cfg: DictConfig):
             file_client,
             data_fp=combined_marge_dataset_fp,
             ga_data_dir=ga_data_dir,
-            run_name=f"{cfg.run_name}_alpha{cfg.conformal_policy_control.alpha}_marge_r{i}",
+            run_name=f"{cfg.run_name}_alpha{cfg.conformal_policy_control.alpha}_marge_lr{cfg.marge.args.marge_config.learning_rate}_r{i}",
             ref_model_path=all_model_paths[-1],
             # train_from_scratch=train_from_scratch,
         )
@@ -2723,7 +2782,7 @@ def main(cfg: DictConfig):
 
 
         ### CONFORMAL POLICY CONTROL
-        beta_t, psi_hat_t, n_safe_actions, constrained_liks_df_beta_hat, constrained_liks_df_beta_hat_fp, unconstrained_df, unconstrained_liks_df_beta_hat_fp = run_conformal_policy_control(
+        beta_t, psi_hat_t, constrained_liks_df_beta_hat, constrained_liks_df_beta_hat_fp, unconstrained_df, unconstrained_liks_df_beta_hat_fp = run_conformal_policy_control(
             cfg,
             file_client,
             model_dir_list=pi_model_fp_list,
@@ -2736,7 +2795,7 @@ def main(cfg: DictConfig):
         )
 
         ## For now, just dealing with this edge case by continuing to next step with one action
-        n_safe_actions = max(1, n_safe_actions)
+        # n_safe_actions = max(1, n_safe_actions)
         
 
         betas_list.append(beta_t)
@@ -2785,7 +2844,7 @@ def main(cfg: DictConfig):
 
         '''Split last batch of generated outputs into training and calibration data'''
         cal_df, cal_unconstrained_output_path, train_df, train_output_path = \
-            train_cal_split_gen_outputs(cfg, file_client, unconstrained_gen_liks_fp, marge_dir) #, sample_num_cal=cfg.num_cal_per_step, sample_num_train=cfg.num_train_per_step)
+            train_cal_split_gen_outputs(cfg, file_client, unconstrained_gen_liks_fp, marge_dir, optimizer_name_and_lr=pi_optimizer_name_and_lr) #, sample_num_cal=cfg.num_cal_per_step, sample_num_train=cfg.num_train_per_step)
             # train_cal_split_gen_outputs(cfg, file_client, unconstrained_liks_df_beta_hat_fp, marge_dir)
         prev_round_outputs_fp = train_output_path ## Hereon, prev_round_outputs_fp will only contain training data
         cal_data_unconstrained_fp_list.append(cal_unconstrained_output_path)

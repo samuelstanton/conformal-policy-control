@@ -34,4 +34,4 @@ generation_config:  # greedy decoding
   # num_beams: 1
   # num_return_sequences: 1
   # max_length: null
-  temperature: 10.0
+  temperature: 1.0

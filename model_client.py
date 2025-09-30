@@ -500,6 +500,7 @@ class ModelClient:
         targets: List[str],
         batch_size: int = 10,
         device: str = "cuda",
+        float_constant: int = 10**10, ## constant to scale probabilities by to reduce float point issues
         # add_start_token: bool = True,
         logger: logging.Logger = None,
     ) -> List[float]:
@@ -614,14 +615,24 @@ class ModelClient:
                 # seq_log_likelihoods = list(next_token_probs.prod(-1) / targets_seq_lens)
                 # all_log_likelihoods.extend(avg_log_likelihoods)
             #     logger.info(f"likelihoods_target len : {len(log_likelihoods_target)}")
-
+            log_likelihoods_target_scaled = np.array(log_likelihoods_target) / self.max_generate_length
             # logger.info(f"likelihoods_target : {log_likelihoods_target}")
-            all_likelihoods.append(max(np.exp(log_likelihoods_target).mean(), sys.float_info.min)) ## Clip likelihoods at minimum float value for now (if was generated, then actual likelihood is positive)
+            # logger.info(f"self.max_generate_length : {self.max_generate_length}")
+            # logger.info(f"log_likelihoods_target : {log_likelihoods_target}")
+            # likelihoods_target_scaled = np.exp(log_likelihoods_target) * float_constant  ## Scale up by constant to reduce float point issues
+            # logger.info(f"likelihoods_target : {np.exp(log_likelihoods_target)}")
+            # logger.info(f"likelihoods_target_scaled : {log_likelihoods_target_scaled}")
+            # logger.info(f"likelihoods_scaled_avg    : {max(np.exp(log_likelihoods_target_scaled).mean(), sys.float_info.min)}")
+            # all_likelihoods.append(max(np.exp(log_likelihoods_target_scaled).mean(), sys.float_info.min)) ## Clip likelihoods at minimum float value for now (if was generated, then actual likelihood is positive)
+            all_likelihoods.append(np.exp(log_likelihoods_target_scaled).mean()) ## Clip likelihoods at minimum float value for now (if was generated, then actual likelihood is positive)
+
             # all_likelihoods.append(torch.mean(log_likelihoods_target))
             # all_likelihoods.append(likelihoods_target.prod())
 
+            # raise ValueError("Stopping for debugging")
 
             # logger.info(f"np.exp(log_likelihoods_target) : {np.exp(log_likelihoods_target)}")
+            # logger.info(f"liks prior to avg : {np.exp(log_likelihoods_target_scaled)}")
             # logger.info(f"seq likelihood : {all_likelihoods[-1]}")
             # logger.info(f"len(all_likelihoods) : {len(all_likelihoods)}")
 

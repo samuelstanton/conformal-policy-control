@@ -21,7 +21,7 @@ def score(cfg: DictConfig, logger: logging.Logger = None):
     model_client = ModelClient(
         model_name_or_path=cfg.model_name_or_path,
         logger=logger,
-        max_generate_length=1,  # don't need to generate, only scoring
+        max_generate_length=500, 
         device="cuda" if torch.cuda.is_available() else "cpu",
     )
     # breakpoint()
