@@ -14,11 +14,13 @@ overwrite_sft: False ## If False, will only run SFT when output file does not al
 overwrite_ig: False  ## If False, will only run iterative generation when output file does not already exist.
 overwrite_split: False
 overwrite_cg: False ## If False, will only run contrastive generation when output file does not already exist.
-overwrite_cmp_lik_all: True #False #True ## If False, will only run compute_likelihoods_all_models when output file doesn't exist.
+overwrite_cmp_lik_all: False #False #True ## If False, will only run compute_likelihoods_all_models when output file doesn't exist.
 overwrite_sft_formatter: False
 overwrite_dpo_formatter: False
 overwrite_marge: False # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
 overwrite: False # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
+
+run_conformal_policy_control: False
 
 
 run_evol_dataset_gen: True
@@ -31,7 +33,6 @@ run_iter_gen: True
 run_compute_liks_all_models_and_cal_data: True ## Whether to run likelihood computation for all models (for policy control)
 run_contrast_gen: False ## Whether to run contrastive generation
 
-run_conformal_policy_control: True
 # run_uncon_gen: True ## Whether to run unconditional generation from initial density model
 run_propen_dpo_dataset_formatting: True
 init_generation_sampling_num_return_sequences: 10 #10 ## Number of sequences to sample at each intialization generation stage
@@ -460,7 +461,7 @@ iterative_generation:
     test_fn_type: "ehrlich"  # [ehrlich, mt_fuji]
     subsample_seeds: True ## Whether to subsample input seeds (with replacement), or to iterate through all of them
     sample_size: 10 #10 #100 #200  # initial number of seeds to use for iterative generation
-    max_iterations: 100 #50 #100 #10
+    max_iterations: 120 #50 #100 #10
     sampling_method: "best_scoring" ## Method for selecting seeds # "uniform", "combination", "best_scoring"
     generation_config:
       max_new_tokens: 512
@@ -480,7 +481,7 @@ iterative_generation:
 
 
 conformal_policy_control:
-  alpha: 1.0 #0.5 #1.0 #0.25 #0.5 #0.3 #1.0 #0.5
+  alpha: 1.01 #0.5 #1.0 #0.25 #0.5 #0.3 #1.0 #0.5
   args:
     n_grid: 100 ## Approx size of grid to search over for lik-ratio bound
     n_grid_safe_actions: 20
