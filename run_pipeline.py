@@ -106,7 +106,7 @@ def prepare_grid(
         n_curr = len(G)
         k = max(int(n_curr / n_grid), 1) #if n_curr / int(n_curr / n_grid) > n_grid else 1
         G = G[::k]
-        G = np.concatenate(([sys.float_info.min], G)) ## For safe, ensure that include minimum positive float value
+        G = np.concatenate(([sys.float_info.min], G, [1])) ## For safe, ensure that include minimum positive float value
 
     return G
 
@@ -1145,6 +1145,7 @@ def run_iterative_generation(
     first_iter: bool = False,
     model_idx: int = 0, ## Time index of model using for (unconstrained) generation
     call_idx: int = 0, ## Index for this generation has been called, including current, for same model directory
+    proportion_of_target_n_accepted: float = None, ## If being run as submodule of AR-sampling, the proportion of target samples accepted
     # proposal: str = 'unconstrained',
 ):
     """
@@ -1176,8 +1177,10 @@ def run_iterative_generation(
         args += f"sample_size={cfg.iterative_generation.args.sample_size} "
         args += f"max_iterations={cfg.iterative_generation.args.max_iterations} "
         args += f"sampling_method={cfg.iterative_generation.args.sampling_method} "
-        output_filename_prefix = f"alpha{cfg.conformal_policy_control.alpha}_model{model_idx}_cn{call_idx}_gens_likelihood_{cfg.iterative_generation.args.sample_size}sample_{cfg.iterative_generation.args.max_iterations}iter"
-
+        if proportion_of_target_n_accepted is not None:
+            output_filename_prefix = f"alpha{cfg.conformal_policy_control.alpha}_model{model_idx}_cn{call_idx}_propAcc{proportion_of_target_n_accepted:.3g}_gens_likelihood_{cfg.iterative_generation.args.sample_size}sample_{cfg.iterative_generation.args.max_iterations}iter"
+        else:
+            output_filename_prefix = f"alpha{cfg.conformal_policy_control.alpha}_model{model_idx}_cn{call_idx}_gens_likelihood_{cfg.iterative_generation.args.sample_size}sample_{cfg.iterative_generation.args.max_iterations}iter"
 
     greedy_decoding_gen_args = f"generation_config.do_sample=False generation_config.num_beams=1 batch_size={cfg.greedy_gen_batch_size}"
     temp_sampling_gen_args = [
@@ -1367,11 +1370,11 @@ def accept_reject_sample_and_get_likelihoods(
         while n_accepted < n_target:
 
             accepted_curr = []
-            call_idx += 1
 
             temps_curr = temps if len(model_dir_list) > 1 else [cfg.temperature_init]
 
             # breakpoint()
+
             ## Sample using unconstrained model as proposal
             _, iter_gen_outputs_list, hd = run_iterative_generation(
                 cfg,
@@ -1386,8 +1389,11 @@ def accept_reject_sample_and_get_likelihoods(
                 lower_score_field=lower_score_field,
                 temps=temps_curr,
                 model_idx = len(model_dir_list) - 1, ## Index for model being called for generation
-                call_idx=call_idx ## Index for times this generation has been called, including current, for same model directory
+                call_idx=call_idx, ## Index for times this generation has been called, including current, for same model directory
+                proportion_of_target_n_accepted = n_accepted / n_target
             )
+            call_idx += 1
+
 
             # breakpoint()
 
@@ -1492,13 +1498,13 @@ def accept_reject_sample_and_get_likelihoods(
 
 
                         # accepted_curr = []
-            call_idx += 1
 
 
             # breakpoint()
             ## Sample using unconstrained model as proposal
 
             if cfg.conformal_policy_control.constrain_against == 'init':
+
 
                 _, iter_gen_outputs_list, hd = run_iterative_generation(
                     cfg,
@@ -1512,8 +1518,9 @@ def accept_reject_sample_and_get_likelihoods(
                     higher_score_field=higher_score_field,
                     lower_score_field=lower_score_field,
                     temps=[cfg.temperature_init],
-                    model_idx = len(model_dir_list) - 1, ## Index for model being called for generation
-                    call_idx=call_idx ## Index for times this generation has been called, including current, for same model directory
+                    model_idx = 0, #len(model_dir_list) - 1, ## Index for model being called for generation
+                    call_idx=call_idx, ## Index for times this generation has been called, including current, for same model directory
+                    proportion_of_target_n_accepted = n_accepted / n_target
                 )
 
                 # breakpoint()
@@ -1619,12 +1626,12 @@ def accept_reject_sample_and_get_likelihoods(
                 # lik_ratios_unconstrained_over_safe = gen_liks_mat[:, -1] / constrained_liks_mat[:, -1] 
 
         
+            call_idx += 1
 
             n_prop = len(gen_liks_df)
 
 
             
-
             
             ## Accept or reject each proposal
             for i in range(n_prop):
@@ -1643,7 +1650,6 @@ def accept_reject_sample_and_get_likelihoods(
 
             accepted_unconstrained_df = pd.concat([accepted_unconstrained_df, gen_liks_df[:len(accepted_curr)][accepted_curr]], ignore_index=True)
             accepted_constrained_df = pd.concat([accepted_constrained_df, constrained_liks_df[:len(accepted_curr)][accepted_curr]], ignore_index=True)
-
 
 
             # gen_liks_df = pd.read_json(gen_liks_fp, orient="records", lines=True) #[unconstrained_col_names]
@@ -1798,8 +1804,13 @@ def run_conformal_policy_control(
 
     if cfg.conformal_policy_control.alpha >= 1.0:
         policy_names = ['unconstrained']
+        adjusted_alpha = 1.0
+    elif cfg.conformal_policy_control.num_starts_beta_search == 2:
+        policy_names = ['unconstrained', 'safe']
+        adjusted_alpha = cfg.conformal_policy_control.alpha / 2 ## Multistart correction
     else:
         policy_names = ['safe', 'unconstrained']
+        adjusted_alpha = cfg.conformal_policy_control.alpha ## Fixed sequence testing, no multistart correction
 
     ## Outer for loop: First try using unconstrained policy as proposal before going to safe policy
     for i, proposal in enumerate(policy_names):
@@ -1832,7 +1843,7 @@ def run_conformal_policy_control(
                                                        ga_data_dir, higher_score_particle_field=higher_score_particle_field,\
                                                        lower_score_particle_field=lower_score_particle_field,
                                                        higher_score_field=higher_score_field,
-                                                       lower_score_field=lower_score_field, proposal='unconstrained')
+                                                       lower_score_field=lower_score_field, proposal=proposal)
         ## NOTE/Warning: for proposal == 'unconstrained', should have unconstrained_df == constrained_liks_df (identical); else, should have constrained_liks_df.iloc[:,-1] == constrained_liks_df.iloc[:,-2] (fully constrained)
         check_col_names(unconstrained_df)
         check_col_names(constrained_liks_df)
@@ -1941,7 +1952,7 @@ def run_conformal_policy_control(
 
             ## Compute estimated test point weight as the expectation of the ratio, with probabilities in the expectation given by prop_constrained_liks_curr[:,-1]
             prop_constrained_liks_curr_t = prop_constrained_liks_curr[:,-1].flatten()
-            # w_test = np.mean(prop_constrained_liks_curr_t / prop_mixture_constrained_density)
+
             w_test = np.max(prop_constrained_liks_curr_t / prop_mixture_constrained_density)
 
                 
@@ -1951,12 +1962,28 @@ def run_conformal_policy_control(
             sum_w_cal_test = np.sum(w_cal) + w_test
             w_cal_normalized = w_cal / sum_w_cal_test
             w_test_normalized = w_test / sum_w_cal_test
+            w_infeasible_normalized = np.sum(w_cal_normalized[cal_infeasible_indicators]) + w_test_normalized
+
+
+
+            # ## If using mean rather than max test point weight
+            # w_test_mean = np.mean(prop_constrained_liks_curr_t / prop_mixture_constrained_density)
+            # w_test_mean *= test_pt_factor
+            # ## Concatenate and normalize
+            # sum_w_cal_test_mean = np.sum(w_cal) + w_test_mean
+            # w_cal_normalized_mean = w_cal / sum_w_cal_test_mean
+            # w_test_normalized_mean = w_test_mean / sum_w_cal_test_mean
+            # w_infeasible_normalized_mean = np.sum(w_cal_normalized_mean[cal_infeasible_indicators]) + w_test_normalized_mean
 
             # if proposal == 'unconstrained':
             #     breakpoint()
 
-            ## Check if accept null or reach fully unconstrained policy (beta_t == np.inf)
-            if (np.sum(w_cal_normalized[cal_infeasible_indicators]) + w_test_normalized > cfg.conformal_policy_control.alpha or beta_t == np.inf):
+            
+            ## If (Accepting null & either searching through unconstrained with previously rejected or is the last proposal):
+            # if (np.sum(w_cal_normalized[cal_infeasible_indicators]) + w_test_normalized > adjusted_alpha or adjusted_alpha == 1.0): #  and ((proposal == 'unconstrained' and b > 0) or i > 0)
+            if (np.sum(w_cal_normalized[cal_infeasible_indicators]) + w_test_normalized > adjusted_alpha or adjusted_alpha == 1.0): #  and ((proposal == 'unconstrained' and b > 0) or i > 0)
+                ## If accepting null and previously rejected, then return most recently rejected beta_t
+
 
                 beta_t = G[b-1] if b > 0 else G[b] ## Upon first acceptance, set beta_t to most recent member of rejection set
 
@@ -1976,19 +2003,26 @@ def run_conformal_policy_control(
 
 
                 ## Save proposals with cpc-constrained likelihoods
-                
                 constrained_liks_df_beta_hat = pd.concat([constrained_liks_df.iloc[:, :-1], pd.DataFrame({f'con_lik_r{n_cal_sets}' : prop_constrained_liks_curr[:,-1]})], axis=1)
-                constrained_liks_df_beta_hat_fp = os.path.join(os.path.dirname(constrained_gen_liks_fp), f"cpc_prop_alpha{cfg.conformal_policy_control.alpha}_beta{betas_list[-1]:.3g}_{constrained_gen_liks_fp}")
+                constrained_liks_df_beta_hat_fp = os.path.join(os.path.dirname(constrained_gen_liks_fp), f"prop_likBeta{beta_t:.3g}_{os.path.basename(constrained_gen_liks_fp)}")
                 constrained_liks_df_beta_hat.to_json(constrained_liks_df_beta_hat_fp, orient="records", lines=True)
 
                 ## Also save proposals with unconstrained likelihoods
-                unconstrained_liks_df_beta_hat_fp = os.path.join(os.path.dirname(unconstrained_gen_liks_fp), f"cpc_prop_alpha{cfg.conformal_policy_control.alpha}_beta{betas_list[-1]:.3g}_{unconstrained_gen_liks_fp}")
-                unconstrained_df.to_json(unconstrained_liks_df_beta_hat_fp, orient="records", lines=True)
+                # unconstrained_liks_df_beta_hat_fp = os.path.join(os.path.dirname(unconstrained_gen_liks_fp), f"cpc_prop_alpha{cfg.conformal_policy_control.alpha}_beta{beta_t:.3g}_{os.path.basename(unconstrained_gen_liks_fp)}")
+                # unconstrained_df.to_json(unconstrained_liks_df_beta_hat_fp, orient="records", lines=True)
 
                 check_col_names(constrained_liks_df_beta_hat)
                 check_col_names(unconstrained_df)
                 
-                return beta_t, psi_hat_t, constrained_liks_df_beta_hat, constrained_liks_df_beta_hat_fp, unconstrained_df, unconstrained_liks_df_beta_hat_fp
+                return beta_t, psi_hat_t, constrained_liks_df_beta_hat, constrained_liks_df_beta_hat_fp, unconstrained_df, unconstrained_gen_liks_fp #unconstrained_df, unconstrained_liks_df_beta_hat_fp
+
+            # elif (np.sum(w_cal_normalized[cal_infeasible_indicators]) + w_test_normalized > adjusted_alpha or beta_t == np.inf and b == 0 and proposal == 'unconstrained' and cfg.conformal_policy_control.num_starts_beta_search == 2):
+
+            # ## If accepting null and this is the first tested beta_t in the subsequence
+            # elif (np.sum(w_cal_normalized[cal_infeasible_indicators]) + w_test_normalized > adjusted_alpha and (proposal == 'unconstrained' and b == 0)):
+            #     ## If (accepting null for the first beta_t == 1 ie b == 0) and (the proposal is 'unconstrained') and (multistart==2) then go to testing with safe proposal
+            #     break
+
 
             
     ## If does not find a risk-controlling policy:
@@ -1997,17 +2031,17 @@ def run_conformal_policy_control(
     psi_hat_t = importance_weighted_monte_carlo_integration(lik_ratios_unconstrained_over_safe, beta_t)
 
     constrained_liks_df_beta_hat = pd.concat([constrained_liks_df.iloc[:, :-1], pd.DataFrame({f'con_lik_r{n_cal_sets}' : prop_constrained_liks_curr[:,-1]})], axis=1)
-    constrained_liks_df_beta_hat_fp = os.path.join(os.path.dirname(constrained_gen_liks_fp), f"cpc_prop_alpha{cfg.conformal_policy_control.alpha}_beta{betas_list[-1]:.3g}_{constrained_gen_liks_fp}")
+    constrained_liks_df_beta_hat_fp = os.path.join(os.path.dirname(constrained_gen_liks_fp), f"prop_alpha{cfg.conformal_policy_control.alpha}_uncontrolled_beta{betas_list[-1]:.3g}_{os.path.basename(constrained_gen_liks_fp)}")
     constrained_liks_df_beta_hat.to_json(constrained_liks_df_beta_hat_fp, orient="records", lines=True)
 
     ## Also save proposals with unconstrained likelihoods
-    unconstrained_liks_df_beta_hat_fp = os.path.join(os.path.dirname(unconstrained_gen_liks_fp), f"cpc_prop_alpha{cfg.conformal_policy_control.alpha}_beta{betas_list[-1]:.3g}_{unconstrained_gen_liks_fp}")
-    unconstrained_df.to_json(unconstrained_liks_df_beta_hat_fp, orient="records", lines=True)
+    # unconstrained_liks_df_beta_hat_fp = os.path.join(os.path.dirname(unconstrained_gen_liks_fp), f"prop_alpha{cfg.conformal_policy_control.alpha}_uncontrolled_beta{betas_list[-1]:.3g}_{os.path.basename(unconstrained_gen_liks_fp)}")
+    # unconstrained_df.to_json(unconstrained_liks_df_beta_hat_fp, orient="records", lines=True)
 
     check_col_names(constrained_liks_df_beta_hat)
     check_col_names(unconstrained_df)
     
-    return beta_t, psi_hat_t, constrained_liks_df_beta_hat, constrained_liks_df_beta_hat_fp, unconstrained_df, unconstrained_liks_df_beta_hat_fp
+    return beta_t, psi_hat_t, constrained_liks_df_beta_hat, constrained_liks_df_beta_hat_fp, unconstrained_df, unconstrained_gen_liks_fp # unconstrained_liks_df_beta_hat_fp
 
 
     #     ## Temporary
@@ -2281,13 +2315,13 @@ def main(cfg: DictConfig):
     pi_optimizer_name = ""
     if cfg.num_sft_rounds > 0:
         pi_optimizer_name += "sft"
-        setting += "sft_CA" + str(cfg.conformal_policy_control.constrain_against)
+        setting += f"sft_CA{cfg.conformal_policy_control.constrain_against}_{cfg.conformal_policy_control.num_starts_beta_search}"
     elif cfg.num_dpo_rounds > 0:
         pi_optimizer_name += "dpo"
-        setting += "dpo_CA" + str(cfg.conformal_policy_control.constrain_against)
+        setting += f"dpo_CA{cfg.conformal_policy_control.constrain_against}_{cfg.conformal_policy_control.num_starts_beta_search}_ep{cfg.dpo.args.dpo_config.num_train_epochs}"
     elif cfg.num_marge_rounds > 0:
         pi_optimizer_name += "marge"
-        setting += "marge_CA" + str(cfg.conformal_policy_control.constrain_against)
+        setting += f"marge_CA{cfg.conformal_policy_control.constrain_against}_{cfg.conformal_policy_control.num_starts_beta_search}"
     else:
         raise ValueError("Must have at least one optimization round")
 
@@ -2797,7 +2831,6 @@ def main(cfg: DictConfig):
             # constrained_liks_df_beta_hat_fp = os.path.join(os.path.dirname(constrained_gen_liks_fp), f"cpc_prop_{constrained_gen_liks_fp}")
             cal_constrained_liks_df_beta_hat.to_json(cal_data_constrained_fp, orient="records", lines=True)
         
-
 
         ## Sample with conformal policy control
         unconstrained_df, unconstrained_gen_liks_fp, constrained_liks_df, constrained_gen_liks_fp\
