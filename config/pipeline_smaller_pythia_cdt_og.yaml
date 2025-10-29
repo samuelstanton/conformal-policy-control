@@ -1,7 +1,7 @@
 log_level: info
 run_name: smaller_pythia #smaller_pythia_0.25dist_0.1maxinf_50gen
-parent_output_dir: s3://prescient-pcluster-data/prinstea/llome/parent_output_20251025_og #parent_output_20251013_CAinit # #parent_output_20250918_noCPC  #parent_output_20250923 #_20250901_evol0.5 #/data/bucket/prinstea/llome/parent_output
-local_output_dir: /homefs/home/prinstea/llome/local_output_20251025_og #local_output_20251013_CAinit # #local_output_20250918_noCPC  #local_output_20250923 #_20250901_evol0.5
+parent_output_dir: s3://prescient-pcluster-data/prinstea/llome/parent_output_20251028 #parent_output_20251013_CAinit # #parent_output_20250918_noCPC  #parent_output_20250923 #_20250901_evol0.5 #/data/bucket/prinstea/llome/parent_output
+local_output_dir: /homefs/home/prinstea/llome/local_output_20251028 #local_output_20251013_CAinit # #local_output_20250918_noCPC  #local_output_20250923 #_20250901_evol0.5
 overwrite_ga: False ## If False, will only run genetic algorithm when output file does not already exist.
 overwrite_gpt: False ## If False, will only run GPT pretraining when output file does not already exist.
 overwrite_initial_sft: False ## If False, will only run SFT when output file does not already exist.
@@ -9,8 +9,9 @@ overwrite_init_sft_formatter: False
 
 overwrite_initg: False #False ## If False, will only run initial generation when output file does not already exist.
 
-overwrite_split_init: True
 
+
+overwrite_split_init: True
 overwrite_sft: True ## If False, will only run SFT when output file does not already exist.
 overwrite_ig: True ## If False, will only run iterative generation when output file does not already exist.
 overwrite_split: True
@@ -18,13 +19,25 @@ overwrite_split: True
 overwrite_cmp_lik_all: True #False #True ## If False, will only run compute_likelihoods_all_models when output file doesn't exist.
 overwrite_sft_formatter: True
 overwrite_marge: True # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
+overwrite: True #True # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
+overwrite_dpo_formatter: True #True
+overwrite_dpo: True #True # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
 
-overwrite: True # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
 
-overwrite_dpo_formatter: True
-overwrite_dpo: True # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
+# overwrite_split_init: False
+# overwrite_sft: False ## If False, will only run SFT when output file does not already exist.
+# overwrite_ig: False ## If False, will only run iterative generation when output file does not already exist.
+# overwrite_split: False
+# # overwrite_cg: False ## If False, will only run contrastive generation when output file does not already exist.
+# overwrite_cmp_lik_all: False #False #True ## If False, will only run compute_likelihoods_all_models when output file doesn't exist.
+# overwrite_sft_formatter: False
+# overwrite_marge: False # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
+# overwrite: False #True # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
+# overwrite_dpo_formatter: False #True
+# overwrite_dpo: False #True # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
 
-setting_str: "2xintersect"
+
+setting_str: "_MH_only" #"_AR_MH3" #"_AR_MH" #"_mixture" #"_mh_mix" # "2xintersect""_100tar"
 
 run_conformal_policy_control: True
 
@@ -486,13 +499,16 @@ iterative_generation:
 
 
 conformal_policy_control:
-  alpha: 1.0 #0.5 #1.0 #0.25 #0.5 #0.3 #1.0 #0.5
+  alpha: 0.3 #0.5 #1.0 #0.25 #0.5 #0.3 #1.0 #0.5
   num_starts_beta_search: 1
+  mixture_proposal: False
+  ind_metropolis_hastings: True #False
+  num_AR_before_MH: 0 #10 ## Number of AR generation iterations to try before switching to IMH sampling
   constrain_against: "init" ## "init" or "last": whether to constrain against the initial safe policy, or the last/most recent safe policy
   args:
     n_grid: 100 ## Approx size of grid to search over for lik-ratio bound    
   accept_reject:
-    n_target: 1000
+    n_target: 1000 # 1000
     iwmci_intersect_thresh: 0.5
 
 
