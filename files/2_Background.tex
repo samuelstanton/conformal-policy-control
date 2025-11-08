@@ -1,0 +1,200 @@
+\section{Problem Setup and Background}
+
+
+
+\subsection{General Setup: Risk-Constrained Decision Making}
+
+
+At each time $t=0, 1, ...$, the agent receives an input context (or observation, state, or prompt) $X_t\in \mathcal{X}$ and takes an action $A_t\in\mathcal{A}$. For example, in the setting of LLMs, $X_t$ could be a text prompt, with $\mathcal{X}=\mathcal{V}^*$ for a vocabulary $\mathcal{V}$, and the LLM's action could be to generate a text response $A_t(X_t)=X_t'$. 
+% , which can in turn produce some output $X_t'\in \mathcal{X}$. 
+% which for now we will assume is a function on the input space, $A_t:\mathcal{X}\rightarrow \mathcal{X}$. 
+After taking action, the agent receives some feedback (e.g., from a human or the environment) in the form of a response (or label) $Y_t'\in \mathcal{Y}$.\footnote{Here, we keep notation simple in two main ways: First, we initially assume a fully online setting, where feedback is received after every action; later we will introduce notation for a ``minibatch'' setting, where feedback may be received only intermittently after a number of actions. Second, here we suppress causal notation, but in the language of structural equation models (with some jointly independent exogenous noise terms, $\epsilon_{X_t}, \epsilon_{A_t}, \epsilon_{Y_t'}$), we assume $X_t=g_{X_t}(\epsilon_{X_t}), A_t=g_{A_t}(X_t, \epsilon_{A_t})$, and $Y_t'=g_{Y_t'}(X_t, A_t, \epsilon_{Y_t'})$.}
+The agent's objective is to maximize some reward, $R_t:=r(X_t, Y_t, A_t(X_t), Y_t')\in \mathbb{R}$ while controlling some cost, $L_t:=l(X_t, Y_t, A_t(X_t), Y_t')\in \mathbb{R}$, below a user-specified threshold, $\alpha\in \mathbb{R}$. That is, its ideal goal is
+\begin{align*}
+    \argmax_{A_t}\quad R_t \quad \text{s.t.} \quad L_t \leq \alpha.
+\end{align*}
+However, in practice this goal becomes intractable in the case of a large (e.g., combinatorial or infinite) action space, where an agent can never try every action, or even due to noisy feedback/measurement error. Accordingly, the agent instead may aim to learn a probabilistic strategy or \textit{policy}, $\pi_{\theta_t}$, with the goal of maximizing its expected reward and controlling its expected cost, with respect to the policy:
+\begin{align}\label{eq:proxy_goal}
+    \argmax_{\pi_{\theta_t}} \ \ & \mathbb{E}_{A_t\sim \pi_{\theta_t}(\cdot \mid X_t)}\big[r(X_t, Y_t, A_t(X_t), Y_t')\big] \ \ \text{ s.t. }\nonumber  \\  
+    &\mathbb{E}_{A_t\sim \pi_{\theta_t}(\cdot \mid X_t)}\big[l(X_t, Y_t, A_t(X_t), Y_t')\big] \leq \alpha.
+\end{align}
+In Eq. \eqref{eq:proxy_goal}, $A_t\sim \pi_{\theta_t}(\cdot \mid X_t)$ in the expectation terms denotes sampling or generating $A_t$ with probabilities proportional to $\pi_{\theta_t}(\cdot \mid X_t)$, the policy conditional on $X_t$. 
+%For simplicity, we focus on rewards and losses that are real-valued functions of only the action and outcome, although more generally one could be interested in rewards or losses that further depend on the input context, e.g., $R_t:=r(A_t(X_t), X_t, Y_t)$.
+
+
+\subsection{Motivating Example: Molecular Design with LLMs}
+
+For a motivating example throughout this paper, we will often return to the setting of biomolecular design with LLM agents. In this design setting, let the input space be the space of possible protein sequences, $\mathcal{X}:= \mathcal{V}^*$, where $\mathcal{V}$ is a vocabulary (e.g., of amino acids). Accordingly, given an input ``prompt'' or ``seed'' sequence, $X_t$, the actions of interest are to take the prompt and to generate a ``designed'' sequence, $A_t(X_t):=X_t'$, optimized to have high reward.
+% \footnote{Note that where needed, we will use counterfactual notation to distinguish the designed sequence and outcome, $(X_t^{(a_t)},Y_t^{(a_t)})$, from the prompt sequence-outcome pair, $(X_t^{(0)},Y_t^{(0)}):= (X_t,Y_t)$. In connecting observational to counterfactual quantities, we assume the stable-unit treatment value assumption from causal inference.} 
+The reward of interest, $R_t$, could be some ``fitness'' property of interest, such as therapeutic efficacy; meanwhile, the cost, $L_t$, could quantify key constraints such as budget.
+
+In particular, a biomolecular engineer is generally interested in finding the \textit{best feasible} therapeutic, so we define the rewards and constraints accordingly. That is, assume we are aiming to design for high outcome values, $Y_t'$ (e.g., high binding affinity to a target antigen), and we take the \textit{margin reward} as the improvement in response value relative to that of the prompt sequence, $Y_t$, as long as the designed sequence, $X_t'$, belongs to an unknown \textit{feasible set}, $\mathcal{F}$: 
+\begin{align}\label{eq:margin_reward}
+    R_t = r(Y_t', Y_t) := \begin{cases}
+        \max(Y_t' - Y_t, 0) & \text{ if }  X_t' \in \mathcal{F} \\
+        -1 & \text{ if } X_t' \not\in \mathcal{F}.
+    \end{cases}
+\end{align}
+In protein design, the feasible set, $\mathcal{F}$, could denote the unknown set of stable proteins that can be successfully characterized via a wet-lab binding assay; in other words, the ``prerequisites'' for obtaining a meaningful outcome value, $Y_t'$. Due to the combinatorial space of protein design and other challenges, such feasibility is difficult to predict ahead of time \drew{citation?}, and thus we take the cost function of an ``infeasibility indicator'' as the primary practical constraint we aim to control: 
+\begin{align}\label{eq:infeasibility_indicator}
+    L_t = l(X_t') := \mathbbm{1}\{X_t'\not\in \mathcal{F}\}.
+\end{align}
+Note that in other settings, it may be of interest to replace $\mathcal{F}$ with an unknown ``safe set'' of acceptable actions.
+
+
+% we are aiming to design an antibody, $X_t'$, 
+
+
+% that $Y_t$ 
+
+% That is, we define the reward as the \textit{marginal improvement} 
+
+% We define the reward as the 
+
+% that $R_t$ 
+
+% for simplicity hereon in this protein design example, we will assume the reward of interest is simply high outcome values, $R_t = Y_t$. In particular, assume for concreteness that $R_t$ is the binding affinity of a designed antibody, $X_t'$, to a target antigen. 
+
+% Importantly, in this protein design example we will 
+
+
+
+
+
+
+% and so each input, $X_t$, is a protein sequence 
+
+
+% and the objective is to design a new protein sequence 
+
+
+
+% Accordingly, the input $X_t$ can denote an input ``prompt'' or ``seed'' sequence (e.g., 
+
+
+% given an input ``prompt'' or ``seed'' sequence, $X_t$, the actions of interest 
+
+
+% can denote a ``prompt'' or ``seed'' sequence, 
+
+
+% the inputs denote sequences in some 
+
+
+% protein sequences, that is, $X_t$
+
+% we can define actions as modifications on a pre-existing ``prompt'' or ``seed'' sequence
+
+
+% \textbf{General proxy problem:} For policy $p_t:=p_t(\cdot\mid \mathcal{D}_t)$,
+
+
+
+
+% \textbf{Notation:}
+% \begin{itemize}
+%     \item \textit{Inputs/contexts:} $\mathbf{x}\in\mathcal{X}$ \quad (e.g., possible protein sequences $\mathbf{x}\in \mathcal{V}^*$, for a vocabulary $\mathcal{V}$)
+%     \item \textit{Outcome/response space:} $\mathbf{y}\in\mathcal{Y}$ \quad (e.g., binding affinity)
+%     \item \textit{Actions:} $a:\mathcal{X}\rightarrow \mathcal{X}$ \quad (e.g., modifying a seed seq. $\mathbf{x}$ to a designed seq. $\mathbf{x}'$: $a(\mathbf{x})=\mathbf{x}')$
+%     \item \textit{Loss/cost:} $L_t:=l(a(\mathbf{x_t}), \mathbf{x_t}, \mathbf{y_t})$ \quad (e.g., if designed seq. not in feasible set $\mathcal{F}$: \qquad \quad $L_t=\mathbbm{1}\{\mathbf{x_t'}\not\in \mathcal{F}\}$)
+%     \item \textit{Utility/reward:} $U_t := u(a(\mathbf{x_t}), \mathbf{x_t}, \mathbf{y_t})$ \quad (e.g., improved binding affinity of designed seq. relative to seed: $U_t = \max((\mathbf{y_t'} - \mathbf{y_t}), 0)$)
+% \end{itemize}
+
+% \textbf{General ideal goal:} 
+% \begin{align*}
+%     \argmax_{a_t}\quad u(a_t(X_t)) \quad \text{s.t.} \quad L_t \leq \alpha.
+% \end{align*}
+
+% \textbf{General proxy problem:} For policy $p_t:=p_t(\cdot\mid \mathcal{D}_t)$,
+% \begin{align*}
+%     \argmax_{p_t}\quad \mathbb{E}_{a_t\sim p_t}[u(a_t(\mathbf{x_t}))] \quad \text{s.t.} \quad \mathbb{E}_{a_t\sim p_t}[L_t\mid L_{<t}] \leq \alpha.
+% \end{align*}
+
+
+% \textbf{Protein design proxy problem:} Setting $a_t(\mathbf{x_t}) = {\color{blue}u(\mathbf{x_t}, \mathbf{x_t'})}$ and $L_t = {\color{blue}\mathbbm{1}\{\mathbf{x_t'}\not\in \mathcal{F}\}}$, 
+% \begin{align*}
+%     \argmax_{p_t}\quad \mathbb{E}_{a_t\sim p_t}[{\color{blue}u(\mathbf{x_t}, \mathbf{x_t'})}] \quad \text{s.t.} \quad \mathbb{E}_{a_t\sim p_t}[{\color{blue}\mathbbm{1}\{\mathbf{x_t'}\not\in \mathcal{F}\}} \mid L_{<t}] \leq \alpha,
+% \end{align*}
+% where the utility is determined by improved outcomes (e.g., binding affinity) within some edit distance, subject to feasibility:
+% \begin{equation}
+% u(x, x') = \begin{cases}
+% \max(y' - y, 0) & \text{if } x \in \mathcal{F} \text{ and } x' \in \mathcal{F} \\
+% 1 & \text{if } x \notin \mathcal{F} \text{ and } x' \in \mathcal{F} \\
+% 0 & \text{if } x \notin \mathcal{F} \text{ and } x' \notin \mathcal{F} \\
+% -1 & \text{if } x \in \mathcal{F} \text{ and } x' \notin \mathcal{F}.
+% \end{cases}
+% \end{equation}
+% See Section \ref{sec:algorithm} for more details on the proposed approach---the high-level idea is to enforce the constraint using conformal risk control (CRC) \citep{angelopoulos2022conformal} extended to an \textit{online} setting under multi-step feedback covariate shift (MFCS) \citep{prinster2024conformal}.
+
+
+% \subsection{Sketch of key challenges \& planned technical contributions}
+
+
+% \begin{table}[ht]
+% \begin{tabular}{|p{0.3\linewidth}|p{0.34\linewidth} | p{0.34\linewidth}|}
+% \hline
+%  \textbf{Topic} & \textbf{Challenge} & \textbf{Planned contribution} \\ \hline
+% 1. Risk control under feedback-loop shifts: &   Standard conformal risk control (CRC) \citep{angelopoulos2022conformal} is not valid under MFCS &  Extending CRC to weighted version for MFCS validity \\ \hline
+% 2. Marginal vs. ``trajectory-conditional'' guarantee: & Limitations of marginal guarantee (i.e., risk control may not hold for particular trajectory) & \textit{Online} CRC should have stronger, ``trajectory-conditional'' guarantee (i.e., conditional on previous losses)  \\ \hline
+% 3. Compute complexity & CP weights for MFCS in \citet{prinster2024conformal} have factorial complexity ($\mathcal{O}(t!)$) & Potential solution treating $T-1$ previous distributions as a single \textit{mixture}; results in linear time computation: $\mathcal{O}(t)$ \\ 
+% \hline
+% 4. Asymptotic efficiency result (?) & Ideally could show that CDT method converges asymptotically & Seems like should be able to generalize Theorem 3 in \citet{vovk2018conformal}, as think our method is a generalization of their Algorithm 1 \\ 
+% \hline
+% 5. Generative search setting: & Previous work has assumed \textit{fixed library} of possible actions/sequences. (Main challenge to doing this is how to normalize the weights.) & Should be able to treat this as an expanding library/resampled library at each timestep; just need to keep track of policy's support.  \\ \hline
+% \end{tabular}
+% \end{table}
+
+
+% Preliminary promising experimental results on mixture-weights approach to computing weights (planned contribution 4):
+
+% \begin{figure}[!htb]
+%     \centering
+%     \includegraphics[width=0.5\textwidth]{figures/SplitCPActiveLearning_unbounded_meps_title.pdf}
+%     \\
+%     \hfill
+%         \includegraphics[width=0.32\textwidth]{figures/SplitCPActiveLearning_unbounded_meps_coverage.pdf}
+%     \hfill
+%         \includegraphics[width=0.32\textwidth]{figures/SplitCPActiveLearning_unbounded_meps_width.pdf}
+%     \hfill
+%         \includegraphics[width=0.32\textwidth]{figures/SplitCPActiveLearning_unbounded_meps_MSE.pdf}
+%     \hfill
+%     \\
+% % \caption{
+
+% %     }
+% \label{fig:SplitCP_ActiveLearningExpts}
+% \end{figure}
+
+
+\subsection{Conformal Prediction and Conformal Risk Control}
+
+Conformal prediction (CP) is a class of methods for uncertainty quantification (the classic reference is \citet{vovk2005algorithmic}; also see \citet{angelopoulos2024theoretical} for a modern overview). CP has grown popular due to its compatibility with black-box AI/ML models and its  \textit{nonparametric} coverage guarantees. That is, only assuming IID (or exchangeable) calibration data, standard CP produces a predictive confidence set, $\widehat{C}_{\alpha}(X_t)$, that is guaranteed to cover the true label, $Y_t$, with (marginal) probability at least $1-\alpha\in(0, 1)$: 
+\begin{align}\label{eq:miscoverage}
+    \mathbb{P}(Y_t\in \widehat{C}_{\alpha}(X_t)) \geq 1-\alpha \nonumber \\
+    \iff \mathbb{E}\big[\mathbbm{1}\{Y_t\not\in \widehat{C}_{\alpha}(X_t)\}\big] \leq \alpha.
+\end{align}
+Relatedly, \citet{vovk2017nonparametric} extended classic CP to produce predictive \textit{distributions} rather than sets, and \citet{vovk2018conformal} describe an approach to using CP distributions for decision making (assuming IID/exchangeable data).
+
+
+Conformal risk control (CRC) \citep{angelopoulos2022conformal} extends standard CP to control more general loss functions that can be monotonically tuned by some hyperparameter, $\lambda$. That is, replacing the miscoverage indicator in Eq. \eqref{eq:miscoverage}, $\mathbbm{1}\{Y_t\not\in \widehat{C}_{\alpha}(X_t)\}$, with some other loss $L_t(\hat\lambda)$ that shrinks as $\hat\lambda$ grows (where $\hat\lambda$ is the value of $\lambda$ selected based on the calibration data, for a particular $\alpha$), CRC achieves guarantees of the form
+\begin{align}\label{eq:CRC_guarantee}
+\mathbb{E}\big[L_t\big(\hat\lambda\big)\big] \leq \alpha.
+\end{align}
+For example, setting $L_t(\lambda)=l(Y_t, \widehat{C}_{\lambda}(X_t))$ and allowing $\lambda$ to control the ``size'' of the prediction set, CRC can control losses such as the false-negative rate in multilabel classification; that is, increasing the size of $\widehat{C}_{\hat\lambda}(X_t)$ until it is large enough to contain a desired fraction of the true labels, on average. \citet{lekeufack2024conformal} also use CRC for decision problems where one has an \textit{a priori} ordering on the ``conservativeness'' of each potential action, to thus control losses of the form $L_t(A_t(\lambda))$, where $\lambda$ monotonically controls whether a ``safer'' or ``more aggressive'' action is taken.
+
+
+\subsection{From Conformal Risk Control to Policy Control}
+
+
+For decision making with AI agents, however, prior CP and CRC methods fail to reliably guide decision making due to one or more of the aforementioned key challenges: agent-induced feedback-loop data shifts, large/infinite action spaces, and/or aligning the risks being controlled with those of interest to human end-users. Consider, for a motivating example, the cost function in Eq. \eqref{eq:infeasibility_indicator} in the protein design setting: Unlike miscoverage (in the case of CP) or false-negative rate (in the case of CRC), \textit{there is no way to parameterize and thus tune this loss function with some hyperparameter $\lambda$}. That is, a given protein sequence design, $X_t'$, is either feasible or it is not, and there is no $\lambda$ that one can tune to make it more or less feasible, and such feasibility is not known a priori for novel sequences. More generally, a given AI action $A_t$ in a large space $\mathcal{A}$ may either be safe or unsafe, and it is often impossible to know ahead-of-time.
+
+
+
+To enable risk control of these ``unparameterizable losses'' such as the infeasibility indicator (Eq. \eqref{eq:infeasibility_indicator}), a key idea in our methods is to instead \textit{parameterize the probabilities governing the expectation}. That is, in the case of AI agents, we will consider how to ``rein in'' the agent's optimized policy, $\pi_{\theta_t}$, to some \textit{constrained policy}, $\pi_{\theta_t}^{(\hat\beta_t)}$, to achieve guarantees of the form
+\begin{align}\label{eq:policy_control}
+    \mathbb{E}_{A_t\sim \pi_{\theta_t}^{(\hat\beta_t)}}\Big[L_t(A_t) \Big] \leq \alpha,
+\end{align}
+and thus enforce the constraint in Eq. \eqref{eq:proxy_goal}. We refer to these methods as ``conformal policy control'' methods. 
+% \begin{align*}
+%     \mathbb{E}_{\color{red}\hat{a}\sim \hat{p}_{\beta}}\Big[L\big(Y_t, {\color{red}\hat{a}}(X_t)\big) \mid L_{1:(t-1)}\Big] \leq \alpha
+% \end{align*}
