@@ -837,7 +837,7 @@ class DPOTrainerWithLogging(DPOTrainer):
         num_total = len(outputs)
         scores_wo_nulls = [s for s in all_scores_including_nulls if s is not None]
         output_metrics = {
-            "%_parsable": num_parsable / num_total,
+            "%_parsable": num_parsable / num_total if num_total > 0 else -1, ## -1 stand in for undefined
             "%_correct_length": (
                 num_correct_length / num_parsable if num_parsable > 0 else np.nan
             ),
@@ -859,7 +859,7 @@ class DPOTrainerWithLogging(DPOTrainer):
             "avg_score": (
                 np.mean(scores_wo_nulls) if len(scores_wo_nulls) > 0 else np.nan
             ),
-            "avg_num_chars_truncated": total_chars_truncated / num_total,
+            "avg_num_chars_truncated": total_chars_truncated / num_total if num_total > 0 else -1, ## -1 stand in for undefined
         }
         if isinstance(self.test_fn, Ehrlich):
             output_metrics["%_values_in_range"] = (
