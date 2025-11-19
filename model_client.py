@@ -4,6 +4,7 @@ import numpy as np
 import os
 import s3fs
 import tempfile
+import time
 import torch
 import torch.distributed.checkpoint as dist_cp
 
@@ -14,6 +15,85 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 from typing import Dict, List, Any, Optional, Tuple, Union
 
 import sys
+
+
+CUDA_ERROR = getattr(torch.cuda, "CudaError", RuntimeError)
+
+def wait_for_gpu_availability(
+    device: Optional[str] = None,
+    max_wait_time: int = 172800, # 3600, # Maximum wait time in seconds (48 hour default)
+    check_interval: int = 30,  # Check every 30 seconds
+    logger: Optional[logging.Logger] = None,
+) -> bool:
+    """
+    Wait for GPU to become available before proceeding.
+    
+    Args:
+        device: Device string ('cuda', 'cpu', etc.). If None or 'cpu', returns immediately.
+        max_wait_time: Maximum time to wait in seconds (default: 3600 = 1 hour)
+        check_interval: Time between checks in seconds (default: 5)
+        logger: Optional logger for status messages
+        
+    Returns:
+        True if GPU is available, False if max_wait_time exceeded
+    """
+    # If device is None or 'cpu', no need to wait
+    if device is None or device == "cpu":
+        return True
+    
+    # If device is 'gpu', convert to 'cuda'
+    if device == "gpu":
+        device = "cuda"
+    
+    # Only wait if device is 'cuda'
+    if device != "cuda":
+        return True
+    
+    start_time = time.time()
+    attempts = 0
+    
+    while time.time() - start_time < max_wait_time:
+        try:
+            # Try to initialize CUDA and check if it's available
+            if torch.cuda.is_available():
+                # Try to allocate a small tensor to verify GPU is actually accessible
+                try:
+                    test_tensor = torch.zeros(1).cuda()
+                    del test_tensor
+                    torch.cuda.empty_cache()
+                    if logger:
+                        logger.info(f"GPU is now available after {attempts * check_interval} seconds")
+                    return True
+                except (CUDA_ERROR, RuntimeError) as e:
+                    # GPU exists but is busy/unavailable
+                    if logger:
+                        logger.warning(
+                            f"GPU detected but busy/unavailable (attempt {attempts + 1}): {e}. "
+                            f"Waiting {check_interval} seconds before retry..."
+                        )
+            else:
+                if logger:
+                    logger.warning(
+                        f"CUDA not available (attempt {attempts + 1}). "
+                        f"Waiting {check_interval} seconds before retry..."
+                    )
+        except Exception as e:
+            if logger:
+                logger.warning(
+                    f"Error checking GPU availability (attempt {attempts + 1}): {e}. "
+                    f"Waiting {check_interval} seconds before retry..."
+                )
+        
+        attempts += 1
+        time.sleep(check_interval)
+    
+    # Max wait time exceeded
+    if logger:
+        logger.error(
+            f"GPU did not become available within {max_wait_time} seconds. "
+            f"Total attempts: {attempts}"
+        )
+    return False
 
 class ModelClient:
     def __init__(
@@ -36,6 +116,35 @@ class ModelClient:
 
         self.device = device
         self.model_init_args = model_init_args
+
+        # Determine the actual device to use
+        actual_device = device
+        if actual_device is None:
+            actual_device = "cuda" if torch.cuda.is_available() else "cpu"
+        elif actual_device == "gpu":
+            actual_device = "cuda"
+
+        # Wait for GPU availability if using CUDA
+        if actual_device == "cuda":
+            maybe_log(
+                self.logger,
+                "Waiting for GPU to become available...",
+                level="info",
+            )
+            gpu_available = wait_for_gpu_availability(
+                device=actual_device,
+                max_wait_time=172800,  # Wait up to 48 hours
+                check_interval=30, # Check every 30 seconds
+                logger=self.logger,
+            )
+            if not gpu_available:
+                maybe_log(
+                    self.logger,
+                    "GPU did not become available within timeout. Falling back to CPU.",
+                    level="warning",
+                )
+                actual_device = "cpu"
+                self.device = "cpu"
 
         if model_name_or_path.startswith("s3://"):
             self._load_from_s3(model_name_or_path)
@@ -61,12 +170,56 @@ class ModelClient:
             extra_model_kwargs = {**self.model_init_args}
             if "gg-hf/gemma" in self.model_name_or_path:
                 extra_model_kwargs["torch_dtype"] = torch.bfloat16
-                extra_model_kwargs["device_map"] = "cuda"
-            self.model = AutoModelForCausalLM.from_pretrained(
-                self.model_name_or_path, trust_remote_code=True, **extra_model_kwargs
-            )
+                # Only use device_map="cuda" if we're actually using CUDA
+                if actual_device == "cuda":
+                    extra_model_kwargs["device_map"] = "cuda"
+            
+            # Wrap model loading in retry logic for CUDA errors
+            max_retries = 3
+            retry_count = 0
+            while retry_count < max_retries:
+                try:
+                    self.model = AutoModelForCausalLM.from_pretrained(
+                        self.model_name_or_path, trust_remote_code=True, **extra_model_kwargs
+                    )
+                    break  # Success, exit retry loop
+                except (RuntimeError, CUDA_ERROR) as e:
+                    error_str = str(e)
+                    if "CUDA error" in error_str or "AcceleratorError" in error_str or "busy or unavailable" in error_str:
+                        retry_count += 1
+                        if retry_count < max_retries:
+                            wait_time = 10 * retry_count  # Exponential backoff
+                            maybe_log(
+                                self.logger,
+                                f"CUDA error during model loading (attempt {retry_count}/{max_retries}): {e}. "
+                                f"Waiting {wait_time} seconds before retry...",
+                                level="warning",
+                            )
+                            time.sleep(wait_time)
+                            # Wait for GPU availability again
+                            if actual_device == "cuda":
+                                wait_for_gpu_availability(
+                                    device=actual_device,
+                                    max_wait_time=172800,  # Wait up to 48 hours for GPU
+                                    check_interval=30, # Check every 30 seconds
+                                    logger=self.logger,
+                                )
+                        else:
+                            maybe_log(
+                                self.logger,
+                                f"Failed to load model after {max_retries} attempts. Error: {e}",
+                                level="error",
+                            )
+                            raise
+                    else:
+                        # Not a CUDA availability error, re-raise immediately
+                        raise
+            
             if self.device is not None:
                 self.model = self.model.to(self.device)
+            elif actual_device is not None and actual_device != "cpu":
+                # If device was originally None but we determined it should be cuda, move to cuda
+                self.model = self.model.to(actual_device)
             self.tokenizer = AutoTokenizer.from_pretrained(self.model_name_or_path)
 
         self.tokenizer.padding_side = "left"
@@ -90,6 +243,30 @@ class ModelClient:
             )
 
     def _load_from_s3(self, s3_uri: str):
+        # Determine the actual device to use
+        actual_device = self.device
+        if actual_device is None:
+            actual_device = "cuda" if torch.cuda.is_available() else "cpu"
+        elif actual_device == "gpu":
+            actual_device = "cuda"
+
+        # Wait for GPU availability if using CUDA
+        if actual_device == "cuda":
+            gpu_available = wait_for_gpu_availability(
+                device=actual_device,
+                max_wait_time=172800,  # Wait up to 48 hours
+                check_interval=30, # Check every 30 seconds
+                logger=self.logger,
+            )
+            if not gpu_available:
+                maybe_log(
+                    self.logger,
+                    "GPU did not become available within timeout. Falling back to CPU.",
+                    level="warning",
+                )
+                actual_device = "cpu"
+                self.device = "cpu"
+
         self.s3 = s3fs.S3FileSystem()
         with tempfile.TemporaryDirectory() as td:
             maybe_log(self.logger, f"Downloading model from {s3_uri} into {td}.")
@@ -103,14 +280,58 @@ class ModelClient:
             self.s3.get(s3_uri, td)
             self.config = AutoConfig.from_pretrained(td)
             self.model_init_args["trust_remote_code"] = True
-            self.model = AutoModelForCausalLM.from_pretrained(
-                td, **self.model_init_args
-            )
+            
+            # Wrap model loading in retry logic for CUDA errors
+            max_retries = 3
+            retry_count = 0
+            while retry_count < max_retries:
+                try:
+                    self.model = AutoModelForCausalLM.from_pretrained(
+                        td, **self.model_init_args
+                    )
+                    break  # Success, exit retry loop
+                except (RuntimeError, CUDA_ERROR) as e:
+                    error_str = str(e)
+                    if "CUDA error" in error_str or "AcceleratorError" in error_str or "busy or unavailable" in error_str:
+                        retry_count += 1
+                        if retry_count < max_retries:
+                            wait_time = 10 * retry_count  # Exponential backoff
+                            maybe_log(
+                                self.logger,
+                                f"CUDA error during model loading from S3 (attempt {retry_count}/{max_retries}): {e}. "
+                                f"Waiting {wait_time} seconds before retry...",
+                                level="warning",
+                            )
+                            time.sleep(wait_time)
+                            # Wait for GPU availability again
+                            if actual_device == "cuda":
+                                wait_for_gpu_availability(
+                                    device=actual_device,
+                                    max_wait_time=172800,
+                                    check_interval=30, # Check every 30 seconds
+                                    # max_wait_time=300,  # Wait up to 5 minutes per retry
+                                    # check_interval=5,
+                                    logger=self.logger,
+                                )
+                        else:
+                            maybe_log(
+                                self.logger,
+                                f"Failed to load model from S3 after {max_retries} attempts. Error: {e}",
+                                level="error",
+                            )
+                            raise
+                    else:
+                        # Not a CUDA availability error, re-raise immediately
+                        raise
+            
             if self.device is not None:
                 self.model = self.model.to(self.device)
+            elif actual_device is not None and actual_device != "cpu":
+                self.model = self.model.to(actual_device)
             self.tokenizer = AutoTokenizer.from_pretrained(td)
         gc.collect()
-        torch.cuda.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     def _convert_checkpoint(
         self, hf_model_name: str, fsdp_model_path: str, output_path: str
@@ -120,11 +341,72 @@ class ModelClient:
         fsdp_model_path: path to the fsdp checkpoint, for example `/x/checkpoint-xxx/pytorch_model_fsdp_x`
         output_path: output path to save the converted checkpoint
         """
+        # Determine the actual device to use
+        actual_device = self.device
+        if actual_device is None:
+            actual_device = "cuda" if torch.cuda.is_available() else "cpu"
+        elif actual_device == "gpu":
+            actual_device = "cuda"
+
+        # Wait for GPU availability if using CUDA (required for checkpoint conversion)
+        if actual_device == "cuda":
+            gpu_available = wait_for_gpu_availability(
+                device=actual_device,
+                max_wait_time=172800, #3600,  # Wait up to 48 hours
+                check_interval=30,
+                logger=self.logger,
+            )
+            if not gpu_available:
+                maybe_log(
+                    self.logger,
+                    "GPU did not become available within timeout. Checkpoint conversion requires GPU.",
+                    level="error",
+                )
+                raise RuntimeError("GPU required for checkpoint conversion but not available")
+
         config = AutoConfig.from_pretrained(hf_model_name, trust_remote_code=True)
         tokenizer = AutoTokenizer.from_pretrained(hf_model_name, trust_remote_code=True)
-        model = AutoModelForCausalLM.from_config(
-            config, trust_remote_code=True, **self.model_init_args
-        ).cuda()
+        
+        # Wrap model creation in retry logic for CUDA errors
+        max_retries = 3
+        retry_count = 0
+        while retry_count < max_retries:
+            try:
+                model = AutoModelForCausalLM.from_config(
+                    config, trust_remote_code=True, **self.model_init_args
+                ).cuda()
+                break  # Success, exit retry loop
+            except (RuntimeError, CUDA_ERROR) as e:
+                error_str = str(e)
+                if "CUDA error" in error_str or "AcceleratorError" in error_str or "busy or unavailable" in error_str:
+                    retry_count += 1
+                    if retry_count < max_retries:
+                        wait_time = 10 * retry_count  # Exponential backoff
+                        maybe_log(
+                            self.logger,
+                            f"CUDA error during checkpoint conversion (attempt {retry_count}/{max_retries}): {e}. "
+                            f"Waiting {wait_time} seconds before retry...",
+                            level="warning",
+                        )
+                        time.sleep(wait_time)
+                        # Wait for GPU availability again
+                        wait_for_gpu_availability(
+                            device="cuda",
+                            max_wait_time=172800, #300,  
+                            check_interval=30,
+                            logger=self.logger,
+                        )
+                    else:
+                        maybe_log(
+                            self.logger,
+                            f"Failed to convert checkpoint after {max_retries} attempts. Error: {e}",
+                            level="error",
+                        )
+                        raise
+                else:
+                    # Not a CUDA availability error, re-raise immediately
+                    raise
+        
         model = self._load_sharded_model_single_gpu(model, fsdp_model_path)
         model.save_pretrained(output_path, max_shard_size="10GB")
         tokenizer.save_pretrained(output_path)

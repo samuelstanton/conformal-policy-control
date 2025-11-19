@@ -17,7 +17,7 @@ from omegaconf import DictConfig, OmegaConf
 from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
 
 
-
+CUDA_ERROR = getattr(torch.cuda, "CudaError", RuntimeError)
 # def compute_likelihoods_all_models_one_cal(cfg: DictConfig, logger: logging.Logger = None):
 #     """
 #     Loops through all models (and their corresponding input seed prompts) and computes the likelihoods
@@ -86,17 +86,21 @@ def compute_likelihoods_one_model_all_data(cfg: DictConfig, logger: logging.Logg
         return
 
     logger.info(f"torch.cuda.is_available()   : {torch.cuda.is_available()}")
-    logger.info(f"torch.cuda.device_count()   : {torch.cuda.device_count()}")
-    logger.info(f"torch.cuda.current_device() : {torch.cuda.current_device()}")
+    try:
+        logger.info(f"torch.cuda.device_count()   : {torch.cuda.device_count()}")
+        logger.info(f"torch.cuda.current_device() : {torch.cuda.current_device()}")
+    except (RuntimeError, CUDA_ERROR) as e:
+        logger.warning(f"Could not get CUDA device info: {e}")
 
     # # GPU memory management
-    torch.cuda.empty_cache()
-    # if torch.cuda.is_available():
-    #     torch.cuda.synchronize()
+    try:
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except (RuntimeError, CUDA_ERROR) as e:
+        logger.warning(f"Could not clear CUDA cache: {e}")
 
-
-    # try:
     ## Load model
+    # ModelClient will handle waiting for GPU availability if needed
     model_client = ModelClient(
         model_name_or_path=cfg.model_name_or_path_list[-1], ## Use most recent model
         logger=logger,

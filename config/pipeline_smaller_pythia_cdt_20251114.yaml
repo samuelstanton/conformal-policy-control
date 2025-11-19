@@ -1,7 +1,7 @@
 log_level: info
 run_name: smaller_pythia #smaller_pythia_0.25dist_0.1maxinf_50gen
-parent_output_dir: s3://prescient-pcluster-data/prinstea/llome/parent_output_20251109 #parent_output_20251013_CAinit # #parent_output_20250918_noCPC  #parent_output_20250923 #_20250901_evol0.5 #/data/bucket/prinstea/llome/parent_output
-local_output_dir: /homefs/home/prinstea/llome/local_output_20251109 #local_output_20251013_CAinit # #local_output_20250918_noCPC  #local_output_20250923 #_20250901_evol0.5
+parent_output_dir: s3://prescient-pcluster-data/prinstea/llome/parent_output_20251028 #parent_output_20251013_CAinit # #parent_output_20250918_noCPC  #parent_output_20250923 #_20250901_evol0.5 #/data/bucket/prinstea/llome/parent_output
+local_output_dir: /homefs/home/prinstea/llome/local_output_20251028 #local_output_20251013_CAinit # #local_output_20250918_noCPC  #local_output_20250923 #_20250901_evol0.5
 overwrite_ga: False ## If False, will only run genetic algorithm when output file does not already exist.
 overwrite_gpt: False ## If False, will only run GPT pretraining when output file does not already exist.
 overwrite_initial_sft: False ## If False, will only run SFT when output file does not already exist.
@@ -10,34 +10,35 @@ overwrite_init_sft_formatter: False
 overwrite_initg: False #False ## If False, will only run initial generation when output file does not already exist.
 
 
-
-overwrite_split_init: True
-overwrite_sft: True ## If False, will only run SFT when output file does not already exist.
-overwrite_ig: True ## If False, will only run iterative generation when output file does not already exist.
-overwrite_split: True
-# overwrite_cg: False ## If False, will only run contrastive generation when output file does not already exist.
-overwrite_cmp_lik_all: True #False #True ## If False, will only run compute_likelihoods_all_models when output file doesn't exist.
-overwrite_sft_formatter: True
-overwrite_marge: True # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
-overwrite: True #True # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
-overwrite_dpo_formatter: True #True
-overwrite_dpo: True #True # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
-
-
-# overwrite_split_init: False
-# overwrite_sft: False ## If False, will only run SFT when output file does not already exist.
-# overwrite_ig: False ## If False, will only run iterative generation when output file does not already exist.
-# overwrite_split: False
+# overwrite_seeds_flag: True
+# overwrite_split_init: True
+# overwrite_sft: True ## If False, will only run SFT when output file does not already exist.
+# overwrite_ig: True ## If False, will only run iterative generation when output file does not already exist.
+# overwrite_split: True
 # # overwrite_cg: False ## If False, will only run contrastive generation when output file does not already exist.
-# overwrite_cmp_lik_all: False #False #True ## If False, will only run compute_likelihoods_all_models when output file doesn't exist.
-# overwrite_sft_formatter: False
-# overwrite_marge: False # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
-# overwrite: False #True # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
-# overwrite_dpo_formatter: False #True
-# overwrite_dpo: False #True # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
+# overwrite_cmp_lik_all: True #False #True ## If False, will only run compute_likelihoods_all_models when output file doesn't exist.
+# overwrite_sft_formatter: True
+# overwrite_marge: True # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
+# overwrite: True #True # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
+# overwrite_dpo_formatter: True #True
+# overwrite_dpo: True #True # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
 
 
-setting_str: "CONDITIONAL_MIX_OG3" #"1_2Kall" #"CONDITIONAL_MIX_og" #"mix_ARMH_20AR" #"_mix_prop_in_CPC2" #"_mix_ARMH_new" #"_MH_only_2epDPO" # #"_MH_only" #"_AR_MH3" #"_AR_MH" #"_mixture" #"_mh_mix" # "2xintersect""_100tar"
+overwrite_seeds_flag: False
+overwrite_split_init: False
+overwrite_sft: False ## If False, will only run SFT when output file does not already exist.
+overwrite_ig: False ## If False, will only run iterative generation when output file does not already exist.
+overwrite_split: False
+# overwrite_cg: False ## If False, will only run contrastive generation when output file does not already exist.
+overwrite_cmp_lik_all: False #False #True ## If False, will only run compute_likelihoods_all_models when output file doesn't exist.
+overwrite_sft_formatter: False
+overwrite_marge: False # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
+overwrite: False #True # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
+overwrite_dpo_formatter: False #True
+overwrite_dpo: False #True # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
+
+
+setting_str: "DPO_9e8_20251119" #"1_2Kall" #"CONDITIONAL_MIX_og" #"mix_ARMH_20AR" #"_mix_prop_in_CPC2" #"_mix_ARMH_new" #"_MH_only_2epDPO" # #"_MH_only" #"_AR_MH3" #"_AR_MH" #"_mixture" #"_mh_mix" # "2xintersect""_100tar"
 
 initial_seed: 0
 last_seed: 10
@@ -143,7 +144,7 @@ evol_dataset_gen:
     #gres: "gpu:1"
     open_mode: "append"
     export: "ALL"
-    time: "12:00:00"
+    time: "48:00:00"
     mem: "100GB"
     mail_type: "BEGIN,END,FAIL"
     mail_user: "drew@cs.jhu.edu" # "ac5968@nyu.edu"
@@ -272,7 +273,7 @@ gpt:
     partition: "b200"
     open_mode: "append"
     export: "ALL"
-    time: "12:00:00"
+    time: "48:00:00"
     mem: "100GB"
     #gres: "gpu:1"
     #account: "cds"
@@ -325,7 +326,7 @@ initial_sft:
     partition: "b200"
     open_mode: "append"
     export: "ALL"
-    time: "12:00:00"
+    time: "48:00:00"
     mem: "100GB"
     #gres: "gpu:1"
     #account: "cds"
@@ -378,7 +379,7 @@ sft:
     partition: "b200"
     open_mode: "append"
     export: "ALL"
-    time: "12:00:00"
+    time: "48:00:00"
     mem: "100GB"
     #gres: "gpu:1"
     #account: "cds"
@@ -433,7 +434,7 @@ initial_generation:
     partition: "b200"
     open_mode: "append"
     export: "ALL"
-    time: "12:00:00"
+    time: "48:00:00"
     mem: "100GB"
     # gres: "gpu:1"
     # account: "cds"
@@ -461,7 +462,7 @@ contrastive_generation:
     partition: "b200"
     open_mode: "append"
     export: "ALL"
-    time: "12:00:00"
+    time: "48:00:00"
     mem: "100GB"
     # gres: "gpu:1"
     # account: "cds"
@@ -494,7 +495,7 @@ iterative_generation:
     partition: "b200"
     open_mode: "append"
     export: "ALL"
-    time: "12:00:00"
+    time: "48:00:00"
     mem: "200GB" #"100GB"
     # nodelist: "b200-st-b200-[2-10,13-15,23,40-41],b200-st-b200-2-[2-3,9,65,69-83]" #"b200-st-b200-41"
     # gres: "gpu:1"
@@ -540,7 +541,7 @@ compute_likelihooods_all_models:
     partition: "b200"
     open_mode: "append"
     export: "ALL"
-    time: "12:00:00" #"48:00:00"
+    time: "48:00:00" #"48:00:00"
     mem: "100GB" #"100GB"
 
 
@@ -548,7 +549,7 @@ compute_likelihooods_all_models:
 dpo:
   args:
     dpo_config:
-      learning_rate: 1e-7 #1e-7
+      learning_rate: 9e-8 #1e-7
       beta: 0.4
       gradient_accumulation_steps: 32
       num_train_epochs: 1 #1 #2 #2 #1
@@ -575,7 +576,7 @@ dpo:
     partition: "b200"
     open_mode: "append"
     export: "ALL"
-    time: "12:00:00"
+    time: "48:00:00"
     mem: "200GB"
 
 
@@ -609,7 +610,7 @@ marge:
     partition: "b200"
     open_mode: "append"
     export: "ALL"
-    time: "12:00:00"
+    time: "48:00:00"
     mem: "100GB"
     # gres: "gpu:2"
     # account: "cds"

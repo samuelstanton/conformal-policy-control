@@ -1283,33 +1283,42 @@ def get_seeds_from_training_data(
     random_seed: int = 0,
 ) -> str:
 
-    train_df = pd.read_json(training_data_fp, orient="records", lines=True)
-
-    train_df = train_df.loc[train_df[lower_score_particle_field].astype(str).drop_duplicates().index]
-
-
-    if sampling_method == "best_scoring":
-        train_df = train_df.sort_values(by=[lower_score_field], ascending=True)[: sample_size]
-    elif sampling_method == "uniform":
-        train_df = train_df.sample(n=min(len(train_df), sample_size), random_state=random_seed)
-    else:
-        raise ValueError(f"Unknown sampling method '{sampling_method}.'")
-
-    train_df_selected = train_df[[lower_score_particle_field, lower_score_field]]
-
     output_fp = os.path.join(output_dir, f'seeds_from_{os.path.basename(training_data_fp)}')
 
-    ## Rename so that selected particles are used as prompts instead of outputs
-    train_df_selected = train_df_selected.rename(columns={lower_score_particle_field: higher_score_particle_field, lower_score_field: 'score'})
-    # train_df_selected = train_df_selected.rename(columns={lower_score_particle_field: higher_score_particle_field, lower_score_field: 'score'})
-    
-    if pi_optimizer_name == "dpo":
-        train_df_selected = train_df_selected.rename(columns={higher_score_particle_field : 'prompt', lower_score_particle_field: 'chosen',higher_score_field : 'prompt_score', lower_score_field: 'chosen_score'})
+    if len(setting) > 0:
+        output_fp = os.path.join(os.path.dirname(output_fp), f"{setting}_{os.path.basename(output_fp)}")
 
-    output_fp = os.path.join(os.path.dirname(output_fp), f"{setting}_{os.path.basename(output_fp)}")
-    train_df_selected.to_json(output_fp, orient="records", lines=True)
 
-    return output_fp
+    if not cfg.overwrite_seeds_flag and fs.exists(output_fp):
+        return output_fp
+
+
+    else:
+
+        train_df = pd.read_json(training_data_fp, orient="records", lines=True)
+
+        train_df = train_df.loc[train_df[lower_score_particle_field].astype(str).drop_duplicates().index]
+
+
+        if sampling_method == "best_scoring":
+            train_df = train_df.sort_values(by=[lower_score_field], ascending=True)[: sample_size]
+        elif sampling_method == "uniform":
+            train_df = train_df.sample(n=min(len(train_df), sample_size), random_state=random_seed)
+        else:
+            raise ValueError(f"Unknown sampling method '{sampling_method}.'")
+
+        train_df_selected = train_df[[lower_score_particle_field, lower_score_field]]
+
+        ## Rename so that selected particles are used as prompts instead of outputs
+        train_df_selected = train_df_selected.rename(columns={lower_score_particle_field: higher_score_particle_field, lower_score_field: 'score'})
+        # train_df_selected = train_df_selected.rename(columns={lower_score_particle_field: higher_score_particle_field, lower_score_field: 'score'})
+        
+        if pi_optimizer_name == "dpo":
+            train_df_selected = train_df_selected.rename(columns={higher_score_particle_field : 'prompt', lower_score_particle_field: 'chosen',higher_score_field : 'prompt_score', lower_score_field: 'chosen_score'})
+
+        train_df_selected.to_json(output_fp, orient="records", lines=True)
+
+        return output_fp
 
 
 def get_num_safe_actions(cfg, cal_infeasible_indicators, cal_lik_numerator, cal_lik_denominator, prop_lik_numerator, prop_lik_denominator, n_target):
@@ -1775,7 +1784,7 @@ def accept_reject_sample_and_get_likelihoods(
 
             call_idx += 1
 
-
+            
 
             # ## Compute unconstrained likelihoods for all models on the output proposal samples
             # gen_liks_fp_list, hd = run_compute_liks_all_models_and_cal_data(
@@ -1830,7 +1839,8 @@ def accept_reject_sample_and_get_likelihoods(
             ## Accept or reject each proposal
             # U = np.random.uniform(size=n_prop)
             
-
+            # ar_random_seed =  if post_policy_control else 
+            
             for i in range(n_prop):
                 u = np.random.uniform()
 
@@ -3196,7 +3206,7 @@ def main(cfg: DictConfig):
                 sample_size=cfg.iterative_generation.init_args.sample_size,
                 sampling_method=cfg.iterative_generation.init_args.sampling_method,
                 pi_optimizer_name=pi_optimizer_name,
-                # setting=setting, ## Only include setting string if changing the initial SFT pre-training config
+                setting = setting if i == cfg.num_init_sft_rounds - 1 else "", ## Only include setting string if is last SFT round and will use seeds for policy improvement (or if changing overall config)
                 # random_seed = cfg.iterative_generation.init_args.seed, ## Use fixed random seed in initial SFT training
                 random_seed = random_seed
             )
@@ -3373,6 +3383,8 @@ def main(cfg: DictConfig):
                 output_dir=sft_dir,
                 sample_size=cfg.iterative_generation.args.sample_size,
                 sampling_method=cfg.iterative_generation.args.sampling_method,
+                pi_optimizer_name=pi_optimizer_name,
+                setting = setting,
                 # random_seed = cfg.iterative_generation.args.seed,
                 random_seed = random_seed
             )
@@ -3598,6 +3610,8 @@ def main(cfg: DictConfig):
                 lower_score_particle_field="chosen",
                 higher_score_field="prompt_score",
                 lower_score_field="chosen_score",
+                pi_optimizer_name=pi_optimizer_name,
+                setting = setting,
                 # random_seed = cfg.iterative_generation.args.seed,
                 random_seed = random_seed
             )
@@ -3856,6 +3870,8 @@ def main(cfg: DictConfig):
                 output_dir=marge_dir,
                 sample_size=cfg.iterative_generation.args.sample_size,
                 sampling_method=cfg.iterative_generation.args.sampling_method,
+                pi_optimizer_name=pi_optimizer_name,
+                setting = setting,
                 # random_seed = cfg.iterative_generation.args.seed,
                 random_seed = random_seed
             )

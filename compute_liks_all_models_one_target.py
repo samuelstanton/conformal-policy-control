@@ -97,11 +97,16 @@ def compute_likelihoods_all_models_one_target(cfg: DictConfig, logger: logging.L
         torch.cuda.empty_cache()
         # if torch.cuda.is_available():
         #     torch.cuda.synchronize()
+        # try:
+        #     if torch.cuda.is_available():
+        #         torch.cuda.empty_cache()
+        # except (RuntimeError, torch.cuda.Error) as e:
+        #     logger.warning(f"Could not clear CUDA cache: {e}")
 
         logger.info(f"torch.cuda.is_available() : {torch.cuda.is_available()}")
 
         ## Load model
-        # try:
+        # ModelClient will handle waiting for GPU availability if needed
         model_client = ModelClient(
             model_name_or_path=model_name_or_path,
             logger=logger,
