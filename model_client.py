@@ -815,6 +815,7 @@ class ModelClient:
             
             ## Looping over batches of input sequences
             for start_index in range(0, len(inputs), batch_size):  
+                
                 end_index = min(start_index + batch_size, len(inputs))
 
                 ## For a given target, minibatch of concatenations with subset of input prompt sequences

@@ -1,9 +1,11 @@
 import datasets
 import hydra
 import logging
+import numpy as np
 import os
 import pandas as pd
 import pprint
+import random
 import torch
 
 from botorch.test_functions import SyntheticTestFunction
@@ -34,6 +36,21 @@ from transformers import GenerationConfig
 
 
 def run_iterative_generation(cfg: DictConfig, logger: logging.Logger = None):
+    # Set random seeds for reproducibility
+    if hasattr(cfg, 'seed') and cfg.seed is not None:
+        seed = cfg.seed
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed(seed)
+            torch.cuda.manual_seed_all(seed)
+        # Set deterministic behavior for PyTorch
+        # torch.backends.cudnn.deterministic = True
+        # torch.backends.cudnn.benchmark = False
+        if logger:
+            logger.info(f"Random seed set to {seed} for reproducibility")
+    
     test_fn_params = pd.read_json(cfg.test_fn_fp, orient="records", lines=True).to_dict(
         "records"
     )[0]

@@ -1166,13 +1166,17 @@ def run_iterative_generation(
     call_idx: int = 0, ## Index for this generation has been called, including current, for same model directory
     proportion_of_target_n_accepted: float = None, ## If being run as submodule of AR-sampling, the proportion of target samples accepted
     post_policy_control: bool = False,
-    setting: str = ''
+    setting: str = '',
+    global_random_seed: int = 0
     # proposal: str = 'unconstrained',
 ):
     """
     Runs iterative generation jobs, combines the outputs, and returns the combined output filepath.
     """
 
+
+    ## Arbitrary way of standardizing seeds for checkpointing, while ensuring they're different across calls within an experiment (assuming no more than 1000 calls of same model at a step)
+    random_seed_curr = global_random_seed * 10000 + post_policy_control * 1000 + call_idx
 
     if output_dir == None:
         output_dir = model_dir
@@ -1187,6 +1191,7 @@ def run_iterative_generation(
     args += f"lower_score_field={lower_score_field} "
     args += f"higher_score_field={higher_score_field} "
     args += f"sanity_check={cfg.sanity_check} "
+    args += f"seed={random_seed_curr} "
     # args += f"first_iter={cfg.first_iter}"
 
     if first_iter:
@@ -1442,7 +1447,8 @@ def generate_proposals_for_AR_sampling(
     proposal: str = None, ## Proposal distribution (safe or unconstrained), or None --> means running for filtering
     post_policy_control: bool = False, ## Whether calling post policy control (True <--> generating risk-controlled actions), or pre control (False <--> Generating proposals)
     call_idx: int = 1,
-    proportion_of_target_n_accepted: float = 0.0
+    proportion_of_target_n_accepted: float = 0.0, 
+    global_random_seed: int = 0
 ) -> str:
 
 
@@ -1481,7 +1487,8 @@ def generate_proposals_for_AR_sampling(
             model_idx = len(model_dir_list) - 1, ## Index for model being called for generation
             call_idx=call_idx, ## Index for times this generation has been called, including current, for same model directory
             proportion_of_target_n_accepted = proportion_of_target_n_accepted,
-            post_policy_control = post_policy_control
+            post_policy_control = post_policy_control,
+            global_random_seed = global_random_seed
         )
         # call_idx += 1
 
@@ -1565,7 +1572,8 @@ def generate_proposals_for_AR_sampling(
                 model_idx = 0, #len(model_dir_list) - 1, ## Index for model being called for generation
                 call_idx=call_idx, ## Index for times this generation has been called, including current, for same model directory
                 proportion_of_target_n_accepted = proportion_of_target_n_accepted,
-                post_policy_control = post_policy_control
+                post_policy_control = post_policy_control,
+                global_random_seed = global_random_seed
             )
 
 
@@ -1625,7 +1633,8 @@ def generate_proposals_for_AR_sampling(
                                             lower_score_particle_field=lower_score_particle_field,
                                             higher_score_field=higher_score_field,
                                             lower_score_field=lower_score_field,
-                                            proposal='safe'
+                                            proposal='safe',
+                                            global_random_seed = global_random_seed
                                         )
 
             ## Compute unconstrained likelihoods for most recent model (not passed to recursion) on output proposal samples
@@ -1708,7 +1717,8 @@ def accept_reject_sample_and_get_likelihoods(
     proposal: str = None, ## Proposal distribution (safe or unconstrained), or None --> means running for filtering
     post_policy_control: bool = False, ## Whether calling post policy control (True <--> generating risk-controlled actions), or pre control (False <--> Generating proposals)
     safe_prop_mix_weight: float = 1.0, ## if proposal == "mixture":  weight in (0, 1) to assign to safe proposal
-    env_const: float = 1.0 ## Recalculated envelope constant
+    env_const: float = 1.0, ## Recalculated envelope constant,
+    global_random_seed: int = 0.0
 ) -> str:
 
     n_models = len(model_dir_list)
@@ -1779,7 +1789,8 @@ def accept_reject_sample_and_get_likelihoods(
                                                                 proposal, ## Proposal distribution (safe or unconstrained), or None --> means running for filtering
                                                                 post_policy_control, ## Whether calling post policy control (True <--> generating risk-controlled actions), or pre control (False <--> Generating proposals)
                                                                 call_idx,
-                                                                proportion_of_target_n_accepted
+                                                                proportion_of_target_n_accepted,
+                                                                global_random_seed=global_random_seed
                                                             )
 
             call_idx += 1
@@ -1839,7 +1850,9 @@ def accept_reject_sample_and_get_likelihoods(
             ## Accept or reject each proposal
             # U = np.random.uniform(size=n_prop)
             
-            # ar_random_seed =  if post_policy_control else 
+            ## Arbitrary way of standardizing random seeds so that is consistent when rerunning from checkpoint (but uses different random seed for each call)
+            ar_random_seed = call_idx if not post_policy_control else 1000 + call_idx
+            np.random.seed(ar_random_seed)
             
             for i in range(n_prop):
                 u = np.random.uniform()
@@ -1997,7 +2010,8 @@ def accept_reject_sample_and_get_likelihoods(
                                                                 proposal, ## Proposal distribution (safe or unconstrained), or None --> means running for filtering
                                                                 post_policy_control, ## Whether calling post policy control (True <--> generating risk-controlled actions), or pre control (False <--> Generating proposals)
                                                                 call_idx,
-                                                                proportion_of_target_n_accepted
+                                                                proportion_of_target_n_accepted,
+                                                                global_random_seed=global_random_seed
                                                             )
                                                         
 
@@ -2024,7 +2038,8 @@ def accept_reject_sample_and_get_likelihoods(
                                                 lower_score_particle_field=lower_score_particle_field,
                                                 higher_score_field=higher_score_field,
                                                 lower_score_field=lower_score_field,
-                                                proposal='safe'
+                                                proposal='safe',
+                                                global_random_seed = global_random_seed
                                             )
 
                 ## Compute unconstrained likelihoods for most recent model (not passed to recursion) on output proposal samples
@@ -2072,6 +2087,10 @@ def accept_reject_sample_and_get_likelihoods(
 
             n_prop = len(gen_liks_df)
 
+
+            ## Arbitrary way of standardizing random seeds so that is consistent when rerunning from checkpoint (but uses different random seed for each call)
+            ar_random_seed = call_idx if not post_policy_control else 1000 + call_idx
+            np.random.seed(ar_random_seed)
 
             ## Accept or reject each proposal
             for i in range(n_prop):
@@ -2164,7 +2183,8 @@ def accept_reject_sample_and_get_likelihoods(
                                                     proposal_curr, ## Proposal distribution (safe or unconstrained), or None --> means running for filtering
                                                     post_policy_control, ## Whether calling post policy control (True <--> generating risk-controlled actions), or pre control (False <--> Generating proposals)
                                                     call_idx,
-                                                    proportion_of_target_n_accepted
+                                                    proportion_of_target_n_accepted,
+                                                    global_random_seed=global_random_seed
                                                 )
 
                     ## Mixture proposal probabilies for constrained likelihoods
@@ -2181,6 +2201,10 @@ def accept_reject_sample_and_get_likelihoods(
 
             while n_proposed_dict["safe"] < N_prop_dict["safe"] and n_proposed_dict["unconstrained"] < N_prop_dict["unconstrained"]:
                 
+                ## Arbitrary way of standardizing random seeds so that is consistent when rerunning from checkpoint (but uses different random seed for each call)
+                ar_random_seed = call_idx if not post_policy_control else 1000 + call_idx
+                np.random.seed(ar_random_seed)
+
                 ## Select proposal from the mixture
                 u_mix = np.random.uniform()
                 if u_mix < safe_prop_mix_weight or (n_accepted == 0 and safe_prop_mix_weight > 0.5):
@@ -2359,6 +2383,7 @@ def run_conformal_policy_control(
     lower_score_particle_field: str ="lower_score_particle",
     higher_score_field:str ="higher_score",
     lower_score_field: str ="lower_score",
+    global_random_seed: int = 0
     # target_fp: str,
     # particle_field: str = "higher_score_particle",
     # score_field: str = "score",
@@ -2486,7 +2511,7 @@ def run_conformal_policy_control(
                                                        ga_data_dir, higher_score_particle_field=higher_score_particle_field,\
                                                        lower_score_particle_field=lower_score_particle_field,
                                                        higher_score_field=higher_score_field,
-                                                       lower_score_field=lower_score_field, proposal=proposal) #, safe_prop_mix_weight=safe_prop_mix_weight)
+                                                       lower_score_field=lower_score_field, proposal=proposal, global_random_seed=global_random_seed) #, safe_prop_mix_weight=safe_prop_mix_weight)
 
         unconstrained_df_dict[proposal] = unconstrained_df
         unconstrained_gen_liks_fp_dict[proposal] = unconstrained_gen_liks_fp
@@ -3264,7 +3289,8 @@ def main(cfg: DictConfig):
             lower_score_field=lower_score_field,
             temps=[cfg.temperature_init],
             first_iter = True, 
-            setting = setting
+            setting = setting,
+            global_random_seed = random_seed
         )
 
 
@@ -3429,7 +3455,8 @@ def main(cfg: DictConfig):
                 prev_cal_data_constrained_liks_fp_list=cal_data_constrained_fp_list, ## Should contain both cal data and *constrained* likelihoods
                 betas_list=betas_list,
                 psis_list=psis_list, ## Normalization constants
-                ga_data_dir=ga_data_dir
+                ga_data_dir=ga_data_dir,
+                global_random_seed=random_seed
             )
             betas_list.append(beta_t)
             psis_list.append(psi_hat_t)
@@ -3659,7 +3686,8 @@ def main(cfg: DictConfig):
                 higher_score_particle_field="prompt",
                 lower_score_particle_field="chosen",
                 higher_score_field="prompt_score",
-                lower_score_field="chosen_score"
+                lower_score_field="chosen_score",
+                global_random_seed=random_seed
             )
 
         ## For now, just dealing with this edge case by continuing to next step with one action
@@ -3744,7 +3772,7 @@ def main(cfg: DictConfig):
                                                         lower_score_field="chosen_score", \
                                                         proposal = proposal, post_policy_control=True, \
                                                         safe_prop_mix_weight=safe_prop_mix_weight, \
-                                                        env_const = envelope_const_constrained_over_proposal)
+                                                        env_const = envelope_const_constrained_over_proposal, global_random_seed=random_seed)
 
 
             '''Split last batch of generated outputs into training and calibration data'''
@@ -3916,7 +3944,8 @@ def main(cfg: DictConfig):
                 prev_cal_data_constrained_liks_fp_list=cal_data_constrained_fp_list, ## Should contain both cal data and *constrained* likelihoods
                 betas_list=betas_list,
                 psis_list=psis_list, ## Normalization constants
-                ga_data_dir=ga_data_dir
+                ga_data_dir=ga_data_dir,
+                global_random_seed=random_seed
             )
 
             ## For now, just dealing with this edge case by continuing to next step with one action
@@ -3995,7 +4024,7 @@ def main(cfg: DictConfig):
                                                         cfg.conformal_policy_control.accept_reject.n_target,\
                                                         ga_data_dir, proposal = proposal, post_policy_control=True, \
                                                         safe_prop_mix_weight = safe_prop_mix_weight, \
-                                                        env_const = envelope_const_constrained_over_proposal)
+                                                        env_const = envelope_const_constrained_over_proposal, global_random_seed=random_seed)
 
 
             '''Split last batch of generated outputs into training and calibration data'''
