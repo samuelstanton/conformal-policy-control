@@ -1589,8 +1589,9 @@ def generate_proposals_for_AR_sampling(
             )
             gen_liks_fp = gen_liks_fp_list[-1]
 
-
             gen_liks_df = pd.read_json(gen_liks_fp, orient="records", lines=True)[unconstrained_col_names] #[unconstrained_col_names]
+            
+
             gen_liks_mat = gen_liks_df[unconstrained_lik_cols].to_numpy() 
 
 
@@ -2158,6 +2159,8 @@ def accept_reject_sample_and_get_likelihoods(
 
             for proposal_curr in ["safe", "unconstrained"]:
 
+                breakpoint()
+
                 proportion_of_target_n_accepted = n_accepted / n_target
 
                 ## If have already proposed the number of total proposals, then redraw samples for that policy:
@@ -2200,6 +2203,8 @@ def accept_reject_sample_and_get_likelihoods(
 
 
             while n_proposed_dict["safe"] < N_prop_dict["safe"] and n_proposed_dict["unconstrained"] < N_prop_dict["unconstrained"]:
+
+                breakpoint()
                 
                 ## Arbitrary way of standardizing random seeds so that is consistent when rerunning from checkpoint (but uses different random seed for each call)
                 ar_random_seed = call_idx if not post_policy_control else 1000 + call_idx
@@ -2353,8 +2358,11 @@ def accept_reject_sample_and_get_likelihoods(
         accepted_constrained_gen_liks_fp = os.path.join(os.path.dirname(gen_liks_fp), f"{depth}c_cn{call_idx}_{base_output_name}")
 
 
-    accepted_unconstrained_df.to_json(accepted_unconstrained_gen_liks_fp, orient="records", lines=True)
-    accepted_constrained_df.to_json(accepted_constrained_gen_liks_fp, orient="records", lines=True)
+    if cfg.overwrite_ig or not fs.exists(accepted_unconstrained_gen_liks_fp):
+        accepted_unconstrained_df.to_json(accepted_unconstrained_gen_liks_fp, orient="records", lines=True)
+
+    if cfg.overwrite_ig or not fs.exists(accepted_constrained_gen_liks_fp):
+        accepted_constrained_df.to_json(accepted_constrained_gen_liks_fp, orient="records", lines=True)
 
 
     return accepted_unconstrained_df, accepted_unconstrained_gen_liks_fp, accepted_constrained_df, accepted_constrained_gen_liks_fp
@@ -2397,6 +2405,7 @@ def run_conformal_policy_control(
     )
     ## Load calibration data into one dataframe
     n_cal_sets = len(prev_cal_data_constrained_liks_fp_list)
+    n_models = len(model_dir_list)
 
     if n_cal_sets != len(prev_cal_data_unconstrained_liks_fp_list):
         raise ValueError("Number of unconstrained and constrained cal sets must be the same")
@@ -2436,6 +2445,14 @@ def run_conformal_policy_control(
 
     check_col_names(cal_data_constrained_all)
     check_col_names(cal_data_unconstrained_all)
+
+
+    ## Number of columns to keep when rerunning from checkpoint (relevant when not overwriting)
+    ## Columns should be ["particle", "score", "lik_r0", ..., "lik_r{n_cal_sets-1}"] (similarly for constrained)
+    num_cols_to_keep = 2 + n_models
+    cal_data_constrained_all = cal_data_constrained_all.iloc[:, :num_cols_to_keep]
+    cal_data_unconstrained_all = cal_data_unconstrained_all.iloc[:, :num_cols_to_keep]
+
 
     ## Prep cal data safe & unconstrained liks: Need most recent safe likelihoods (safe at t-1) and current unconstrained likelihoods (unconstrained at t) in loop
     # cal_data_tmin1_safe_and_t_unconstrained_liks = pd.concat([cal_data_constrained_all[constrained_lik_cols[-2]], cal_data_unconstrained_all[unconstrained_lik_cols[-1]]], axis=1).to_numpy()
@@ -2512,6 +2529,13 @@ def run_conformal_policy_control(
                                                        lower_score_particle_field=lower_score_particle_field,
                                                        higher_score_field=higher_score_field,
                                                        lower_score_field=lower_score_field, proposal=proposal, global_random_seed=global_random_seed) #, safe_prop_mix_weight=safe_prop_mix_weight)
+
+
+        ## Restrict to number of columns to keep when rerunning from checkpoint (relevant when not overwriting)
+        ## Columns should be ["particle", "score", "lik_r0", ..., "lik_r{n_cal_sets-1}"] (similarly for constrained)
+        unconstrained_df = unconstrained_df.iloc[:, :num_cols_to_keep]
+        constrained_liks_df = constrained_liks_df.iloc[:, :num_cols_to_keep]
+
 
         unconstrained_df_dict[proposal] = unconstrained_df
         unconstrained_gen_liks_fp_dict[proposal] = unconstrained_gen_liks_fp
@@ -2830,7 +2854,9 @@ def run_conformal_policy_control(
                 ## Save proposals with cpc-constrained likelihoods
                 constrained_liks_df_beta_hat = pd.concat([constrained_liks_df.iloc[:, :-1], pd.DataFrame({f'con_lik_r{n_cal_sets}' : prop_constrained_liks_curr[:,-1]})], axis=1)
                 constrained_liks_df_beta_hat_fp = os.path.join(os.path.dirname(constrained_gen_liks_fp), f"prop_likBeta{beta_t:.3g}_psiS{psi_hat_intersection_safe}_psiU{psi_hat_intersection_unconstrained}_{os.path.basename(constrained_gen_liks_fp)}")
-                constrained_liks_df_beta_hat.to_json(constrained_liks_df_beta_hat_fp, orient="records", lines=True)
+                
+                if cfg.overwrite_ig or not fs.exists(constrained_liks_df_beta_hat_fp):
+                    constrained_liks_df_beta_hat.to_json(constrained_liks_df_beta_hat_fp, orient="records", lines=True)
 
 
                 ## Estimate new envelope constant for constrained policy over proposal
@@ -2864,7 +2890,8 @@ def run_conformal_policy_control(
 
                 ## Also save proposals with unconstrained likelihoods
                 # unconstrained_liks_df_beta_hat_fp = os.path.join(os.path.dirname(unconstrained_gen_liks_fp), f"cpc_prop_alpha{cfg.conformal_policy_control.alpha}_beta{beta_t:.3g}_{os.path.basename(unconstrained_gen_liks_fp)}")
-                unconstrained_df.to_json(unconstrained_gen_liks_fp, orient="records", lines=True)
+                if cfg.overwrite_ig or not fs.exists(unconstrained_gen_liks_fp):
+                    unconstrained_df.to_json(unconstrained_gen_liks_fp, orient="records", lines=True)
 
                 check_col_names(constrained_liks_df_beta_hat)
                 check_col_names(unconstrained_df)
@@ -2897,7 +2924,8 @@ def run_conformal_policy_control(
     ## Also save proposals with unconstrained likelihoods
     # unconstrained_liks_df_beta_hat_fp = os.path.join(os.path.dirname(unconstrained_gen_liks_fp), f"prop_alpha{cfg.conformal_policy_control.alpha}_uncontrolled_beta{betas_list[-1]:.3g}_{os.path.basename(unconstrained_gen_liks_fp)}")
     # unconstrained_df.to_json(unconstrained_liks_df_beta_hat_fp, orient="records", lines=True)
-    unconstrained_df.to_json(unconstrained_gen_liks_fp, orient="records", lines=True)
+    if cfg.overwrite_ig or not fs.exists(unconstrained_gen_liks_fp):
+        unconstrained_df.to_json(unconstrained_gen_liks_fp, orient="records", lines=True)
 
     check_col_names(constrained_liks_df_beta_hat)
     check_col_names(unconstrained_df)
@@ -3347,7 +3375,8 @@ def main(cfg: DictConfig):
         cal_constrained_liks_df = cal_constrained_liks_df[['particle', 'score', 'lik_r0']]
         cal_constrained_liks_df = cal_constrained_liks_df.rename(columns={'lik_r0' : 'con_lik_r0'})
         cal_constrained_output_path = os.path.join(os.path.dirname(cal_unconstrained_output_path), f'constrained_{os.path.basename(cal_unconstrained_output_path)}')
-        cal_constrained_liks_df.to_json(cal_constrained_output_path, orient="records", lines=True)
+        if cfg.overwrite_split_init or not file_client.exists(cal_constrained_output_path):
+            cal_constrained_liks_df.to_json(cal_constrained_output_path, orient="records", lines=True)
 
         ## Keep track of calibration data with *constrained* liklihoods
         cal_data_constrained_fp_list = [cal_constrained_output_path]
@@ -3474,7 +3503,9 @@ def main(cfg: DictConfig):
                     'env_const_constrained_over_prop' : envelope_const_constrained_over_proposal_list}
 
             selected_hyperparams_df = pd.DataFrame(selected_hyperparams)
-            selected_hyperparams_df.to_json(os.path.join(pi_model_fp_list[-1], 'selected_hyperparams.json'), orient="records", lines=True)
+            selected_hyperparams_fp = os.path.join(pi_model_fp_list[-1], 'selected_hyperparams.json')
+            if cfg.overwrite_ig or not file_client.exists(selected_hyperparams_fp):
+                selected_hyperparams_df.to_json(selected_hyperparams_fp, orient="records", lines=True)
 
 
             if constrained_liks_df_beta_hat.iloc[0,0] != unconstrained_df.iloc[0,0]:
@@ -3503,7 +3534,8 @@ def main(cfg: DictConfig):
                 ## Add recently computed constrained likelihoods for (t) to the previously computed (0:t-1) values
                 constrained_liks_df_beta_hat = pd.concat([cal_data_constrained_curr, pd.DataFrame({f'con_lik_r{i}' : cal_constrained_t_curr[:,-1]})], axis=1)
                 # constrained_liks_df_beta_hat_fp = os.path.join(os.path.dirname(constrained_gen_liks_fp), f"cpc_prop_{constrained_gen_liks_fp}")
-                constrained_liks_df_beta_hat.to_json(cal_dat_constrained_fp, orient="records", lines=True)
+                if cfg.overwrite_ig or not file_client.exists(cal_dat_constrained_fp):
+                    constrained_liks_df_beta_hat.to_json(cal_dat_constrained_fp, orient="records", lines=True)
 
 
             # # first_iter = True if i == 0 else False ## bool: whether is first iteration (if so, will select seeds uniformly for a safe initial policy)
@@ -3570,7 +3602,8 @@ def main(cfg: DictConfig):
             cal_constrained_liks_df = constrained_liks_df_beta_hat.loc[cal_df.index]
             cal_constrained_liks_df = cal_constrained_liks_df.rename(columns={'lik_r0' : 'con_lik_r0'})
             cal_constrained_output_path = os.path.join(os.path.dirname(cal_unconstrained_output_path), f'cpc_constrained_{os.path.basename(cal_unconstrained_output_path)}')
-            cal_constrained_liks_df.to_json(cal_constrained_output_path, orient="records", lines=True)
+            if cfg.overwrite_ig or not file_client.exists(cal_constrained_output_path):
+                cal_constrained_liks_df.to_json(cal_constrained_output_path, orient="records", lines=True)
 
             ## Keep track of calibration data with *constrained* liklihoods
             cal_data_constrained_fp_list.append(cal_constrained_output_path)
@@ -3710,7 +3743,9 @@ def main(cfg: DictConfig):
                     'env_const_constrained_over_prop' : envelope_const_constrained_over_proposal_list}
 
             selected_hyperparams_df = pd.DataFrame(selected_hyperparams)
-            selected_hyperparams_df.to_json(os.path.join(pi_model_fp_list[-1], 'selected_hyperparams.json'), orient="records", lines=True)
+            selected_hyperparams_fp = os.path.join(pi_model_fp_list[-1], 'selected_hyperparams.json')
+            if cfg.overwrite_ig or not file_client.exists(selected_hyperparams_fp):
+                selected_hyperparams_df.to_json(selected_hyperparams_fp, orient="records", lines=True)
 
 
             if constrained_liks_df_beta_hat.iloc[0,0] != unconstrained_df.iloc[0,0]:
@@ -3745,7 +3780,8 @@ def main(cfg: DictConfig):
                 check_col_names(cal_constrained_liks_df_beta_hat)
 
                 # constrained_liks_df_beta_hat_fp = os.path.join(os.path.dirname(constrained_gen_liks_fp), f"cpc_prop_{constrained_gen_liks_fp}")
-                cal_constrained_liks_df_beta_hat.to_json(cal_data_constrained_fp, orient="records", lines=True)
+                if cfg.overwrite_ig or not file_client.exists(cal_data_constrained_fp): 
+                    cal_constrained_liks_df_beta_hat.to_json(cal_data_constrained_fp, orient="records", lines=True)
             
             if cfg.conformal_policy_control.alpha >= 1.0:
                 safe_prop_mix_weight = 0.0
@@ -3789,7 +3825,8 @@ def main(cfg: DictConfig):
             cal_constrained_liks_df = constrained_liks_df.loc[cal_df.index]
             cal_constrained_liks_df = cal_constrained_liks_df.rename(columns={'lik_r0' : 'con_lik_r0'})
             cal_constrained_output_path = os.path.join(os.path.dirname(cal_unconstrained_output_path), f'cpc_constrained_{os.path.basename(cal_unconstrained_output_path)}')
-            cal_constrained_liks_df.to_json(cal_constrained_output_path, orient="records", lines=True)
+            if cfg.overwrite_ig or not file_client.exists(cal_constrained_output_path):
+                cal_constrained_liks_df.to_json(cal_constrained_output_path, orient="records", lines=True)
 
             ## Keep track of calibration data with *constrained* liklihoods
             cal_data_constrained_fp_list.append(cal_constrained_output_path)
@@ -3968,7 +4005,9 @@ def main(cfg: DictConfig):
                     'env_const_constrained_over_prop' : envelope_const_constrained_over_proposal_list}
 
             selected_hyperparams_df = pd.DataFrame(selected_hyperparams)
-            selected_hyperparams_df.to_json(os.path.join(pi_model_fp_list[-1], 'selected_hyperparams.json'), orient="records", lines=True)
+            selected_hyperparams_fp = os.path.join(pi_model_fp_list[-1], 'selected_hyperparams.json')
+            if cfg.overwrite_ig or not file_client.exists(selected_hyperparams_fp):
+                selected_hyperparams_df.to_json(selected_hyperparams_fp, orient="records", lines=True)
 
 
             if constrained_liks_df_beta_hat.iloc[0,0] != unconstrained_df.iloc[0,0]:
@@ -4002,7 +4041,8 @@ def main(cfg: DictConfig):
                 check_col_names(cal_constrained_liks_df_beta_hat)
 
                 # constrained_liks_df_beta_hat_fp = os.path.join(os.path.dirname(constrained_gen_liks_fp), f"cpc_prop_{constrained_gen_liks_fp}")
-                cal_constrained_liks_df_beta_hat.to_json(cal_data_constrained_fp, orient="records", lines=True)
+                if cfg.overwrite_ig or not file_client.exists(cal_data_constrained_fp):
+                    cal_constrained_liks_df_beta_hat.to_json(cal_data_constrained_fp, orient="records", lines=True)
             
             if cfg.conformal_policy_control.alpha >= 1.0:
                 safe_prop_mix_weight = 0.0
@@ -4042,7 +4082,8 @@ def main(cfg: DictConfig):
             cal_constrained_liks_df = constrained_liks_df.loc[cal_df.index]
             cal_constrained_liks_df = cal_constrained_liks_df.rename(columns={'lik_r0' : 'con_lik_r0'})
             cal_constrained_output_path = os.path.join(os.path.dirname(cal_unconstrained_output_path), f'cpc_constrained_{os.path.basename(cal_unconstrained_output_path)}')
-            cal_constrained_liks_df.to_json(cal_constrained_output_path, orient="records", lines=True)
+            if cfg.overwrite_ig or not file_client.exists(cal_constrained_output_path):
+                cal_constrained_liks_df.to_json(cal_constrained_output_path, orient="records", lines=True)
 
             ## Keep track of calibration data with *constrained* liklihoods
             cal_data_constrained_fp_list.append(cal_constrained_output_path)
