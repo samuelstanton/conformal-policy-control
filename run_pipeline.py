@@ -2159,7 +2159,6 @@ def accept_reject_sample_and_get_likelihoods(
 
             for proposal_curr in ["safe", "unconstrained"]:
 
-                breakpoint()
 
                 proportion_of_target_n_accepted = n_accepted / n_target
 
@@ -2204,7 +2203,6 @@ def accept_reject_sample_and_get_likelihoods(
 
             while n_proposed_dict["safe"] < N_prop_dict["safe"] and n_proposed_dict["unconstrained"] < N_prop_dict["unconstrained"]:
 
-                breakpoint()
                 
                 ## Arbitrary way of standardizing random seeds so that is consistent when rerunning from checkpoint (but uses different random seed for each call)
                 ar_random_seed = call_idx if not post_policy_control else 1000 + call_idx
@@ -2919,7 +2917,8 @@ def run_conformal_policy_control(
 
     constrained_liks_df_beta_hat = pd.concat([constrained_liks_df.iloc[:, :-1], pd.DataFrame({f'con_lik_r{n_cal_sets}' : prop_constrained_liks_curr[:,-1]})], axis=1)
     constrained_liks_df_beta_hat_fp = os.path.join(os.path.dirname(constrained_gen_liks_fp), f"prop_alpha{cfg.conformal_policy_control.alpha}_uncontrolled_beta{betas_list[-1]:.3g}_{os.path.basename(constrained_gen_liks_fp)}")
-    constrained_liks_df_beta_hat.to_json(constrained_liks_df_beta_hat_fp, orient="records", lines=True)
+    if cfg.overwrite_ig or not fs.exists(constrained_liks_df_beta_hat_fp):
+        constrained_liks_df_beta_hat.to_json(constrained_liks_df_beta_hat_fp, orient="records", lines=True)
 
     ## Also save proposals with unconstrained likelihoods
     # unconstrained_liks_df_beta_hat_fp = os.path.join(os.path.dirname(unconstrained_gen_liks_fp), f"prop_alpha{cfg.conformal_policy_control.alpha}_uncontrolled_beta{betas_list[-1]:.3g}_{os.path.basename(unconstrained_gen_liks_fp)}")
@@ -3515,11 +3514,13 @@ def main(cfg: DictConfig):
 
 
             ## Add constrained likelihoods for the current model to previous calibration data
-            for c_i, cal_dat_constrained_fp in enumerate(cal_data_constrained_fp_list):
+            for c_i, cal_data_constrained_fp in enumerate(cal_data_constrained_fp_list):
 
                 ## Load currently available constrained (0:t-1) and unconstrained (0:t) likelihoods
                 cal_data_constrained_curr   = pd.read_json(cal_data_constrained_fp, orient="records", lines=True)
                 cal_data_unconstrained_curr = pd.read_json(cal_data_unconstrained_fp_list[c_i], orient="records", lines=True)
+
+                num_lik_cols_constrained_curr = len(cal_data_constrained_curr.columns) - 2 ## Number of steps for which constrained likelihood has been computed
 
                 ## Compute constrained likelihoods for (t), which only requires constrained from (t-1) and unconstrained for (t)
                 if cfg.conformal_policy_control.constrain_against == 'init':
@@ -3533,9 +3534,11 @@ def main(cfg: DictConfig):
 
                 ## Add recently computed constrained likelihoods for (t) to the previously computed (0:t-1) values
                 constrained_liks_df_beta_hat = pd.concat([cal_data_constrained_curr, pd.DataFrame({f'con_lik_r{i}' : cal_constrained_t_curr[:,-1]})], axis=1)
+
+
                 # constrained_liks_df_beta_hat_fp = os.path.join(os.path.dirname(constrained_gen_liks_fp), f"cpc_prop_{constrained_gen_liks_fp}")
-                if cfg.overwrite_ig or not file_client.exists(cal_dat_constrained_fp):
-                    constrained_liks_df_beta_hat.to_json(cal_dat_constrained_fp, orient="records", lines=True)
+                if cfg.overwrite_ig or not file_client.exists(cal_data_constrained_fp) or num_lik_cols_constrained_curr < i + 1:
+                    constrained_liks_df_beta_hat.to_json(cal_data_constrained_fp, orient="records", lines=True)
 
 
             # # first_iter = True if i == 0 else False ## bool: whether is first iteration (if so, will select seeds uniformly for a safe initial policy)
@@ -3765,6 +3768,8 @@ def main(cfg: DictConfig):
                 cal_data_constrained_curr   = pd.read_json(cal_data_constrained_fp, orient="records", lines=True)
                 cal_data_unconstrained_curr = pd.read_json(cal_data_unconstrained_fp_list[c_i], orient="records", lines=True)
 
+                num_lik_cols_constrained_curr = len(cal_data_constrained_curr.columns) - 2 ## Number of steps for which constrained likelihood has been computed
+
                 check_col_names(cal_data_constrained_curr)
                 check_col_names(cal_data_unconstrained_curr)
 
@@ -3780,7 +3785,7 @@ def main(cfg: DictConfig):
                 check_col_names(cal_constrained_liks_df_beta_hat)
 
                 # constrained_liks_df_beta_hat_fp = os.path.join(os.path.dirname(constrained_gen_liks_fp), f"cpc_prop_{constrained_gen_liks_fp}")
-                if cfg.overwrite_ig or not file_client.exists(cal_data_constrained_fp): 
+                if cfg.overwrite_ig or not file_client.exists(cal_data_constrained_fp) or num_lik_cols_constrained_curr < i + 1: 
                     cal_constrained_liks_df_beta_hat.to_json(cal_data_constrained_fp, orient="records", lines=True)
             
             if cfg.conformal_policy_control.alpha >= 1.0:
@@ -4025,6 +4030,8 @@ def main(cfg: DictConfig):
                 cal_data_constrained_curr   = pd.read_json(cal_data_constrained_fp, orient="records", lines=True)
                 cal_data_unconstrained_curr = pd.read_json(cal_data_unconstrained_fp_list[c_i], orient="records", lines=True)
 
+                num_lik_cols_constrained_curr = len(cal_data_constrained_curr.columns) - 2 ## Number of steps for which constrained likelihood has been computed
+
                 check_col_names(cal_data_constrained_curr)
                 check_col_names(cal_data_unconstrained_curr)
 
@@ -4041,7 +4048,7 @@ def main(cfg: DictConfig):
                 check_col_names(cal_constrained_liks_df_beta_hat)
 
                 # constrained_liks_df_beta_hat_fp = os.path.join(os.path.dirname(constrained_gen_liks_fp), f"cpc_prop_{constrained_gen_liks_fp}")
-                if cfg.overwrite_ig or not file_client.exists(cal_data_constrained_fp):
+                if cfg.overwrite_ig or not file_client.exists(cal_data_constrained_fp) or num_lik_cols_constrained_curr < i + 1:
                     cal_constrained_liks_df_beta_hat.to_json(cal_data_constrained_fp, orient="records", lines=True)
             
             if cfg.conformal_policy_control.alpha >= 1.0:
