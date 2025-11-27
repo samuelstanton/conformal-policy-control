@@ -1508,6 +1508,8 @@ def generate_proposals_for_AR_sampling(
 
 
 
+
+
         gen_liks_df = pd.read_json(gen_liks_fp, orient="records", lines=True)[unconstrained_col_names] #[unconstrained_col_names]
         gen_liks_mat = gen_liks_df[unconstrained_lik_cols].to_numpy() ## Shape (n_prop, n_models)
         # gen_liks_mat = gen_liks_df.to_numpy() ## Shape (n_prop, n_models)
@@ -3770,23 +3772,26 @@ def main(cfg: DictConfig):
 
                 num_lik_cols_constrained_curr = len(cal_data_constrained_curr.columns) - 2 ## Number of steps for which constrained likelihood has been computed
 
-                check_col_names(cal_data_constrained_curr)
-                check_col_names(cal_data_unconstrained_curr)
-
-                if cfg.conformal_policy_control.constrain_against == 'init':
-                    cal_liks_df_t0_safe_and_t_unconstrained_mat = pd.concat([cal_data_constrained_curr['con_lik_r0'], cal_data_unconstrained_curr.iloc[:,-1]], axis=1).to_numpy() ## Double check this
-                else:
-                    cal_liks_df_t0_safe_and_t_unconstrained_mat = pd.concat([cal_data_constrained_curr.iloc[:, -1], cal_data_unconstrained_curr.iloc[:,-1]], axis=1).to_numpy()
-                
-                ## Compute constrained likelihoods, only starting from most recent safe likelihoods
-                cal_constrained_t_curr = constrain_likelihoods(cfg, cal_liks_df_t0_safe_and_t_unconstrained_mat, [betas_list[0], betas_list[-1]], [psis_list[0], psis_list[-1]])
-
-                cal_constrained_liks_df_beta_hat = pd.concat([cal_data_constrained_curr, pd.DataFrame({f'con_lik_r{i}' : cal_constrained_t_curr[:,-1]})], axis=1)
-                check_col_names(cal_constrained_liks_df_beta_hat)
 
                 # constrained_liks_df_beta_hat_fp = os.path.join(os.path.dirname(constrained_gen_liks_fp), f"cpc_prop_{constrained_gen_liks_fp}")
                 if cfg.overwrite_ig or not file_client.exists(cal_data_constrained_fp) or num_lik_cols_constrained_curr < i + 1: 
+                    check_col_names(cal_data_constrained_curr)
+                    check_col_names(cal_data_unconstrained_curr)
+
+                    if cfg.conformal_policy_control.constrain_against == 'init':
+                        cal_liks_df_t0_safe_and_t_unconstrained_mat = pd.concat([cal_data_constrained_curr['con_lik_r0'], cal_data_unconstrained_curr.iloc[:,-1]], axis=1).to_numpy() ## Double check this
+                    else:
+                        cal_liks_df_t0_safe_and_t_unconstrained_mat = pd.concat([cal_data_constrained_curr.iloc[:, -1], cal_data_unconstrained_curr.iloc[:,-1]], axis=1).to_numpy()
+                    
+                    ## Compute constrained likelihoods, only starting from most recent safe likelihoods
+                    cal_constrained_t_curr = constrain_likelihoods(cfg, cal_liks_df_t0_safe_and_t_unconstrained_mat, [betas_list[0], betas_list[-1]], [psis_list[0], psis_list[-1]])
+
+                    cal_constrained_liks_df_beta_hat = pd.concat([cal_data_constrained_curr, pd.DataFrame({f'con_lik_r{i}' : cal_constrained_t_curr[:,-1]})], axis=1)
+                    check_col_names(cal_constrained_liks_df_beta_hat)
+
                     cal_constrained_liks_df_beta_hat.to_json(cal_data_constrained_fp, orient="records", lines=True)
+
+                    
             
             if cfg.conformal_policy_control.alpha >= 1.0:
                 safe_prop_mix_weight = 0.0
@@ -4032,24 +4037,25 @@ def main(cfg: DictConfig):
 
                 num_lik_cols_constrained_curr = len(cal_data_constrained_curr.columns) - 2 ## Number of steps for which constrained likelihood has been computed
 
-                check_col_names(cal_data_constrained_curr)
-                check_col_names(cal_data_unconstrained_curr)
-
-                if cfg.conformal_policy_control.constrain_against=='init':
-                    cal_liks_df_t0_safe_and_t_unconstrained_mat = pd.concat([cal_data_constrained_curr['con_lik_r0'], cal_data_unconstrained_curr.iloc[:,-1]], axis=1).to_numpy() ## Double check this
-                    ## Compute constrained likelihoods, only starting from most recent safe likelihoods
-                    cal_constrained_t_curr = constrain_likelihoods(cfg, cal_liks_df_t0_safe_and_t_unconstrained_mat, [betas_list[0], betas_list[-1]], [psis_list[0], psis_list[-1]])
-                else:
-                    cal_liks_df_t0_safe_and_t_unconstrained_mat = pd.concat([cal_data_constrained_curr.iloc[:, -1], cal_data_unconstrained_curr.iloc[:,-1]], axis=1).to_numpy()
-                    cal_constrained_t_curr = constrain_likelihoods(cfg, cal_liks_df_tmin1_safe_and_t_unconstrained_mat, betas_list, psis_list)
-                
-
-                cal_constrained_liks_df_beta_hat = pd.concat([cal_data_constrained_curr, pd.DataFrame({f'con_lik_r{i}' : cal_constrained_t_curr[:,-1]})], axis=1)
-                check_col_names(cal_constrained_liks_df_beta_hat)
-
                 # constrained_liks_df_beta_hat_fp = os.path.join(os.path.dirname(constrained_gen_liks_fp), f"cpc_prop_{constrained_gen_liks_fp}")
                 if cfg.overwrite_ig or not file_client.exists(cal_data_constrained_fp) or num_lik_cols_constrained_curr < i + 1:
+                    check_col_names(cal_data_constrained_curr)
+                    check_col_names(cal_data_unconstrained_curr)
+
+                    if cfg.conformal_policy_control.constrain_against=='init':
+                        cal_liks_df_t0_safe_and_t_unconstrained_mat = pd.concat([cal_data_constrained_curr['con_lik_r0'], cal_data_unconstrained_curr.iloc[:,-1]], axis=1).to_numpy() ## Double check this
+                        ## Compute constrained likelihoods, only starting from most recent safe likelihoods
+                        cal_constrained_t_curr = constrain_likelihoods(cfg, cal_liks_df_t0_safe_and_t_unconstrained_mat, [betas_list[0], betas_list[-1]], [psis_list[0], psis_list[-1]])
+                    else:
+                        cal_liks_df_t0_safe_and_t_unconstrained_mat = pd.concat([cal_data_constrained_curr.iloc[:, -1], cal_data_unconstrained_curr.iloc[:,-1]], axis=1).to_numpy()
+                        cal_constrained_t_curr = constrain_likelihoods(cfg, cal_liks_df_tmin1_safe_and_t_unconstrained_mat, betas_list, psis_list)
+                    
+
+                    cal_constrained_liks_df_beta_hat = pd.concat([cal_data_constrained_curr, pd.DataFrame({f'con_lik_r{i}' : cal_constrained_t_curr[:,-1]})], axis=1)
+                    check_col_names(cal_constrained_liks_df_beta_hat)
+
                     cal_constrained_liks_df_beta_hat.to_json(cal_data_constrained_fp, orient="records", lines=True)
+
             
             if cfg.conformal_policy_control.alpha >= 1.0:
                 safe_prop_mix_weight = 0.0

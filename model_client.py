@@ -808,6 +808,8 @@ class ModelClient:
         # all_likelihoods = []
         all_likelihoods_torch = torch.zeros(len(targets), dtype=torch.float64)
 
+        batch_size = min(batch_size, len(targets))
+
         ## Looping over target sequences
         for t, target in enumerate(tqdm(targets, desc="Computing log likelihoods averaged over inputs...")):
             
@@ -815,6 +817,8 @@ class ModelClient:
             
             ## Looping over batches of input sequences
             for start_index in range(0, len(inputs), batch_size):  
+
+
                 
                 end_index = min(start_index + batch_size, len(inputs))
 
@@ -882,7 +886,9 @@ class ModelClient:
                 )
                 
                 next_token_probs = next_token_probs.cpu().numpy()
-                targets_tokenized = self._tokenize_batch(targets[start_index:end_index])
+                # targets_tokenized = self._tokenize_batch(targets[start_index:end_index])
+                targets_tokenized = self._tokenize_batch(target)
+
                 targets_seq_lens = targets_tokenized.attention_mask.sum(-1).cpu().numpy()  ## length = 75 
                 # logger.info(f"targets_seq_lens : {targets_seq_lens}")
                 log_likelihoods_batch = list(next_token_probs.sum(-1)) # / targets_seq_lens)

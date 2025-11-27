@@ -38,7 +38,7 @@ overwrite_dpo_formatter: False #True
 overwrite_dpo: False #True # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
 
 
-setting_str: "DPO_9e8_20251123" #"1_2Kall" #"CONDITIONAL_MIX_og" #"mix_ARMH_20AR" #"_mix_prop_in_CPC2" #"_mix_ARMH_new" #"_MH_only_2epDPO" # #"_MH_only" #"_AR_MH3" #"_AR_MH" #"_mixture" #"_mh_mix" # "2xintersect""_100tar"
+setting_str: "NewCompLikAvg_20251126" #"1_2Kall" #"CONDITIONAL_MIX_og" #"mix_ARMH_20AR" #"_mix_prop_in_CPC2" #"_mix_ARMH_new" #"_MH_only_2epDPO" # #"_MH_only" #"_AR_MH3" #"_AR_MH" #"_mixture" #"_mh_mix" # "2xintersect""_100tar"
 
 initial_seed: 0
 last_seed: 10
@@ -503,7 +503,7 @@ iterative_generation:
 
 
 conformal_policy_control:
-  alpha: 0.3 #0.5 #1.0 #0.25 #0.5 #0.3 #1.0 #0.5
+  alpha: 0.4 #0.5 #1.0 #0.25 #0.5 #0.3 #1.0 #0.5
   num_starts_beta_search: 1
   mixture_proposal: False #True #True ## Whether to do mixture proposal
   mixture_proposal_factor: 2 #1 ## Do mixture proposal if mixture_proposal_factor *overlap_coef_{safe} < overlap_coef_{unconstrained}. So, 0 or -1 does nothing
