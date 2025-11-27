@@ -1745,7 +1745,11 @@ def accept_reject_sample_and_get_likelihoods(
     if proposal == "unconstrained":
         ## If beta_t >= 1, then using unconstrained policy as proposal
 
-        while n_accepted < n_target:
+        ## If pre conformal policy control, running constrained model (ie, not alpha>=1.0), also check that number of calls has not yet exceeded max number
+        unconstrained_pre_cpc_call_num_check = call_idx < cfg.conformal_policy_control.accept_reject.max_unconstrained_proposal_calls_pre_cpc if not post_policy_control else True
+        unconstrained_pre_cpc_call_num_check = unconstrained_pre_cpc_call_num_check if cfg.conformal_policy_control.alpha < 1.0 else True ## Set to True if running unconstrained
+
+        while n_accepted < n_target and unconstrained_pre_cpc_call_num_check:
 
             accepted_curr = []
 
@@ -2738,6 +2742,10 @@ def run_conformal_policy_control(
 
             switch_to_mixture_proposal = switch_to_mixture_proposal or (cfg.conformal_policy_control.mixture_proposal_factor * psi_hat_intersection_safe < psi_hat_intersection_unconstrained and cfg.conformal_policy_control.alpha < 1.0)
 
+            ## If accept_reject_sample_and_get_likelihoods terminated early for unconstrained model (which can only happen for alpha < 1.0), then just stick to safe proposal
+            if len(unconstrained_df_dict["unconstrained"]) < cfg.conformal_policy_control.accept_reject.n_target:
+                switch_to_mixture_proposal = False
+
             if switch_to_mixture_proposal:
                 ## If using mixture proposal, then include the appropriate number of safe and unconstrained proposals
                 if cfg.conformal_policy_control.alpha >= 1.0:
@@ -2761,7 +2769,7 @@ def run_conformal_policy_control(
                 unconstrained_liks = np.concatenate((unconstrained_liks_dict['safe'][:n_safe_prop_include], unconstrained_liks_dict['unconstrained'][:n_unconstrained_prop_include]))
 
             else:
-                safe_prop_mix_weight = 0.0
+                safe_prop_mix_weight = 1.0 if proposal == "safe" else 0.0
 
 
             # iwmci_intersection_est(LRs_unconstrained_over_safe=lik_ratios_unconstrained_over_safe, unconstrained_liks=unconstrained_liks_dict["safe"], safe_liks=safe_liks_dict["safe"], beta_t=np.quantile(G, 0.25), psi_t=importance_weighted_monte_carlo_integration(lik_ratios_unconstrained_over_safe_dict["safe"], np.quantile(G, 0.25), "safe"), proposal="safe")

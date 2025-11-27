@@ -78,6 +78,26 @@ def submit_sbatch_job(
         return p, slurm_job_id
 
 
+def _get_gpu_check_script(num_gpus_required: int) -> str:
+    """Returns a bash script snippet that verifies GPU availability before running the job."""
+    if num_gpus_required <= 0:
+        return ""
+    return f'''
+# GPU availability check
+echo "Checking GPU availability..."
+NUM_GPUS_VISIBLE=$(python3 -c "import torch; print(torch.cuda.device_count())" 2>/dev/null || echo "0")
+if [ "$NUM_GPUS_VISIBLE" -lt "{num_gpus_required}" ]; then
+    echo "ERROR: Required {num_gpus_required} GPU(s) but only $NUM_GPUS_VISIBLE available/visible."
+    echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES"
+    nvidia-smi 2>/dev/null || echo "nvidia-smi not available"
+    exit 1
+fi
+echo "GPU check passed: $NUM_GPUS_VISIBLE GPU(s) available."
+nvidia-smi --query-gpu=name,memory.total,memory.free --format=csv
+
+'''
+
+
 @rm_slurm_env()
 def submit_cmd_to_slurm(
     py_cmd: str,
@@ -86,13 +106,18 @@ def submit_cmd_to_slurm(
     # setup_str: str = 'wandb login --relogin --host https://genentech.wandb.io \n\n 23fa6435c59b0dcf64957cd8fe26e0aa64fc40c2',  # setup  that goes between sbatch args and running the py_cmd
     setup_str: str = 'export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \n\n export WANDB_INSECURE_DISABLE_SSL=true \n\n export WANDB_API_KEY="23fa6435c59b0dcf64957cd8fe26e0aa64fc40c2" \n\n export WANDB_BASE_URL="https://genentech.wandb.io" \n\n wandb login --relogin --host https://genentech.wandb.io \n\n export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID \n\n export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY',
     path_to_repo: Optional[str] = None,
-    nodes_to_exclude_str: str = 'b200-st-b200-2-4,b200-st-b200-2-23,b200-st-b200-2-38', ## Example: 'b200-st-b200-2-4,b200-st-b200-2-1'
+    nodes_to_exclude_str: str = 'b200-st-b200-2-4,b200-st-b200-2-23,b200-st-b200-2-38,b200-st-b200-19', ## Example: 'b200-st-b200-2-4,b200-st-b200-2-1'
     **slurm_kwargs,
 ) -> Tuple[subprocess.Popen, str]:
     if path_to_repo is None:
         path_to_repo = "~/llome"
+    
+    # Add GPU check if GPUs are requested
+    num_gpus_required = slurm_kwargs.get("gpus_per_node", 0)
+    gpu_check_script = _get_gpu_check_script(num_gpus_required)
+    
     sbatch_str = (
-        f"source ~/.bashrc\ncd {path_to_repo}\nsource .venv/bin/activate\n{py_cmd}"
+        f"source ~/.bashrc\ncd {path_to_repo}\nsource .venv/bin/activate\n{gpu_check_script}{py_cmd}"
     )
     if nodes_to_exclude_str is not None:
         sbatch_str += f'\n exclude={nodes_to_exclude_str}'

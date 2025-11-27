@@ -503,7 +503,7 @@ iterative_generation:
 
 
 conformal_policy_control:
-  alpha: 0.4 #0.5 #1.0 #0.25 #0.5 #0.3 #1.0 #0.5
+  alpha: 0.9 #0.5 #1.0 #0.25 #0.5 #0.3 #1.0 #0.5
   num_starts_beta_search: 1
   mixture_proposal: False #True #True ## Whether to do mixture proposal
   mixture_proposal_factor: 2 #1 ## Do mixture proposal if mixture_proposal_factor *overlap_coef_{safe} < overlap_coef_{unconstrained}. So, 0 or -1 does nothing
@@ -517,6 +517,7 @@ conformal_policy_control:
   accept_reject:
     n_target: 1000 # 1000
     iwmci_intersect_thresh: 0.5
+    max_unconstrained_proposal_calls_pre_cpc: 20
 
 
 
