@@ -8,7 +8,9 @@ import os
 import numpy as np
 import pandas as pd
 import pprint
+import random
 import s3fs
+import time
 import torch
 
 from finetune_utils import formatting_texts_func_edit_pairs, formatting_texts_func_single_seq
@@ -99,15 +101,59 @@ def compute_likelihoods_one_model_all_data(cfg: DictConfig, logger: logging.Logg
     except (RuntimeError, CUDA_ERROR) as e:
         logger.warning(f"Could not clear CUDA cache: {e}")
 
-    ## Load model
-    # ModelClient will handle waiting for GPU availability if needed
-    model_client = ModelClient(
-        model_name_or_path=cfg.model_name_or_path_list[-1], ## Use most recent model
-        logger=logger,
-        temperature = cfg.generation_config.temperature,
-        max_generate_length=cfg.generation_config.max_new_tokens,
-        device="cuda" if torch.cuda.is_available() else "cpu",
-    )
+    # Add a small random delay to stagger CUDA initialization across processes
+    # This helps avoid race conditions when multiple processes try to set CUDA devices simultaneously
+    if torch.cuda.is_available():
+        delay = random.uniform(0.1, 0.5)
+        time.sleep(delay)
+
+    # Retry ModelClient initialization with exponential backoff to handle CUDA busy errors.
+    # Always prefer CUDA first; only fall back to CPU if max retries are exhausted.
+    max_retries = 5
+    retry_delay = 1.0
+    model_client = None
+    fallback_to_cpu = False
+    for attempt in range(max_retries):
+        try:
+            model_client = ModelClient(
+                model_name_or_path=cfg.model_name_or_path_list[-1],  # Use most recent model
+                logger=logger,
+                temperature=cfg.generation_config.temperature,
+                max_generate_length=cfg.generation_config.max_new_tokens,
+                device="cuda",
+            )
+            break
+        except Exception as e:
+            error_str = str(e)
+            is_cuda_error = (
+                "CUDA" in error_str
+                or "busy" in error_str.lower()
+                or "unavailable" in error_str.lower()
+                or "AcceleratorError" in type(e).__name__
+            )
+            if is_cuda_error and attempt < max_retries - 1:
+                wait_time = retry_delay * (2 ** attempt)
+                logger.warning(
+                    f"CUDA initialization failed (attempt {attempt + 1}/{max_retries}): {e}. "
+                    f"Retrying in {wait_time:.1f} seconds..."
+                )
+                time.sleep(wait_time)
+            elif is_cuda_error:
+                fallback_to_cpu = True
+                logger.error(
+                    f"CUDA initialization failed after {max_retries} attempts: {e}. Falling back to CPU."
+                )
+                break
+            else:
+                raise
+    if model_client is None and fallback_to_cpu:
+        model_client = ModelClient(
+            model_name_or_path=cfg.model_name_or_path_list[-1],
+            logger=logger,
+            temperature=cfg.generation_config.temperature,
+            max_generate_length=cfg.generation_config.max_new_tokens,
+            device="cpu",
+        )
     # logger.info(f"model_client.device() : {model_client.device()}")
 
     # model_client.to('cuda')
@@ -155,7 +201,7 @@ def compute_likelihoods_one_model_all_data(cfg: DictConfig, logger: logging.Logg
         target_likelihoods = model_client.compute_likelihoods_avg(
             formatted_inputs,
             formatted_targets,
-            batch_size=cfg.batch_size,
+            batch_size=min(cfg.batch_size, len(formatted_targets)),
             logger=logger,
         )
 

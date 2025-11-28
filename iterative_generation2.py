@@ -69,16 +69,18 @@ def run_iterative_generation(cfg: DictConfig, logger: logging.Logger = None):
     
     # Retry ModelClient initialization with exponential backoff to handle CUDA busy errors
     # This addresses race conditions when multiple processes initialize CUDA simultaneously
+    # Always try CUDA first, only fall back to CPU after all retries are exhausted
     max_retries = 5
     retry_delay = 1.0
     model_client = None
+    fallback_to_cpu = False
     for attempt in range(max_retries):
         try:
             model_client = ModelClient(
                 model_name_or_path=cfg.model_name_or_path,
                 logger=logger,
                 max_generate_length=gen_config.max_new_tokens,
-                device="cuda" if torch.cuda.is_available() else "cpu",
+                device="cuda",  # Always try CUDA first
             )
             break
         except Exception as e:
@@ -99,11 +101,27 @@ def run_iterative_generation(cfg: DictConfig, logger: logging.Logger = None):
                 )
                 time.sleep(wait_time)
             elif is_cuda_error:
-                logger.error(f"CUDA initialization failed after {max_retries} attempts: {e}")
-                raise
+                logger.warning(
+                    f"CUDA initialization failed after {max_retries} attempts: {e}. "
+                    f"Falling back to CPU."
+                )
+                fallback_to_cpu = True
+                break
             else:
                 # Re-raise if it's not a CUDA-related error
                 raise
+    
+    # Only fall back to CPU if all CUDA attempts failed
+    if model_client is None and fallback_to_cpu:
+        logger.info("Attempting to initialize ModelClient on CPU as fallback...")
+        model_client = ModelClient(
+            model_name_or_path=cfg.model_name_or_path,
+            logger=logger,
+            max_generate_length=gen_config.max_new_tokens,
+            device="cpu",
+        )
+    elif model_client is None:
+        raise RuntimeError("Failed to initialize ModelClient after all retry attempts.")
     df = pd.read_json(cfg.data_path, orient="records", lines=True)
     if cfg.sanity_check:
         logger.info(

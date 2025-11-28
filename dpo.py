@@ -141,8 +141,9 @@ def main(cfg: DictConfig):
     transformers_logging.enable_propagation()
     transformers_logger = transformers_logging.get_logger("transformers")
     # use the ModelClient class since it has utilities for loading models from S3
+    # Always try CUDA first, ModelClient will handle fallback to CPU if needed
     model_client = ModelClient(
-        model_config.model_name_or_path, logger=transformers_logger, **model_kwargs
+        model_config.model_name_or_path, logger=transformers_logger, device="cuda", **model_kwargs
     )
     model = model_client.model
     model.generation_config = GenerationConfig(
@@ -151,8 +152,9 @@ def main(cfg: DictConfig):
     transformers_logger.info(f"Generation config: {model.generation_config}")
     peft_config = get_peft_config(model_config)
     if peft_config is None:
+        # Always try CUDA first, ModelClient will handle fallback to CPU if needed
         ref_model_client = ModelClient(
-            model_config.model_name_or_path, logger=transformers_logger, **model_kwargs
+            model_config.model_name_or_path, logger=transformers_logger, device="cuda", **model_kwargs
         )
         ref_model = ref_model_client.model
         ref_model.generation_config = GenerationConfig(
