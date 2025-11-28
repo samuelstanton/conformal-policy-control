@@ -1747,9 +1747,12 @@ def accept_reject_sample_and_get_likelihoods(
 
         ## If pre conformal policy control, running constrained model (ie, not alpha>=1.0), also check that number of calls has not yet exceeded max number
         unconstrained_pre_cpc_call_num_check = call_idx < cfg.conformal_policy_control.accept_reject.max_unconstrained_proposal_calls_pre_cpc if not post_policy_control else True
-        unconstrained_pre_cpc_call_num_check = unconstrained_pre_cpc_call_num_check if cfg.conformal_policy_control.alpha < 1.0 else True ## Set to True if running unconstrained
+        if cfg.conformal_policy_control.alpha >= 1.0:
+            unconstrained_pre_cpc_call_num_check = True ## Set to True if running unconstrained
 
+        
         while n_accepted < n_target and unconstrained_pre_cpc_call_num_check:
+            
 
             accepted_curr = []
 
@@ -2374,6 +2377,7 @@ def accept_reject_sample_and_get_likelihoods(
 
 
 
+
 def empirical_cdf(
     values, ## numpy array with values
     x ## value to evaluate empirical CDF at
@@ -2808,7 +2812,7 @@ def run_conformal_policy_control(
 
             w_test = np.max(prop_constrained_liks_curr_t / prop_mixture_constrained_density)
 
-                
+            test_pt_factor *= cfg.conformal_policy_control.test_pt_scale_factor ## Can conservatively scale test point weight to est population max (1.0 is plug in)
             w_test *= test_pt_factor
 
 
@@ -2888,7 +2892,7 @@ def run_conformal_policy_control(
                     raise ValueError(f"Invalid proposal: {proposal}")
 
 
-                envelope_const_constrained_over_proposal = max(lik_ratios_constrained_over_proposal)
+                envelope_const_constrained_over_proposal = max(lik_ratios_constrained_over_proposal) * cfg.conformal_policy_control.accept_reject.env_const_scale_emp_max
                 # if cfg.conformal_policy_control.use_overlap_mix_weight:
                 #     envelope_const_constrained_over_proposal = max(lik_ratios_constrained_over_proposal)
                 # else:

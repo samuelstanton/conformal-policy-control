@@ -4,6 +4,8 @@ import logging
 import os
 import pandas as pd
 import pprint
+import random
+import time
 import torch
 
 from botorch.test_functions import SyntheticTestFunction
@@ -58,12 +60,50 @@ def run_iterative_generation(cfg: DictConfig, logger: logging.Logger = None):
             random_seed=test_fn_params["random_seed"],
         )
     gen_config = hydra.utils.instantiate(cfg.generation_config)
-    model_client = ModelClient(
-        model_name_or_path=cfg.model_name_or_path,
-        logger=logger,
-        max_generate_length=gen_config.max_new_tokens,
-        device="cuda" if torch.cuda.is_available() else "cpu",
-    )
+    
+    # Add a small random delay to stagger CUDA initialization across processes
+    # This helps avoid race conditions when multiple processes try to set CUDA devices simultaneously
+    if torch.cuda.is_available():
+        delay = random.uniform(0.1, 0.5)  # Random delay between 0.1-0.5 seconds
+        time.sleep(delay)
+    
+    # Retry ModelClient initialization with exponential backoff to handle CUDA busy errors
+    # This addresses race conditions when multiple processes initialize CUDA simultaneously
+    max_retries = 5
+    retry_delay = 1.0
+    model_client = None
+    for attempt in range(max_retries):
+        try:
+            model_client = ModelClient(
+                model_name_or_path=cfg.model_name_or_path,
+                logger=logger,
+                max_generate_length=gen_config.max_new_tokens,
+                device="cuda" if torch.cuda.is_available() else "cpu",
+            )
+            break
+        except Exception as e:
+            # Check if it's a CUDA-related error (could be RuntimeError, AcceleratorError, etc.)
+            error_str = str(e)
+            is_cuda_error = (
+                "CUDA" in error_str 
+                or "busy" in error_str.lower() 
+                or "unavailable" in error_str.lower()
+                or "AcceleratorError" in type(e).__name__
+            )
+            
+            if is_cuda_error and attempt < max_retries - 1:
+                wait_time = retry_delay * (2 ** attempt)  # Exponential backoff
+                logger.warning(
+                    f"CUDA initialization failed (attempt {attempt + 1}/{max_retries}): {e}. "
+                    f"Retrying in {wait_time:.1f} seconds..."
+                )
+                time.sleep(wait_time)
+            elif is_cuda_error:
+                logger.error(f"CUDA initialization failed after {max_retries} attempts: {e}")
+                raise
+            else:
+                # Re-raise if it's not a CUDA-related error
+                raise
     df = pd.read_json(cfg.data_path, orient="records", lines=True)
     if cfg.sanity_check:
         logger.info(
