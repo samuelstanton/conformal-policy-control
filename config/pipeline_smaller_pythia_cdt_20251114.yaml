@@ -38,7 +38,7 @@ overwrite_dpo_formatter: False #True
 overwrite_dpo: False #True # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
 
 
-setting_str: "NewCompLikAvg_20251128_v2" #"1_2Kall" #"CONDITIONAL_MIX_og" #"mix_ARMH_20AR" #"_mix_prop_in_CPC2" #"_mix_ARMH_new" #"_MH_only_2epDPO" # #"_MH_only" #"_AR_MH3" #"_AR_MH" #"_mixture" #"_mh_mix" # "2xintersect""_100tar"
+setting_str: "20251129_v2" #"1_2Kall" #"CONDITIONAL_MIX_og" #"mix_ARMH_20AR" #"_mix_prop_in_CPC2" #"_mix_ARMH_new" #"_MH_only_2epDPO" # #"_MH_only" #"_AR_MH3" #"_AR_MH" #"_mixture" #"_mh_mix" # "2xintersect""_100tar"
 
 initial_seed: 0
 last_seed: 10
@@ -503,7 +503,7 @@ iterative_generation:
 
 
 conformal_policy_control:
-  alpha: 0.5 #0.5 #1.0 #0.25 #0.5 #0.3 #1.0 #0.5
+  alpha: 0.3 #0.5 #1.0 #0.25 #0.5 #0.3 #1.0 #0.5
   num_starts_beta_search: 1
   mixture_proposal: False #True #True ## Whether to do mixture proposal
   mixture_proposal_factor: 2 #1 ## Do mixture proposal if mixture_proposal_factor *overlap_coef_{safe} < overlap_coef_{unconstrained}. So, 0 or -1 does nothing
@@ -512,14 +512,14 @@ conformal_policy_control:
   constrain_against: "init" ## "init" or "last": whether to constrain against the initial safe policy, or the last/most recent safe policy
   use_overlap_mix_weight: True  #True ## Whether to use overlap coefficient mixture weight; else, use 1 / (1 + beta)
   randomized_cpc: False #True
-  test_pt_scale_factor: 1.05
+  test_pt_scale_factor: 1.0
   args:
     n_grid: 200 ## Approx size of grid to search over for lik-ratio bound    
   accept_reject:
     n_target: 1000 # 1000
     iwmci_intersect_thresh: 0.5
-    max_unconstrained_proposal_calls_pre_cpc: 20
-    env_const_scale_emp_max: 1.05 ## Factor by which to scale the empirical maximum likelihood ratio for estimating envelope constant
+    max_unconstrained_proposal_calls_pre_cpc: 10 #10
+    env_const_scale_emp_max: 1.0 ## Factor by which to scale the empirical maximum likelihood ratio for estimating envelope constant
 
 
 
@@ -552,7 +552,7 @@ compute_likelihooods_all_models:
 dpo:
   args:
     dpo_config:
-      learning_rate: 1e-7 #9e-8 
+      learning_rate: 1e-7 #9e-8
       beta: 0.4
       gradient_accumulation_steps: 32
       num_train_epochs: 1 #1 #2 #2 #1

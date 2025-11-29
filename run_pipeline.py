@@ -1752,8 +1752,11 @@ def accept_reject_sample_and_get_likelihoods(
 
         
         while n_accepted < n_target and unconstrained_pre_cpc_call_num_check:
-            
 
+            ## If pre conformal policy control, running constrained model (ie, not alpha>=1.0), also check that number of calls has not yet exceeded max number
+            unconstrained_pre_cpc_call_num_check = call_idx < cfg.conformal_policy_control.accept_reject.max_unconstrained_proposal_calls_pre_cpc if not post_policy_control else True
+
+            
             accepted_curr = []
 
             # temps_curr = temps if len(model_dir_list) > 1 else [cfg.temperature_init]
@@ -3669,7 +3672,7 @@ def main(cfg: DictConfig):
 
             
             ## Add new trained model to list
-            logger.info(f"Trained SFT model: {dpo_dir}")
+            logger.info(f"Trained DPO model: {dpo_dir}")
             all_model_paths.append(dpo_dir)
             pi_model_fp_list.append(dpo_dir)
 
