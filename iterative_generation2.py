@@ -259,7 +259,7 @@ def run_iterative_generation(cfg: DictConfig, logger: logging.Logger = None):
             zip(output_token_ids, output_token_logps), desc="Truncating outputs.."
         ):
             trunc_output, logps = truncate_after_right_bracket_w_logps(
-                token_ids, token_logps, model_client.tokenizer, length_normalized=True
+                token_ids, token_logps, model_client.tokenizer, length_normalized=False #True
             )
             trunc_outputs.append(trunc_output)
             trunc_output_logps.append(logps)

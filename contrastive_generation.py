@@ -5,10 +5,12 @@ import os
 import pandas as pd
 import pprint
 import torch
+import random
+import time
+import numpy as np
 
 from botorch.test_functions import SyntheticTestFunction
 from finetune_utils import (
-    formatting_texts_func_plain_pairs_higher,
     formatting_texts_func_edit_pairs,
     parse_particle_and_score,
     truncate_after_right_bracket_w_logps,
@@ -102,14 +104,19 @@ def generate_texts_batched_contrastive_mixture(
         (1, 0), dtype=target_input_ids.dtype, device=target_input_ids.device
     )
 
-    per_step_log_ratios: List[float] = []
+    # per_step_log_ratios: List[float] = []
+    # per_step_probs_by_model: List[float] = [torch.zeros(target_model.max_generate_length, dtype=torch.float64) for m in models_list]
+    per_step_log_ratios = []
+    per_step_probs_by_model = [torch.zeros(target_model.max_generate_length, dtype=torch.float64) for m in models_list]
+
+
     eps = 1e-12  # numerical stability
 
     output_strs = []
     all_output_token_ids = []
     all_token_logps = []
 
-    for _ in tqdm(range(target_model.max_generate_length), desc="Contrastive generation (avg probs)..."):
+    for i in tqdm(range(target_model.max_generate_length), desc="Contrastive generation (avg probs)..."):
         # Target: compute probabilities for each prompt, then average probs (not logs)
         suffix_repeated_target = generated_suffix.repeat(target_input_ids.size(0), 1)  # [N_target, T]
         target_batch = torch.cat([target_input_ids, suffix_repeated_target], dim=1)    # [N_target, L_t+T]
@@ -121,6 +128,7 @@ def generate_texts_batched_contrastive_mixture(
 
         # References: average probs per model over its prompts, then weighted sum across models
         mixture_probs = None  # [1, V]
+        probs_by_model = []
         for w, (ref_ids, ref_model) in zip(mixture_weights, zip(ref_input_ids_list, reference_models)):
             suffix_repeated_ref = generated_suffix.repeat(ref_ids.size(0), 1)           # [N_ref_i, T]
             ref_batch = torch.cat([ref_ids, suffix_repeated_ref], dim=1)                # [N_ref_i, L_i+T]
@@ -130,6 +138,15 @@ def generate_texts_batched_contrastive_mixture(
             ref_probs_avg = ref_probs_all.mean(0, keepdim=True)                          # [1, V]
             weighted = w * ref_probs_avg
             mixture_probs = weighted if mixture_probs is None else (mixture_probs + weighted)
+
+            probs_by_model.append(ref_probs_avg)
+
+        ## Also add current optimized model
+        probs_by_model.append(probs_a_avg)
+
+            # logger.info(f"ref_probs_avg len : {len(ref_probs_avg[0])}")
+
+        # logger.info(f"probs_by_model len : {len(probs_by_model[0][0])}")
 
         mixture_log_probs = torch.log(mixture_probs.clamp_min(eps))                      # [1, V]
 
@@ -141,9 +158,20 @@ def generate_texts_batched_contrastive_mixture(
         # Greedy next token (change to sampling if desired)
         next_token = torch.argmax(contrastive_scores, dim=-1, keepdim=True)  # [1,1]
 
+        logger.info(f"next_token : {next_token}")
+
         # Track per-step log-ratio if requested
         if return_likelihood_ratios:
             step_lr = torch.gather(log_probs_a, -1, next_token).squeeze(-1) - torch.gather(mixture_log_probs, -1, next_token).squeeze(-1)
+            
+            for m in range(len(models_list)):
+                logger.info(f"len models_list : {len(models_list)}")
+                logger.info(f"len probs_by_model : {len(probs_by_model)}")
+                logger.info(f"probs_by_model[m] : {probs_by_model[m]}")
+                logger.info(f"next_token : {next_token}")
+
+                per_step_probs_by_model[m][i] = torch.gather(probs_by_model[m], -1, next_token).squeeze(-1)
+
             per_step_log_ratios.append(step_lr.item())
             # logger.info(f"return_likelihood_ratios : {return_likelihood_ratios}, step_lr : {step_lr}")
 
@@ -154,20 +182,22 @@ def generate_texts_batched_contrastive_mixture(
         if next_token.item() == target_model.tokenizer.eos_token_id:
             break
 
-    logger.info(f"float(sum(per_step_log_ratios)) : {float(sum(per_step_log_ratios))}")
-    logger.info(f"float(exp(sum(per_step_log_ratios))) : {float(np.exp(sum(per_step_log_ratios)))}")
+    # logger.info(f"float(sum(per_step_log_ratios)) : {float(sum(per_step_log_ratios))}")
+    # logger.info(f"float(exp(sum(per_step_log_ratios))) : {float(np.exp(sum(per_step_log_ratios)))}")
     # Decode using first prompt to strip context; only the suffix is returned
     decoded_outputs = target_model.tokenizer.batch_decode(
         torch.cat([target_input_ids[0:1], generated_suffix], dim=1)[:, target_input_ids.shape[-1]:],
         skip_special_tokens=True,
         clean_up_tokenization_spaces=True,
     )
-    logger.info(f"decoded_outputs : {decoded_outputs}")
+    # logger.info(f"decoded_outputs : {decoded_outputs}")
     # logger.info(f"float(sum(per_step_log_ratios)) : {float(sum(per_step_log_ratios))}")
     # logger.info(f"float(sum(per_step_log_ratios)) : {float(np.log(sum(per_step_log_ratios)))}")
 
     if return_likelihood_ratios:
-        return decoded_outputs, float(sum(per_step_log_ratios))
+        logger.info(f"per_step_probs_by_model[0] : {per_step_probs_by_model[0]}")
+        likelihoods_by_model = [torch.prod(per_step_probs) for per_step_probs in per_step_probs_by_model]
+        return decoded_outputs, float(sum(per_step_log_ratios)), likelihoods_by_model
     return decoded_outputs
 
     # output_strs.extend(decoded_outputs)
@@ -213,15 +243,85 @@ def run_contrastive_generation(cfg: DictConfig, logger: logging.Logger = None):
     gen_config = hydra.utils.instantiate(cfg.generation_config)
 
 
-    ## Populate model_client_list: list of models
+    ## Check for GPU availability with loading first safe model
     model_client_list = []
-    for model_name_or_path in cfg.model_name_or_path_list:
+    model_name_or_path = cfg.model_name_or_path_list[0]
+
+    # Add a small random delay to stagger CUDA initialization across processes
+    # This helps avoid race conditions when multiple processes try to set CUDA devices simultaneously
+    if torch.cuda.is_available():
+        delay = random.uniform(0.1, 0.5)  # Random delay between 0.1-0.5 seconds
+        time.sleep(delay)
+
+    
+    # Retry ModelClient initialization with exponential backoff to handle CUDA busy errors
+    # This addresses race conditions when multiple processes initialize CUDA simultaneously
+    # Always try CUDA first, only fall back to CPU after all retries are exhausted
+    max_retries = 5
+    retry_delay = 1.0
+    model_client = None
+    fallback_to_cpu = False
+    for attempt in range(max_retries):
+        try:
+            
+            model_client = ModelClient(
+                model_name_or_path=model_name_or_path,
+                logger=logger,
+                max_generate_length=gen_config.max_new_tokens,
+                device="cuda",  # Always try CUDA first
+            )
+            break
+        except Exception as e:
+            # Check if it's a CUDA-related error (could be RuntimeError, AcceleratorError, etc.)
+            error_str = str(e)
+            is_cuda_error = (
+                "CUDA" in error_str 
+                or "busy" in error_str.lower() 
+                or "unavailable" in error_str.lower()
+                or "AcceleratorError" in type(e).__name__
+            )
+            
+            if is_cuda_error and attempt < max_retries - 1:
+                wait_time = retry_delay * (2 ** attempt)  # Exponential backoff
+                logger.warning(
+                    f"CUDA initialization failed (attempt {attempt + 1}/{max_retries}): {e}. "
+                    f"Retrying in {wait_time:.1f} seconds..."
+                )
+                time.sleep(wait_time)
+            elif is_cuda_error:
+                logger.warning(
+                    f"CUDA initialization failed after {max_retries} attempts: {e}. "
+                    f"Falling back to CPU."
+                )
+                fallback_to_cpu = True
+                break
+            else:
+                # Re-raise if it's not a CUDA-related error
+                raise
+    
+    # Only fall back to CPU if all CUDA attempts failed
+    if model_client is None and fallback_to_cpu:
+        logger.info("Attempting to initialize ModelClient on CPU as fallback...")
+        model_client = ModelClient(
+            model_name_or_path=model_name_or_path,
+            logger=logger,
+            max_generate_length=gen_config.max_new_tokens,
+            device="cpu",
+        )
+    elif model_client is None:
+        raise RuntimeError("Failed to initialize ModelClient after all retry attempts.")
+    
+    model_client_list.append(model_client)
+
+    ## Populate model_client_list with remaining models
+    for model_name_or_path in cfg.model_name_or_path_list[1:]:
+
         model_client = ModelClient(
             model_name_or_path=model_name_or_path,
             logger=logger,
             temperature = gen_config.temperature,
             max_generate_length=gen_config.max_new_tokens,
-            device="cuda" if torch.cuda.is_available() else "cpu",
+            device="cuda" # if torch.cuda.is_available() else "cpu",
         )
         model_client_list.append(model_client)
 
@@ -236,7 +336,13 @@ def run_contrastive_generation(cfg: DictConfig, logger: logging.Logger = None):
         # logger.info(f"input_df["higher_score_particle"] : {input_df["higher_score_particle"]}")
         
         input_ds_list.append(datasets.Dataset.from_pandas(input_df))
-        input_texts_list.append(formatting_texts_func_single_seq(input_ds_list[-1]))
+        # input_texts_list.append(formatting_texts_func_single_seq(input_ds_list[-1]))
+        input_texts_list.append(formatting_texts_func_edit_pairs(
+            input_ds_list[-1],
+            include_target=False,
+            higher_score_particle_field=cfg.higher_score_particle_field,
+            lower_score_particle_field=cfg.lower_score_particle_field,
+        ))
         ## May need to / want to write a new 'formatting_texts_func_single_sequences', to do job of 'formatting_texts_func_edit_pairs' for seed files
 
 
@@ -252,7 +358,7 @@ def run_contrastive_generation(cfg: DictConfig, logger: logging.Logger = None):
 
     ## TO DO: Resolve connection between 'generate_texts_batched_contrastive_mixture' and here
     ## Note: Probably only need to return the likelihood ratio
-    output_sequence, output_log_lik_ratio = generate_texts_batched_contrastive_mixture(
+    output_sequence, output_log_lik_ratio, likelihoods_by_model = generate_texts_batched_contrastive_mixture(
         model_client_list,
         input_texts_list,
         # temperature=cfg.temperature,
@@ -266,86 +372,95 @@ def run_contrastive_generation(cfg: DictConfig, logger: logging.Logger = None):
 
     logger.info(f"output_sequence      : {output_sequence}")
     logger.info(f"output_log_lik_ratio : {output_log_lik_ratio}")
+    logger.info(f"likelihoods_by_model : {likelihoods_by_model}")
 
-    trunc_outputs = []
-    trunc_output_logps = []
-    for token_ids, token_logps in tqdm(
-        zip(output_token_ids, output_token_logps), desc="Truncating outputs.."
-    ):
-        trunc_output, logps = truncate_after_right_bracket_w_logps(
-            token_ids, token_logps, model_client.tokenizer, length_normalized=True
-        )
-        trunc_outputs.append(trunc_output)
-        trunc_output_logps.append(logps)
-    logger.info(
-        f"Len of trunc_outputs: {len(trunc_outputs)}\nLen of trunc_output_logps: {len(trunc_output_logps)}\
-        \nLen of input_ds before loop : {len(input_ds)}"
-    )
-    # store outputs and create inputs for the next iteration
-    # prev_input_ds = input_ds
-    # input_ds = []
-    # for trajectory_idx in range(len(all_trajectories)):
 
-    num_particles_generated = 0
-    all_outputs = []
-    for output_idx in range(gen_config.num_return_sequences):
-        output = trunc_outputs[output_idx]
-        output_logp = trunc_output_logps[output_idx]
-        logger.info(f'output : {output}')
-        output_particle_and_score = parse_particle_and_score(output, test_fn)
-        logger.info(f'output_particle_and_score : {output_particle_and_score}')
-
-        num_particles_generated += 1
-        if output_particle_and_score is None:
-            continue
-        input_particle = prev_input_ds[trajectory_idx][
-            cfg.higher_score_particle_field
-        ]
-        hamming_dist = distance.hamming(
-            input_particle, output_particle_and_score[0]
-        )
-        # If any of the outputs is parsable, then we continue to iteratively
-        # generate for that example.
-        all_outputs.append(
-            {
-                "particle": output_particle_and_score[0],
-                "score": output_particle_and_score[1],
-                "loglikelihood": output_logp,
-                "num_particles_generated": num_particles_generated,
-                "hamming_distance": hamming_dist,
-            }
-        )
-    # # Only include the highest-likelihood output in the pool for a given example
-    # # in the inputs for the next round. If no particles have non-NaN log-likelihood, then
-    # # use the original seed.
-    # candidates = [
-    #     d
-    #     for d in all_trajectories[trajectory_idx]
-    #     if d["loglikelihood"] is not None
-    # ]
-    # if len(candidates) > 0:
-    #     max_likelihood_gen = max(candidates, key=lambda d: d["loglikelihood"])
-    # else:
-    #     max_likelihood_gen = all_trajectories[trajectory_idx][0]
-    # input_ds.append(
-    #     {
-    #         cfg.higher_score_particle_field: max_likelihood_gen["particle"],
-    #         "score": max_likelihood_gen["score"],
-    #     }
-    # )
-
-    # input_ds = datasets.Dataset.from_list(input_ds)
-    # # Give each trajectory an ID and flatten out the list of outputs!
-    # all_trajectories = [
-    #     {"trajectory_id": example_id, **d}
-    #     for example_id, trajectory in enumerate(all_trajectories)
-    #     for d in trajectory
-    # ]
-    # logger.info(f'all_outputs : {all_outputs}')
-    all_outputs = pd.DataFrame(all_outputs)
-    all_outputs.to_json(
+    cg_lik_ratio_opt_over_mix_df = pd.DataFrame(np.c_[output_sequence, [output_log_lik_ratio]], columns=["particle", "cg_lik_ratio_opt_over_mix"])
+    cg_lik_ratio_opt_over_mix_df.to_json(
         os.path.join(cfg.output_dir, cfg.output_filename), orient="records", lines=True
     )
+
+    # breakpoint()
+
+    # trunc_outputs = []
+    # trunc_output_logps = []
+    # for token_ids, token_logps in tqdm(
+    #     zip(output_token_ids, output_token_logps), desc="Truncating outputs.."
+    # ):
+    #     trunc_output, logps = truncate_after_right_bracket_w_logps(
+    #         token_ids, token_logps, model_client.tokenizer, length_normalized=False #True
+    #     )
+    #     trunc_outputs.append(trunc_output)
+    #     trunc_output_logps.append(logps)
+    # logger.info(
+    #     f"Len of trunc_outputs: {len(trunc_outputs)}\nLen of trunc_output_logps: {len(trunc_output_logps)}\
+    #     \nLen of input_ds before loop : {len(input_ds)}"
+    # )
+    # # store outputs and create inputs for the next iteration
+    # # prev_input_ds = input_ds
+    # # input_ds = []
+    # # for trajectory_idx in range(len(all_trajectories)):
+
+    # num_particles_generated = 0
+    # all_outputs = []
+    # for output_idx in range(gen_config.num_return_sequences):
+    #     output = trunc_outputs[output_idx]
+    #     output_logp = trunc_output_logps[output_idx]
+    #     logger.info(f'output : {output}')
+    #     output_particle_and_score = parse_particle_and_score(output, test_fn)
+    #     logger.info(f'output_particle_and_score : {output_particle_and_score}')
+
+    #     num_particles_generated += 1
+    #     if output_particle_and_score is None:
+    #         continue
+    #     input_particle = prev_input_ds[trajectory_idx][
+    #         cfg.higher_score_particle_field
+    #     ]
+    #     hamming_dist = distance.hamming(
+    #         input_particle, output_particle_and_score[0]
+    #     )
+    #     # If any of the outputs is parsable, then we continue to iteratively
+    #     # generate for that example.
+    #     all_outputs.append(
+    #         {
+    #             "particle": output_particle_and_score[0],
+    #             "score": output_particle_and_score[1],
+    #             "loglikelihood": output_logp,
+    #             "num_particles_generated": num_particles_generated,
+    #             "hamming_distance": hamming_dist,
+    #         }
+    #     )
+    # # # Only include the highest-likelihood output in the pool for a given example
+    # # # in the inputs for the next round. If no particles have non-NaN log-likelihood, then
+    # # # use the original seed.
+    # # candidates = [
+    # #     d
+    # #     for d in all_trajectories[trajectory_idx]
+    # #     if d["loglikelihood"] is not None
+    # # ]
+    # # if len(candidates) > 0:
+    # #     max_likelihood_gen = max(candidates, key=lambda d: d["loglikelihood"])
+    # # else:
+    # #     max_likelihood_gen = all_trajectories[trajectory_idx][0]
+    # # input_ds.append(
+    # #     {
+    # #         cfg.higher_score_particle_field: max_likelihood_gen["particle"],
+    # #         "score": max_likelihood_gen["score"],
+    # #     }
+    # # )
+
+    # # input_ds = datasets.Dataset.from_list(input_ds)
+    # # # Give each trajectory an ID and flatten out the list of outputs!
+    # # all_trajectories = [
+    # #     {"trajectory_id": example_id, **d}
+    # #     for example_id, trajectory in enumerate(all_trajectories)
+    # #     for d in trajectory
+    # # ]
+    # # logger.info(f'all_outputs : {all_outputs}')
+    # all_outputs = pd.DataFrame(all_outputs)
+    # all_outputs.to_json(
+    #     os.path.join(cfg.output_dir, cfg.output_filename), orient="records", lines=True
+    # )
 
 
 @hydra.main(config_path="config", config_name="contrastive_generation")

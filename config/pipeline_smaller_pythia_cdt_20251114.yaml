@@ -15,7 +15,7 @@ overwrite_initg: False #False ## If False, will only run initial generation when
 # overwrite_sft: True ## If False, will only run SFT when output file does not already exist.
 # overwrite_ig: True ## If False, will only run iterative generation when output file does not already exist.
 # overwrite_split: True
-# # overwrite_cg: False ## If False, will only run contrastive generation when output file does not already exist.
+# overwrite_cg: False ## If False, will only run contrastive generation when output file does not already exist.
 # overwrite_cmp_lik_all: True #False #True ## If False, will only run compute_likelihoods_all_models when output file doesn't exist.
 # overwrite_sft_formatter: True
 # overwrite_marge: True # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
@@ -29,7 +29,7 @@ overwrite_split_init: False
 overwrite_sft: False ## If False, will only run SFT when output file does not already exist.
 overwrite_ig: False ## If False, will only run iterative generation when output file does not already exist.
 overwrite_split: False
-# overwrite_cg: False ## If False, will only run contrastive generation when output file does not already exist.
+overwrite_cg: False ## If False, will only run contrastive generation when output file does not already exist.
 overwrite_cmp_lik_all: False #False #True ## If False, will only run compute_likelihoods_all_models when output file doesn't exist.
 overwrite_sft_formatter: False
 overwrite_marge: False # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
@@ -38,7 +38,7 @@ overwrite_dpo_formatter: False #True
 overwrite_dpo: False #True # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
 
 
-setting_str: "20251129_v2" #"1_2Kall" #"CONDITIONAL_MIX_og" #"mix_ARMH_20AR" #"_mix_prop_in_CPC2" #"_mix_ARMH_new" #"_MH_only_2epDPO" # #"_MH_only" #"_AR_MH3" #"_AR_MH" #"_mixture" #"_mh_mix" # "2xintersect""_100tar"
+setting_str: "20251129_v2" #"scale_test_pt_weight_v2" #"20251129_v2" #"1_2Kall" #"CONDITIONAL_MIX_og" #"mix_ARMH_20AR" #"_mix_prop_in_CPC2" #"_mix_ARMH_new" #"_MH_only_2epDPO" # #"_MH_only" #"_AR_MH3" #"_AR_MH" #"_mixture" #"_mh_mix" # "2xintersect""_100tar"
 
 initial_seed: 0
 last_seed: 10
@@ -53,7 +53,7 @@ run_gpt: False
 run_init_gen: True ## Whether to run initial generation
 run_iter_gen: True
 run_compute_liks_all_models_and_cal_data: True ## Whether to run likelihood computation for all models (for policy control)
-run_contrast_gen: False ## Whether to run contrastive generation
+run_contrast_gen: True #False ## Whether to run contrastive generation
 
 # run_uncon_gen: True ## Whether to run unconditional generation from initial density model
 run_propen_dpo_dataset_formatting: True
@@ -503,7 +503,7 @@ iterative_generation:
 
 
 conformal_policy_control:
-  alpha: 0.3 #0.5 #1.0 #0.25 #0.5 #0.3 #1.0 #0.5
+  alpha: 0.6 #0.5 #1.0 #0.25 #0.5 #0.3 #1.0 #0.5
   num_starts_beta_search: 1
   mixture_proposal: False #True #True ## Whether to do mixture proposal
   mixture_proposal_factor: 2 #1 ## Do mixture proposal if mixture_proposal_factor *overlap_coef_{safe} < overlap_coef_{unconstrained}. So, 0 or -1 does nothing
@@ -512,7 +512,7 @@ conformal_policy_control:
   constrain_against: "init" ## "init" or "last": whether to constrain against the initial safe policy, or the last/most recent safe policy
   use_overlap_mix_weight: True  #True ## Whether to use overlap coefficient mixture weight; else, use 1 / (1 + beta)
   randomized_cpc: False #True
-  test_pt_scale_factor: 1.0
+  test_pt_scale_factor: 1.0 #25
   args:
     n_grid: 200 ## Approx size of grid to search over for lik-ratio bound    
   accept_reject:
@@ -525,6 +525,7 @@ conformal_policy_control:
 
 compute_likelihooods_all_models:
   num_jobs: 6  # number of generation jobs to parallelize this over
+  score_field: "score"
   args:
     # subsample_seeds: True ## Whether to subsample input seeds (with replacement), or to iterate through all of them
     sanity_check: False

@@ -61,7 +61,11 @@ def compute_likelihoods_all_models_one_target(cfg: DictConfig, logger: logging.L
         ## If want to overwrite computation, then subset target_df to only keep columns not trying to compute now
         old_not_in_new = [c not in lik_col_names_new for c in lik_col_names_old]
         lik_col_names_old = list(np.array(lik_col_names_old)[old_not_in_new])
-        target_df = target_df[['particle', 'score'] + lik_col_names_old]
+        if 'score' in target_df.columns:
+            target_df = target_df[['particle', 'score'] + lik_col_names_old]
+        else:
+           ## Handles case where want to compute likelihoods for contrastive-generation particle
+            target_df = target_df[target_df.columns[0:2] + lik_col_names_old]
 
     else:
         logger.info("No Overwrite")
@@ -204,8 +208,11 @@ def compute_likelihoods_all_models_one_target(cfg: DictConfig, logger: logging.L
 
     # target_all_likelihoods_df = pd.DataFrame(np.c_[target_df, np.array(all_timestep_likelihoods).T], columns=np.concatenate((target_df.columns, lik_col_names)))
 
-
-    target_all_likelihoods_df = pd.DataFrame(np.c_[target_df[['particle', 'score'] + lik_col_names_old], np.array(all_timestep_likelihoods).T], columns=['particle', 'score'] + lik_col_names_old + lik_col_names_new)
+    if 'score' in target_df.columns:
+        target_all_likelihoods_df = pd.DataFrame(np.c_[target_df[['particle', 'score'] + lik_col_names_old], np.array(all_timestep_likelihoods).T], columns=['particle', 'score'] + lik_col_names_old + lik_col_names_new)
+    else:
+        ## Handles case where want to compute likelihoods for contrastive-generation particle
+        target_all_likelihoods_df = pd.DataFrame(np.c_[target_df[target_df.columns[0:2] + lik_col_names_old], np.array(all_timestep_likelihoods).T], columns=target_df.columns[0:2] + lik_col_names_old + lik_col_names_new)
     logger.info(f"target_all_likelihoods_df.columns : {target_all_likelihoods_df.columns}")
     target_all_likelihoods_df.to_json(output_fp, orient="records", lines=True)
 

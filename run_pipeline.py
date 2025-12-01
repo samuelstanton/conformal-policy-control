@@ -1067,9 +1067,13 @@ def run_contrastive_generation(
     data_fp_list: List[str],
     data_dir: str,
     model_dir_list: List[str],
-    particle_field: str = "higher_score_particle",
-    score_field: str = "score",
-    temps: List[float] = [0.6, 0.8, 1.0, 1.2, 1.4, 1.6],
+    # particle_field: str = "higher_score_particle",
+    # score_field: str = "score",
+    higher_score_particle_field: str = "prompt", #"higher_score_particle" #
+    lower_score_particle_field: str = "chosen", #"lower_score_particle" # 
+    lower_score_field: str = "chosen_score", #"lower_score" # 
+    higher_score_field: str = "prompt_score",
+    temps: List[float] = [1.0] #[0.6, 0.8, 1.0, 1.2, 1.4, 1.6],
 ) -> str:
     """
     Runs contrastive generation jobs, combines the outputs, and returns the combined output filepath.
@@ -1077,6 +1081,7 @@ def run_contrastive_generation(
     opt_str = " ".join(
         get_all_strs_from_nested_dict(cfg["contrastive_generation"]["args"])
     )
+
 
     ## Format lists of strings into a long string that python and hydra can interpret
     data_fp_list_str = f"\\['{data_fp_list[0]}'"
@@ -1090,8 +1095,12 @@ def run_contrastive_generation(
 
     args = f"{opt_str} data_path_list={data_fp_list_str} model_name_or_path_list={model_dir_list_str} output_dir={model_dir_list[-1]} "
     args += f"test_fn_fp={data_dir}/ehrlich.jsonl "
-    args += f"particle_field={particle_field} "
-    args += f"score_field={score_field} "
+    # args += f"particle_field={particle_field} "
+    # args += f"score_field={score_field} "
+    args += f"higher_score_particle_field={higher_score_particle_field} "
+    args += f"lower_score_particle_field={lower_score_particle_field} "
+    args += f"higher_score_field={higher_score_field} "
+    args += f"lower_score_field={lower_score_field} "
     args += f"sanity_check={cfg.sanity_check} "
 
     output_filename_prefix = f"alpha{cfg.conformal_policy_control.alpha}_contrast_gens_likelihood_{cfg.contrastive_generation.args.sample_size}sample"
@@ -1132,6 +1141,7 @@ def run_contrastive_generation(
         all_python_commands = [f"python -m contrastive_generation {a}" for a in all_args]
         slurm_kwargs = OmegaConf.to_container(cfg.contrastive_generation.slurm_args)
         slurm_kwargs["job_name"] = "contrast_gen"
+        
         job_submissions = [
             submit_cmd_to_slurm(
                 py_cmd,
@@ -1143,8 +1153,8 @@ def run_contrastive_generation(
             for py_cmd in all_python_commands
         ]
         wait_for_slurm_jobs_to_complete(job_submissions)
-        hd = combine_datasets(cfg, fs, output_filepaths, combined_outputs_fp)
-    return combined_outputs_fp, hd
+        # hd = combine_datasets(cfg, fs, output_filepaths, combined_outputs_fp)
+    return output_filepaths[0], hd
 
 
 
@@ -2707,6 +2717,38 @@ def run_conformal_policy_control(
         #     if n_ == len(G_n_safe_actions) - 1:
 
         #         G = np.concatenate((G, [sys.float_info.min]))
+
+
+        # # ## Contrastive generation to get test point weight
+        # contrast_gen_outputs, hd = run_contrastive_generation(
+        #     cfg,
+        #     fs,
+        #     data_fp_list=seeds_fp_list,
+        #     data_dir=ga_data_dir,
+        #     model_dir_list=model_dir_list,
+        #     # particle_field= "higher_score_particle",
+        #     # score_field= "score",
+        #     temps=[cfg.temperature],
+        # )
+        # breakpoint()
+        
+        # _, hd = run_compute_liks_all_models_and_cal_data(
+        #     cfg,
+        #     fs,
+        #     seeds_fp_list=seeds_fp_list,
+        #     prev_cal_data_fp_list=[],
+        #     model_dir_list=model_dir_list,
+        #     target_fp=contrast_gen_outputs,
+        #     # score_field="cg_lik_ratio_opt_over_mix",
+        #     temps=[cfg.temperature],
+        # )
+
+        # breakpoint()
+
+        # contrast_gen_outputs_df = pd.read_json(contrast_gen_outputs, orient="records", lines=True)
+        
+
+        # breakpoint()
 
 
 

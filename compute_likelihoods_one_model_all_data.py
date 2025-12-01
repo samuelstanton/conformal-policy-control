@@ -189,7 +189,12 @@ def compute_likelihoods_one_model_all_data(cfg: DictConfig, logger: logging.Logg
 
         ## Ensure that only get previous target data with 
         lik_col_names_prev = [f'lik_r{c}' for c in range(num_prev_cal)]
-        target_df = target_df[['particle', 'score'] + lik_col_names_prev]
+        if 'score' in target_df.columns:
+            target_df = target_df[['particle', 'score'] + lik_col_names_prev]
+        else:
+            ## Handles case where want to compute likelihoods for contrastive-generation particle
+            target_df = target_df[target_df.columns[0:2] + lik_col_names_prev]
+
 
         
         target_data = target_df.to_dict("list")

@@ -628,6 +628,8 @@ def formatting_texts_func_single_seq(
         score_field = 'higher_score_particle_score'
     elif 'lower_score_particle_score' in examples:
         score_field = 'lower_score_particle_score'
+    elif 'cg_lik_ratio_opt_over_mix' in examples:
+        score_field = 'cg_lik_ratio_opt_over_mix'
     else:
         score_field = 'score'
 
