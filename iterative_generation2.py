@@ -12,6 +12,7 @@ from botorch.test_functions import SyntheticTestFunction
 from finetune_utils import (
     formatting_texts_func_edit_pairs,
     parse_particle_and_score,
+    parse_particle_and_score_permissive,
     truncate_after_right_bracket_w_logps,
 )
 from holo.test_functions.closed_form import Ehrlich, RoughMtFuji
@@ -278,8 +279,16 @@ def run_iterative_generation(cfg: DictConfig, logger: logging.Logger = None):
             output = trunc_outputs[output_idx]
             output_logp = trunc_output_logps[output_idx]
             # logger.info(f'output : {output}')
-            output_particle_and_score = parse_particle_and_score(output, test_fn)
+
+            # logger.info(f'cfg.permissive_parsing : {cfg.permissive_parsing}')
+
+            if cfg.permissive_parsing:
+                output_particle_and_score = parse_particle_and_score_permissive(output, test_fn)
+            else:
+                output_particle_and_score = parse_particle_and_score(output, test_fn)
+
             # logger.info(f'output_particle_and_score : {output_particle_and_score}')
+            
             num_particles_generated += 1
             if output_particle_and_score is None:
                 continue

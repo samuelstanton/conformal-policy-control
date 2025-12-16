@@ -347,6 +347,49 @@ def parse_particle_and_score(
     return particle, score
 
 
+
+def parse_particle_and_score_permissive(
+    input_str: str, test_fn: SyntheticTestFunction
+) -> Optional[Tuple[List[int], float]]:
+    """
+    Checks that <input_str> can be parsed into a list with test_fn.dim integer elements.
+    For the Ehrlich function, also checks the range of the values.
+
+    If parsable, returns tuple of (particle, score). otherwise, returns None.
+    """
+    try:
+        particle = json.loads(input_str)
+    except:
+        return None
+    if not isinstance(particle, list):
+        return None
+    try:
+        if any([int(x) != x for x in particle]):
+            return None
+    except:
+        return None
+    particle = [int(x) for x in particle]
+    if len(particle) != test_fn.dim:
+        particle_for_scoring = np.pad(particle, (0, max(0, test_fn.dim - len(particle))), mode="wrap")[: test_fn.dim].tolist()
+        score = test_fn(torch.LongTensor([particle_for_scoring])).item()
+        if len(particle) < test_fn.dim:
+            particle.extend([-1 for i in range(test_fn.dim-len(particle))])
+        else:
+            particle = particle[:test_fn.dim]
+        return particle, score
+
+    if hasattr(test_fn, "num_states"):
+        if any([x >= test_fn.num_states or x < 0 for x in particle]):
+            particle_for_scoring = np.pad(particle, (0, max(0, test_fn.dim - len(particle))), mode="wrap")[: test_fn.dim].tolist()
+            score = test_fn(torch.LongTensor([particle_for_scoring])).item()
+            return particle, score
+
+    score = test_fn(torch.LongTensor([particle])).item()
+    return particle, score
+
+
+
+
 def preprocess_generations(
     generated_token_ids: torch.LongTensor,
     inputs: Mapping[str, Any],

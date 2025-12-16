@@ -1,7 +1,7 @@
 log_level: info
 run_name: smaller_pythia #smaller_pythia_0.25dist_0.1maxinf_50gen
-parent_output_dir: s3://prescient-pcluster-data/prinstea/llome/parent_output_20251123 #028 #parent_output_20251013_CAinit # #parent_output_20250918_noCPC  #parent_output_20250923 #_20250901_evol0.5 #/data/bucket/prinstea/llome/parent_output
-local_output_dir: /homefs/home/prinstea/llome/local_output_20251123 #028 #local_output_20251013_CAinit # #local_output_20250918_noCPC  #local_output_20250923 #_20250901_evol0.5
+parent_output_dir: s3://prescient-pcluster-data/prinstea/llome/parent_output_20251211 #parent_output_20251123 #028 #parent_output_20251013_CAinit # #parent_output_20250918_noCPC  #parent_output_20250923 #_20250901_evol0.5 #/data/bucket/prinstea/llome/parent_output
+local_output_dir: /homefs/home/prinstea/llome/local_output_20251211 #local_output_20251123 #028 #local_output_20251013_CAinit # #local_output_20250918_noCPC  #local_output_20250923 #_20250901_evol0.5
 overwrite_ga: False ## If False, will only run genetic algorithm when output file does not already exist.
 overwrite_gpt: False ## If False, will only run GPT pretraining when output file does not already exist.
 overwrite_initial_sft: False ## If False, will only run SFT when output file does not already exist.
@@ -38,7 +38,11 @@ overwrite_dpo_formatter: False #True
 overwrite_dpo: False #True # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
 
 
-setting_str: "20251129_v2" #"scale_test_pt_weight_v2" #"20251129_v2" #"1_2Kall" #"CONDITIONAL_MIX_og" #"mix_ARMH_20AR" #"_mix_prop_in_CPC2" #"_mix_ARMH_new" #"_MH_only_2epDPO" # #"_MH_only" #"_AR_MH3" #"_AR_MH" #"_mixture" #"_mh_mix" # "2xintersect""_100tar"
+setting_str: "20251214_not_permissive" #"20251212_batched_not_permissive_v3" #"scale_test_pt_weight_v2" #"20251129_v2" #"1_2Kall" #"CONDITIONAL_MIX_og" #"mix_ARMH_20AR" #"_mix_prop_in_CPC2" #"_mix_ARMH_new" #"_MH_only_2epDPO" # #"_MH_only" #"_AR_MH3" #"_AR_MH" #"_mixture" #"_mh_mix" # "2xintersect""_100tar"
+
+
+ # False ## Whether to allow parsing and scoring of particles that are not exact lenght of test_fn dim, or invalid values
+
 
 initial_seed: 0
 last_seed: 10
@@ -58,8 +62,9 @@ run_contrast_gen: True #False ## Whether to run contrastive generation
 # run_uncon_gen: True ## Whether to run unconditional generation from initial density model
 run_propen_dpo_dataset_formatting: True
 init_generation_sampling_num_return_sequences: 10 #10 ## Number of sequences to sample at each intialization generation stage
-generation_sampling_num_return_sequences: 10 #10 ## Number of sequences to sample at each iterative generation (policy improvement) stage
+generation_sampling_num_return_sequences: 10 #20 #10 ## Number of sequences to sample at each iterative generation (policy improvement) stage
 unconditional_sampling_num_return_sequences: 10 ## Number of sequences to sample from density model, for initial CP cal
+
 num_labels_after_first_round: 2000 # num. of labels to use in all rounds after the first
 proportion_of_old_data: 0.0  # proportion of the training dataset that will contain old data
 seed: 0
@@ -244,7 +249,7 @@ gpt:
       #warmup_ratio: 0.0
 
     generation_config:  # use greedy decoding during evaluation
-      max_new_tokens: 256
+      max_new_tokens: 512 #256
       num_beams: 1
       do_sample: False
       num_return_sequences: 1
@@ -273,7 +278,7 @@ gpt:
     partition: "b200"
     open_mode: "append"
     export: "ALL"
-    time: "48:00:00"
+    time: "24:00:00"
     mem: "100GB"
     #gres: "gpu:1"
     #account: "cds"
@@ -287,17 +292,17 @@ initial_sft:
       eval_steps: 0.1
       save_steps: 0.2
       learning_rate: 1e-6
-      per_device_train_batch_size: 2
+      per_device_train_batch_size: 32 #16 #2
       per_device_eval_batch_size: 8
       eval_accumulation_steps: 2
-      gradient_accumulation_steps: 16 #32
-      max_seq_length: 512
+      gradient_accumulation_steps: 1 #16 #32
+      max_seq_length: 512 #256 #512
       log_level: "info"
       save_total_limit: 2
       #warmup_ratio: 0.0
 
     generation_config:  # use greedy decoding during evaluation
-      max_new_tokens: 256
+      max_new_tokens: 512 #256
       num_beams: 1
       do_sample: False
       num_return_sequences: 1
@@ -308,7 +313,7 @@ initial_sft:
 
     train_size: 0.95
     max_eval_size: 100 # evaluation takes a long time, so we set a max. size on the eval dataset
-    seq_length: 512
+    seq_length: 512 #256 #512
     format_type: "edit_pairs"
     # test function
     test_fn_type: "ehrlich"  # [ehrlich, mt_fuji]
@@ -326,7 +331,7 @@ initial_sft:
     partition: "b200"
     open_mode: "append"
     export: "ALL"
-    time: "48:00:00"
+    time: "24:00:00"
     mem: "100GB"
     #gres: "gpu:1"
     #account: "cds"
@@ -340,17 +345,17 @@ sft:
       eval_steps: 0.1
       save_steps: 0.2
       learning_rate: 1e-4 #1e-6
-      per_device_train_batch_size: 2
+      per_device_train_batch_size: 16 #2
       per_device_eval_batch_size: 8
       eval_accumulation_steps: 2
-      gradient_accumulation_steps: 16 #32
-      max_seq_length: 512
+      gradient_accumulation_steps: 2 #16 #32
+      max_seq_length: 512 #256 #512
       log_level: "info"
       save_total_limit: 2
       #warmup_ratio: 0.0
 
     generation_config:  # use greedy decoding during evaluation
-      max_new_tokens: 256
+      max_new_tokens: 512 #256
       num_beams: 1
       do_sample: False
       num_return_sequences: 1
@@ -361,7 +366,7 @@ sft:
 
     train_size: 0.95
     max_eval_size: 100 # evaluation takes a long time, so we set a max. size on the eval dataset
-    seq_length: 512
+    seq_length: 512 #256 #512
     format_type: "edit_pairs"
     # test function
     test_fn_type: "ehrlich"  # [ehrlich, mt_fuji]
@@ -379,7 +384,7 @@ sft:
     partition: "b200"
     open_mode: "append"
     export: "ALL"
-    time: "48:00:00"
+    time: "24:00:00"
     mem: "100GB"
     #gres: "gpu:1"
     #account: "cds"
@@ -425,7 +430,7 @@ initial_generation:
     test_fn_type: "ehrlich"  # [ehrlich, mt_fuji]
     init_sampling_method: "uniform" ## Method for selecting seeds # "uniform", "combination", "best_scoring"
     generation_config:
-      max_new_tokens: 512
+      max_new_tokens: 512 #256 #512
   slurm_args:
     nodes: 1
     cpus_per_task: 1
@@ -434,7 +439,7 @@ initial_generation:
     partition: "b200"
     open_mode: "append"
     export: "ALL"
-    time: "48:00:00"
+    time: "24:00:00"
     mem: "100GB"
     # gres: "gpu:1"
     # account: "cds"
@@ -453,7 +458,7 @@ contrastive_generation:
     test_fn_type: "ehrlich"  # [ehrlich, mt_fuji]
     # init_sampling_method: "uniform" ## Method for selecting seeds # "uniform", "combination", "best_scoring"
     generation_config:
-      max_new_tokens: 512
+      max_new_tokens: 512 #256 #512
   slurm_args:
     nodes: 1
     cpus_per_task: 1
@@ -462,7 +467,7 @@ contrastive_generation:
     partition: "b200"
     open_mode: "append"
     export: "ALL"
-    time: "48:00:00"
+    time: "24:00:00"
     mem: "100GB"
     # gres: "gpu:1"
     # account: "cds"
@@ -470,10 +475,11 @@ contrastive_generation:
 
 iterative_generation:
   num_jobs: 6  # number of generation jobs to parallelize this over
+  permissive_parsing: False #False
   init_args:
     ## init args just for first iteration:
     sample_size: 20 #100 #20
-    max_iterations: 200 #120 #200 #50 #100 #200
+    max_iterations: 200 #100 #120 #200 #50 #100 #200
     sampling_method: "uniform"
     seed: 0
   args:
@@ -483,10 +489,10 @@ iterative_generation:
     test_fn_type: "ehrlich"  # [ehrlich, mt_fuji]
     subsample_seeds: True ## Whether to subsample input seeds (with replacement), or to iterate through all of them
     sample_size: 10 #10 #100 #200  # initial number of seeds to use for iterative generation
-    max_iterations: 120 #120 #50 #100 #10
+    max_iterations: 120 #60 #120 #120 #50 #100 #10
     sampling_method: "best_scoring" ## Method for selecting seeds # "uniform", "combination", "best_scoring"
     generation_config:
-      max_new_tokens: 512
+      max_new_tokens: 512 #256 #512
   slurm_args:
     nodes: 1
     cpus_per_task: 1
@@ -495,15 +501,15 @@ iterative_generation:
     partition: "b200"
     open_mode: "append"
     export: "ALL"
-    time: "48:00:00"
-    mem: "200GB" #"100GB"
+    time: "24:00:00"
+    mem: "300GB" #"100GB"
     # nodelist: "b200-st-b200-[2-10,13-15,23,40-41],b200-st-b200-2-[2-3,9,65,69-83]" #"b200-st-b200-41"
     # gres: "gpu:1"
     # account: "cds"
 
 
 conformal_policy_control:
-  alpha: 0.6 #0.5 #1.0 #0.25 #0.5 #0.3 #1.0 #0.5
+  alpha: 0.3 #0.5 #1.0 #0.25 #0.5 #0.3 #1.0 #0.5
   num_starts_beta_search: 1
   mixture_proposal: False #True #True ## Whether to do mixture proposal
   mixture_proposal_factor: 2 #1 ## Do mixture proposal if mixture_proposal_factor *overlap_coef_{safe} < overlap_coef_{unconstrained}. So, 0 or -1 does nothing
@@ -536,7 +542,7 @@ compute_likelihooods_all_models:
     # test_fn_type: "ehrlich"  # [ehrlich, mt_fuji]
     # init_sampling_method: "uniform" ## Method for selecting seeds # "uniform", "combination", "best_scoring"
     generation_config:
-      max_new_tokens: 512
+      max_new_tokens: 512 #256 #512
   slurm_args:
     nodes: 1
     cpus_per_task: 1
@@ -545,7 +551,7 @@ compute_likelihooods_all_models:
     partition: "b200"
     open_mode: "append"
     export: "ALL"
-    time: "48:00:00" #"48:00:00"
+    time: "24:00:00" #"48:00:00"
     mem: "100GB" #"100GB"
 
 
@@ -555,23 +561,23 @@ dpo:
     dpo_config:
       learning_rate: 1e-7 #9e-8
       beta: 0.4
-      gradient_accumulation_steps: 32
+      gradient_accumulation_steps: 1
       num_train_epochs: 1 #1 #2 #2 #1
       eval_steps: 0.1
       save_steps: 0.2
       # self_normalize_weights: True
       # reinforce_style: False
-      max_length: 512
-      max_prompt_length: 256
+      max_length: 512 #256 #512
+      max_prompt_length: 512 #256
       log_level: "info"
       seed: 0
-      per_device_train_batch_size: 1
+      per_device_train_batch_size: 32
       per_device_eval_batch_size: 8
     test_fn_type: "ehrlich"
     train_size: 0.95
     max_eval_size: 100
     generation_config:
-      max_new_tokens: 256
+      max_new_tokens: 512 #256
   slurm_args:
     nodes: 1
     cpus_per_task: 2
@@ -580,7 +586,7 @@ dpo:
     partition: "b200"
     open_mode: "append"
     export: "ALL"
-    time: "48:00:00"
+    time: "24:00:00"
     mem: "200GB"
 
 
@@ -597,7 +603,7 @@ marge:
       self_normalize_weights: True
       reinforce_style: False
       max_length: 1024
-      max_prompt_length: 512
+      max_prompt_length: 512 #256 #512
       log_level: "info"
       seed: 0
       per_device_train_batch_size: 1
@@ -605,7 +611,7 @@ marge:
     train_size: 0.95
     max_eval_size: 100
     generation_config:
-      max_new_tokens: 512
+      max_new_tokens: 512 #256 #512
   slurm_args:
     nodes: 1
     cpus_per_task: 2

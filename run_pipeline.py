@@ -1202,6 +1202,7 @@ def run_iterative_generation(
     args += f"higher_score_field={higher_score_field} "
     args += f"sanity_check={cfg.sanity_check} "
     args += f"seed={random_seed_curr} "
+    args += f"permissive_parsing={cfg.iterative_generation.permissive_parsing} "
     # args += f"first_iter={cfg.first_iter}"
 
     if first_iter:
