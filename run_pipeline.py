@@ -23,11 +23,12 @@ def check_col_names(df):
         if (c[0] == 'l' and c[1]=='i') or c[0] == 'c':
             lik_cols.append(c)
 
-    col_indices = [int(c[-1]) for c in lik_cols]
+    col_indices = [int(c.split('_')[-1][1:]) for c in lik_cols]
     for i in range(len(col_indices)):
 
         if i > 0 and col_indices[i] - col_indices[i-1] != 1:
             raise ValueError(f"col indices not increasing {df.columns}")
+
 
 
 def mixture_pdf_from_densities_mat(constrained_densities_all_steps, mixture_weights):
@@ -876,15 +877,16 @@ def combine_new_with_old_datasets(
     combined_datasets = [curr]
     num_curr_rows = len(curr)
     num_old_datasets = len(old_fps)
+    # if cfg.proportion_of_old_data < 1.0:
     num_rows_per_old_fp = int(
         math.ceil(
-            num_curr_rows
-            * cfg.proportion_of_old_data
-            / (num_old_datasets * (1.0 - cfg.proportion_of_old_data))
+            max(num_curr_rows * cfg.proportion_of_old_data, cfg.min_num_data_old) / num_old_datasets
+            # / (num_old_datasets * (1.0 - cfg.proportion_of_old_data))
         )
     )
     for old_fp in old_fps:
         df = pd.read_json(old_fp, orient="records", lines=True)
+        # if cfg.proportion_of_old_data < 1.0:
         df = df.sample(n=min(len(df), num_rows_per_old_fp), random_state=random_seed)
         combined_datasets.append(df)
     combined_datasets = pd.concat(combined_datasets)
@@ -1286,7 +1288,8 @@ def run_iterative_generation(
 def get_seeds_from_training_data(
     cfg: DictConfig,
     fs: LocalOrS3Client,
-    training_data_fp: str,
+    prev_seeds_fp: str,
+    curr_training_data_fp: str,
     output_dir: str,
     sample_size: int,
     sampling_method: str = "best_scoring",
@@ -1297,9 +1300,11 @@ def get_seeds_from_training_data(
     pi_optimizer_name: str = "sft",
     setting: str = "",
     random_seed: int = 0,
+    first_iter: bool = False
 ) -> str:
 
-    output_fp = os.path.join(output_dir, f'seeds_from_{os.path.basename(training_data_fp)}')
+
+    output_fp = os.path.join(output_dir, f'seeds_from_{os.path.basename(curr_training_data_fp)}')
 
     if len(setting) > 0:
         output_fp = os.path.join(os.path.dirname(output_fp), f"{setting}_{os.path.basename(output_fp)}")
@@ -1310,27 +1315,56 @@ def get_seeds_from_training_data(
 
 
     else:
+        if not first_iter:
+            ## If not first iteration: read, prepare, and get new sample sizes for historical data
+            prev_seeds_df = pd.read_json(prev_seeds_fp, orient="records", lines=True)
+            # hist_train_df = hist_train_df.loc[hist_train_df[lower_score_particle_field].astype(str).drop_duplicates().index]
+            hist_sample_size = int(sample_size * cfg.proportion_of_old_seeds)
+            curr_sample_size = sample_size - hist_sample_size
+        else:
+            curr_sample_size = sample_size
 
-        train_df = pd.read_json(training_data_fp, orient="records", lines=True)
+        curr_train_df = pd.read_json(curr_training_data_fp, orient="records", lines=True)
 
-        train_df = train_df.loc[train_df[lower_score_particle_field].astype(str).drop_duplicates().index]
+        if len(curr_train_df) == 0:
+            prev_seeds_df.to_json(output_fp, orient="records", lines=True)
+            return output_fp
 
+        elif len(curr_train_df) < curr_sample_size:
+            curr_sample_size = len(curr_train_df)
+            hist_sample_size = sample_size - curr_sample_size
 
+        curr_train_df = curr_train_df.loc[curr_train_df[lower_score_particle_field].astype(str).drop_duplicates().index]
+
+            
         if sampling_method == "best_scoring":
-            train_df = train_df.sort_values(by=[lower_score_field], ascending=True)[: sample_size]
+            if not first_iter:
+                prev_seeds_df = prev_seeds_df.sort_values(by=["score"], ascending=True)[: hist_sample_size]
+            curr_train_df = curr_train_df.sort_values(by=[lower_score_field], ascending=True)[: curr_sample_size]
+
         elif sampling_method == "uniform":
-            train_df = train_df.sample(n=min(len(train_df), sample_size), random_state=random_seed)
+            if not first_iter:
+                prev_seeds_df = prev_seeds_df.sample(n=min(len(prev_seeds_df), hist_sample_size), random_state=random_seed)
+            curr_train_df = curr_train_df.sample(n=min(len(curr_train_df), curr_sample_size), random_state=random_seed)
+
         else:
             raise ValueError(f"Unknown sampling method '{sampling_method}.'")
 
-        train_df_selected = train_df[[lower_score_particle_field, lower_score_field]]
+        ## Reformat seeds selected from current training data
+        curr_train_df_selected = curr_train_df[[lower_score_particle_field, lower_score_field]]
+        curr_train_df_selected = curr_train_df_selected.rename(columns={lower_score_particle_field: higher_score_particle_field, lower_score_field: 'score'})
 
-        ## Rename so that selected particles are used as prompts instead of outputs
-        train_df_selected = train_df_selected.rename(columns={lower_score_particle_field: higher_score_particle_field, lower_score_field: 'score'})
-        # train_df_selected = train_df_selected.rename(columns={lower_score_particle_field: higher_score_particle_field, lower_score_field: 'score'})
-        
         if pi_optimizer_name == "dpo":
-            train_df_selected = train_df_selected.rename(columns={higher_score_particle_field : 'prompt', lower_score_particle_field: 'chosen',higher_score_field : 'prompt_score', lower_score_field: 'chosen_score'})
+            curr_train_df_selected = curr_train_df_selected.rename(columns={higher_score_particle_field : 'prompt', lower_score_particle_field: 'chosen', higher_score_field : 'prompt_score', lower_score_field: 'chosen_score'})
+            # if not first_iter:
+            #     prev_seeds_df = prev_seeds_df.rename(columns={higher_score_particle_field : 'prompt', lower_score_particle_field: 'chosen', higher_score_field : 'prompt_score', lower_score_field: 'chosen_score'})
+
+
+        if not first_iter:
+            train_df_selected = pd.concat([prev_seeds_df, curr_train_df_selected])
+        else:
+            train_df_selected = curr_train_df_selected
+        
 
         train_df_selected.to_json(output_fp, orient="records", lines=True)
 
@@ -1402,7 +1436,6 @@ def iwmci_intersection_est(
     # intersection_target_liks = unconstrained_liks if intersection_target == "unconstrained" else safe_liks
     
     if proposal == "unconstrained":
-    #     breakpoint()
         ## If beta_t >= 1: Assume proposal is unconstrained
         # constrained_density_est = np.minimum(safe_liks * (beta_t / psi_t), unconstrained_liks / psi_t)
         return np.mean(np.minimum(constrained_density_est, unconstrained_liks) / unconstrained_liks)
@@ -1503,6 +1536,10 @@ def generate_proposals_for_AR_sampling(
         )
         # call_idx += 1
 
+        gen_df_ = pd.read_json(iter_gen_outputs_list[-1], orient="records", lines=True)
+
+        if len(gen_df_) == 0:
+            return None, None, None, None, None, None
 
 
         ## Compute unconstrained likelihoods for all models on the output proposal samples
@@ -1588,7 +1625,10 @@ def generate_proposals_for_AR_sampling(
                 post_policy_control = post_policy_control,
                 global_random_seed = global_random_seed
             )
+            gen_df_ = pd.read_json(iter_gen_outputs_list[-1], orient="records", lines=True)
 
+            if len(gen_df_) == 0:
+                return None, None, None, None, None, None
 
             ## Compute unconstrained likelihoods for all models on the output proposal samples
             gen_liks_fp_list, hd = run_compute_liks_all_models_and_cal_data(
@@ -1757,15 +1797,19 @@ def accept_reject_sample_and_get_likelihoods(
         ## If beta_t >= 1, then using unconstrained policy as proposal
 
         ## If pre conformal policy control, running constrained model (ie, not alpha>=1.0), also check that number of calls has not yet exceeded max number
-        unconstrained_pre_cpc_call_num_check = call_idx < cfg.conformal_policy_control.accept_reject.max_unconstrained_proposal_calls_pre_cpc if not post_policy_control else True
+        # unconstrained_pre_cpc_call_num_check = call_idx < cfg.conformal_policy_control.accept_reject.max_unconstrained_proposal_calls_pre_cpc if not post_policy_control else True
+        unconstrained_pre_cpc_call_num_check = True
+
         if cfg.conformal_policy_control.alpha >= 1.0:
             unconstrained_pre_cpc_call_num_check = True ## Set to True if running unconstrained
 
         
-        while n_accepted < n_target and unconstrained_pre_cpc_call_num_check:
+        while n_accepted < n_target and unconstrained_pre_cpc_call_num_check and call_idx < cfg.conformal_policy_control.accept_reject.max_total_AR_calls:
 
-            ## If pre conformal policy control, running constrained model (ie, not alpha>=1.0), also check that number of calls has not yet exceeded max number
-            unconstrained_pre_cpc_call_num_check = call_idx < cfg.conformal_policy_control.accept_reject.max_unconstrained_proposal_calls_pre_cpc if not post_policy_control else True
+            ## If pre conformal policy control, running constrained model (ie, not alpha>=1.0), also check that, if the specified number of calls have occurred, if at least 1/4 way to n_target_pre_cpc
+            if not post_policy_control and cfg.conformal_policy_control.alpha < 1.0 and call_idx >= cfg.conformal_policy_control.accept_reject.n_opt_prop_calls_pre_cpc_quarter_check and n_accepted < n_target / 4:
+                unconstrained_pre_cpc_call_num_check = False
+                break
 
             
             accepted_curr = []
@@ -1819,7 +1863,9 @@ def accept_reject_sample_and_get_likelihoods(
 
             call_idx += 1
 
-            
+            if gen_liks_df is None:
+                
+                continue
 
             # ## Compute unconstrained likelihoods for all models on the output proposal samples
             # gen_liks_fp_list, hd = run_compute_liks_all_models_and_cal_data(
@@ -1913,7 +1959,6 @@ def accept_reject_sample_and_get_likelihoods(
                 if u < acc_prob:
 
                     # if post_policy_control and call_idx > cfg.conformal_policy_control.num_AR_before_MH:
-                    #     breakpoint()
                         
                     ## Update target and proposal likelihoods for last accepted sample
                     prev_target_lik = target_lik
@@ -1943,7 +1988,7 @@ def accept_reject_sample_and_get_likelihoods(
     elif proposal == "safe":
         ## Else, beta_t < 1, then using safe policy as proposal
 
-        while n_accepted < n_target:
+        while n_accepted < n_target and call_idx < cfg.conformal_policy_control.accept_reject.max_total_AR_calls:
 
 
             accepted_curr = [] 
@@ -2037,8 +2082,10 @@ def accept_reject_sample_and_get_likelihoods(
                                                                 proportion_of_target_n_accepted,
                                                                 global_random_seed=global_random_seed
                                                             )
-                                                        
-
+                call_idx += 1
+                                               
+                if gen_liks_df is None:
+                    continue
 
             else:
                 ## Shouldn't need this, handled in base case of recursion
@@ -2065,7 +2112,8 @@ def accept_reject_sample_and_get_likelihoods(
                                                 proposal='safe',
                                                 global_random_seed = global_random_seed
                                             )
-
+                call_idx += 1
+                
                 ## Compute unconstrained likelihoods for most recent model (not passed to recursion) on output proposal samples
                 gen_liks_fp_list, hd = run_compute_liks_all_models_and_cal_data(
                     cfg, fs, 
@@ -2107,7 +2155,7 @@ def accept_reject_sample_and_get_likelihoods(
                 # lik_ratios_unconstrained_over_safe = gen_liks_mat[:, -1] / constrained_liks_mat[:, -1] 
 
         
-            call_idx += 1
+            # call_idx += 1
 
             n_prop = len(gen_liks_df)
 
@@ -2178,7 +2226,7 @@ def accept_reject_sample_and_get_likelihoods(
         unconstrained_liks_dict, safe_liks_dict = {}, {}
 
 
-        while n_accepted < n_target:
+        while n_accepted < n_target and call_idx < cfg.conformal_policy_control.accept_reject.max_total_AR_calls:
 
             for proposal_curr in ["safe", "unconstrained"]:
 
@@ -2212,6 +2260,12 @@ def accept_reject_sample_and_get_likelihoods(
                                                     global_random_seed=global_random_seed
                                                 )
 
+                    call_idx += 1
+                    if gen_liks_df_dict[proposal_curr] is None:
+
+                        ## If no proposals generated, break out of for loop
+                        break
+
                     ## Mixture proposal probabilies for constrained likelihoods
                     constrained_liks_df_dict[proposal_curr].iloc[:,-1] = \
                         safe_prop_mix_weight * safe_liks_dict[proposal_curr] + (1 - safe_prop_mix_weight) * unconstrained_liks_dict[proposal_curr]
@@ -2220,8 +2274,11 @@ def accept_reject_sample_and_get_likelihoods(
                     n_proposed_dict[proposal_curr] = 0 ## Reset number of used proposals to 0
                     accepted_curr_dict[proposal_curr] = [] ## Reset running list of current acceptances
                 
-                    call_idx += 1
+                    
+            if gen_liks_df_dict[proposal_curr] is None:
 
+                ## If no proposals were generated, continue to restart the while loop (and try generating proposals again)
+                continue
 
 
             while n_proposed_dict["safe"] < N_prop_dict["safe"] and n_proposed_dict["unconstrained"] < N_prop_dict["unconstrained"]:
@@ -2270,7 +2327,6 @@ def accept_reject_sample_and_get_likelihoods(
                 prop_lik = safe_prop_mix_weight * safe_liks[i_curr] + (1 - safe_prop_mix_weight) * unconstrained_liks[i_curr]
 
                 # if call_idx > cfg.conformal_policy_control.num_AR_before_MH:
-                #     breakpoint()
 
                 if post_policy_control and (cfg.conformal_policy_control.ind_metropolis_hastings or call_idx > cfg.conformal_policy_control.num_AR_before_MH):
                     ## Conditions for running IMH
@@ -2371,6 +2427,10 @@ def accept_reject_sample_and_get_likelihoods(
             accepted_constrained_gen_liks_fp = os.path.join(os.path.dirname(gen_liks_fp), c_output_filename)
 
         else:
+            if gen_liks_fp is None and not unconstrained_pre_cpc_call_num_check:
+                ## If terminating due to exceeding limit on number of unconstrained pre-CPC, return None
+                return None, None, None, None
+
             accepted_unconstrained_gen_liks_fp = os.path.join(os.path.dirname(gen_liks_fp), f"prop_{proposal}_beta{betas_list[-1]}_cn{call_idx}_{base_output_name}")
             accepted_constrained_gen_liks_fp = os.path.join(os.path.dirname(gen_liks_fp), f"prop_{proposal}_beta{betas_list[-1]}_cn{call_idx}_{base_output_name}")
 
@@ -2516,6 +2576,8 @@ def run_conformal_policy_control(
     prop_data_t0_safe_and_t_unconstrained_liks_dict = {}
     # betas_list_tmp_dict, psis_list_tmp_dict = {}, {}
 
+
+
     for i, proposal in enumerate(policy_names):
 
         
@@ -2542,11 +2604,12 @@ def run_conformal_policy_control(
         # betas_list_tmp_dict[proposal] = betas_list_tmp
         # psis_list_tmp_dict[proposal] = psis_list_tmp
 
+
         ## Get proposal samples, unconstrained likelihoods, and constrained likelihoods
         unconstrained_df, unconstrained_gen_liks_fp, constrained_liks_df, constrained_gen_liks_fp \
             = accept_reject_sample_and_get_likelihoods(cfg, fs, model_dir_list, seeds_fp_list, model_dir_list[-1],\
                                                        betas_list_tmp, psis_list_tmp, \
-                                                       cfg.conformal_policy_control.accept_reject.n_target,\
+                                                       cfg.conformal_policy_control.accept_reject.n_target_pre_cpc,\
                                                        ga_data_dir, higher_score_particle_field=higher_score_particle_field,\
                                                        lower_score_particle_field=lower_score_particle_field,
                                                        higher_score_field=higher_score_field,
@@ -2555,9 +2618,13 @@ def run_conformal_policy_control(
 
         ## Restrict to number of columns to keep when rerunning from checkpoint (relevant when not overwriting)
         ## Columns should be ["particle", "score", "lik_r0", ..., "lik_r{n_cal_sets-1}"] (similarly for constrained)
+        if unconstrained_df is None and proposal == 'unconstrained':
+            ## If unconstrained proposal failed to return samples, then stick with proposing from safe policy
+            policy_names = ["safe"]
+            continue
+
         unconstrained_df = unconstrained_df.iloc[:, :num_cols_to_keep]
         constrained_liks_df = constrained_liks_df.iloc[:, :num_cols_to_keep]
-
 
         unconstrained_df_dict[proposal] = unconstrained_df
         unconstrained_gen_liks_fp_dict[proposal] = unconstrained_gen_liks_fp
@@ -2609,6 +2676,7 @@ def run_conformal_policy_control(
     lik_ratios_unconstrained_over_safe_arr = np.array(lik_ratios_unconstrained_over_safe_dict[policy_names[0]])
 
     if len(policy_names) > 1:
+        ## Grid containing betas obtained from both proposals
         lik_ratios_unconstrained_over_safe_cal_and_prop_arr = np.concatenate((lik_ratios_unconstrained_over_safe_cal_and_prop_arr, lik_ratios_unconstrained_over_safe_cal_and_prop_dict[policy_names[1]]))
         lik_ratios_unconstrained_over_safe_arr = np.concatenate((lik_ratios_unconstrained_over_safe_arr, lik_ratios_unconstrained_over_safe_dict[policy_names[1]]))
 
@@ -2639,6 +2707,7 @@ def run_conformal_policy_control(
     ## Search over grid for largest bound that satisfies conformal constraint
     beta_hat_t_curr = sys.float_info.min if adjusted_alpha < 1.0 else np.inf ## Currently selected beta_t is initially smallest float value
     envelope_const_constrained_over_proposal = 1
+
 
     for i, proposal in enumerate(policy_names):
         
@@ -2731,7 +2800,6 @@ def run_conformal_policy_control(
         #     # score_field= "score",
         #     temps=[cfg.temperature],
         # )
-        # breakpoint()
         
         # _, hd = run_compute_liks_all_models_and_cal_data(
         #     cfg,
@@ -2744,12 +2812,10 @@ def run_conformal_policy_control(
         #     temps=[cfg.temperature],
         # )
 
-        # breakpoint()
 
         # contrast_gen_outputs_df = pd.read_json(contrast_gen_outputs, orient="records", lines=True)
         
 
-        # breakpoint()
 
 
 
@@ -2760,19 +2826,22 @@ def run_conformal_policy_control(
 
 
 
-            
-            psi_hat_t_unconstrained = importance_weighted_monte_carlo_integration(lik_ratios_unconstrained_over_safe_dict["unconstrained"], beta_t, "unconstrained")
+            if "unconstrained" in policy_names:
+                psi_hat_t_unconstrained = importance_weighted_monte_carlo_integration(lik_ratios_unconstrained_over_safe_dict["unconstrained"], beta_t, "unconstrained")
 
-            psi_hat_intersection_unconstrained = iwmci_intersection_est(
-                LRs_unconstrained_over_safe=lik_ratios_unconstrained_over_safe_dict["unconstrained"], ## 1D numpy array
-                unconstrained_liks=unconstrained_liks_dict["unconstrained"],
-                safe_liks=safe_liks_dict["unconstrained"],
-                beta_t=beta_t, ## float
-                psi_t=psi_hat_t_unconstrained,
-                proposal="unconstrained"
-            )
+                psi_hat_intersection_unconstrained = iwmci_intersection_est(
+                    LRs_unconstrained_over_safe=lik_ratios_unconstrained_over_safe_dict["unconstrained"], ## 1D numpy array
+                    unconstrained_liks=unconstrained_liks_dict["unconstrained"],
+                    safe_liks=safe_liks_dict["unconstrained"],
+                    beta_t=beta_t, ## float
+                    psi_t=psi_hat_t_unconstrained,
+                    proposal="unconstrained"
+                )
+            else:
+                psi_hat_t_unconstrained = 0.0
+                psi_hat_intersection_unconstrained = 0.0
 
-            if len(policy_names) > 1:
+            if "safe" in policy_names:
                 psi_hat_t_safe = importance_weighted_monte_carlo_integration(lik_ratios_unconstrained_over_safe_dict["safe"], beta_t, "safe")
 
                 ## Estimated density under both the minimum of the proposal and constrained policies
@@ -2784,17 +2853,24 @@ def run_conformal_policy_control(
                     psi_t=psi_hat_t_safe,
                     proposal="safe"
                 )
+            
             else:
                 psi_hat_intersection_safe = 0.0 # None
                 psi_hat_t_safe = sys.float_info.min
 
-            switch_to_mixture_proposal = cfg.conformal_policy_control.mixture_proposal and cfg.conformal_policy_control.alpha < 1.0
+            # switch_to_mixture_proposal = cfg.conformal_policy_control.mixture_proposal and cfg.conformal_policy_control.alpha < 1.0
 
-            switch_to_mixture_proposal = switch_to_mixture_proposal or (cfg.conformal_policy_control.mixture_proposal_factor * psi_hat_intersection_safe < psi_hat_intersection_unconstrained and cfg.conformal_policy_control.alpha < 1.0)
+            ## If using mixture proposal, flag for when to swtich to it (from safe proposal)
+            switch_to_mixture_proposal = cfg.conformal_policy_control.mixture_proposal and (cfg.conformal_policy_control.mixture_proposal_factor * psi_hat_intersection_safe < psi_hat_intersection_unconstrained and cfg.conformal_policy_control.alpha < 1.0)
 
+            ## If not using mixture proposal, flag for whent o switch to optimized proposal (from safe proposal)
+            switch_to_optimized_proposal = not cfg.conformal_policy_control.mixture_proposal and (cfg.conformal_policy_control.optimized_proposal_factor * psi_hat_intersection_safe < psi_hat_intersection_unconstrained and cfg.conformal_policy_control.alpha < 1.0)
+            
             ## If accept_reject_sample_and_get_likelihoods terminated early for unconstrained model (which can only happen for alpha < 1.0), then just stick to safe proposal
-            if len(unconstrained_df_dict["unconstrained"]) < cfg.conformal_policy_control.accept_reject.n_target:
+            if "unconstrained" not in unconstrained_df_dict or len(unconstrained_df_dict["unconstrained"]) < cfg.conformal_policy_control.accept_reject.n_target_pre_cpc:
                 switch_to_mixture_proposal = False
+                switch_to_optimized_proposal = False
+                policy_names = ["safe"]
 
             if switch_to_mixture_proposal:
                 ## If using mixture proposal, then include the appropriate number of safe and unconstrained proposals
@@ -2828,14 +2904,13 @@ def run_conformal_policy_control(
 
             # psi_hat_intersection_safe = empirical_cdf(lik_ratios_unconstrained_over_safe_dict["safe"], beta_t)
             # psi_hat_intersection_unconstrained = empirical_cdf(lik_ratios_unconstrained_over_safe_dict["unconstrained"], beta_t)
-            # breakpoint()
 
             psi_hat_intersection = psi_hat_intersection_safe if proposal == "safe" else psi_hat_intersection_unconstrained
             psi_hat_intersection_non_prop = psi_hat_intersection_safe if proposal != "safe" else psi_hat_intersection_unconstrained
 
 
 
-            if i == 0 and len(policy_names) > 1 and cfg.conformal_policy_control.mixture_proposal_factor * psi_hat_intersection_safe < psi_hat_intersection_unconstrained:
+            if i == 0 and len(policy_names) > 1 and (switch_to_mixture_proposal or switch_to_optimized_proposal):
                 G = G[b:]
                 break
                     
@@ -2881,18 +2956,21 @@ def run_conformal_policy_control(
             # w_test_normalized_mean = w_test_mean / sum_w_cal_test_mean
             # w_infeasible_normalized_mean = np.sum(w_cal_normalized_mean[cal_infeasible_indicators]) + w_test_normalized_mean
 
-            # if proposal == 'unconstrained':
-            #     breakpoint()
+
+
 
 
             ## If (Accepting null & either searching through unconstrained with previously rejected or is the last proposal):
             # if (np.sum(w_cal_normalized[cal_infeasible_indicators]) + w_test_normalized > adjusted_alpha or adjusted_alpha == 1.0): #  and ((proposal == 'unconstrained' and b > 0) or i > 0)
-            if (w_infeasible_normalized > adjusted_alpha or adjusted_alpha == 1.0): #  and ((proposal == 'unconstrained' and b > 0) or i > 0)
-                ## If accepting null and previously rejected, then return most recently rejected beta_t
+            if (w_infeasible_normalized > adjusted_alpha or (w_infeasible_normalized <= adjusted_alpha and beta_t == np.inf) or adjusted_alpha >= 1.0): #  and ((proposal == 'unconstrained' and b > 0) or i > 0)
+            # if (w_infeasible_normalized > adjusted_alpha or adjusted_alpha >= 1.0): #  and ((proposal == 'unconstrained' and b > 0) or i > 0)
+
+                ## Stopping condition: (1) First uncontrolled risk, return previous beta_t where risk is controlled, (2) Last beta_t (np.inf) and risk is controlled there, (3) Running uncontrolled
 
 
-                # beta_t = G[b-1] if b > 0 else G[b] ## Upon first acceptance, set beta_t to most recent member of rejection set
-                beta_t = beta_hat_t_curr
+                ## If running with risk control, return previous beta_t where risk is controlled
+                if adjusted_alpha < 1.0:
+                    beta_t = beta_hat_t_curr
 
                 psi_hat_t = importance_weighted_monte_carlo_integration(lik_ratios_unconstrained_over_safe, beta_t, proposal)
 
@@ -2911,7 +2989,7 @@ def run_conformal_policy_control(
 
                 ## Save proposals with cpc-constrained likelihoods
                 constrained_liks_df_beta_hat = pd.concat([constrained_liks_df.iloc[:, :-1], pd.DataFrame({f'con_lik_r{n_cal_sets}' : prop_constrained_liks_curr[:,-1]})], axis=1)
-                constrained_liks_df_beta_hat_fp = os.path.join(os.path.dirname(constrained_gen_liks_fp), f"prop_likBeta{beta_t:.3g}_psiS{psi_hat_intersection_safe}_psiU{psi_hat_intersection_unconstrained}_{os.path.basename(constrained_gen_liks_fp)}")
+                constrained_liks_df_beta_hat_fp = os.path.join(os.path.dirname(constrained_gen_liks_fp), f"prop_likBeta{beta_t:.3g}_psiS{psi_hat_intersection_safe}_psiU{psi_hat_intersection_unconstrained}_mixProp{switch_to_mixture_proposal}_{os.path.basename(constrained_gen_liks_fp)}")
                 
                 if cfg.overwrite_ig or not fs.exists(constrained_liks_df_beta_hat_fp):
                     constrained_liks_df_beta_hat.to_json(constrained_liks_df_beta_hat_fp, orient="records", lines=True)
@@ -2954,7 +3032,6 @@ def run_conformal_policy_control(
                 check_col_names(constrained_liks_df_beta_hat)
                 check_col_names(unconstrained_df)
 
-                # breakpoint()
                 
                 return beta_t, psi_hat_t, constrained_liks_df_beta_hat, constrained_liks_df_beta_hat_fp, unconstrained_df, unconstrained_gen_liks_fp, proposal, psi_hat_intersection_safe, psi_hat_intersection_unconstrained, envelope_const_constrained_over_proposal #unconstrained_df, unconstrained_liks_df_beta_hat_fp
             
@@ -2976,7 +3053,7 @@ def run_conformal_policy_control(
     psi_hat_t = importance_weighted_monte_carlo_integration(lik_ratios_unconstrained_over_safe, beta_t, proposal)
 
     constrained_liks_df_beta_hat = pd.concat([constrained_liks_df.iloc[:, :-1], pd.DataFrame({f'con_lik_r{n_cal_sets}' : prop_constrained_liks_curr[:,-1]})], axis=1)
-    constrained_liks_df_beta_hat_fp = os.path.join(os.path.dirname(constrained_gen_liks_fp), f"prop_alpha{cfg.conformal_policy_control.alpha}_uncontrolled_beta{betas_list[-1]:.3g}_{os.path.basename(constrained_gen_liks_fp)}")
+    constrained_liks_df_beta_hat_fp = os.path.join(os.path.dirname(constrained_gen_liks_fp), f"prop_alpha{cfg.conformal_policy_control.alpha}_uncontrolled_beta{betas_t:.3g}_{os.path.basename(constrained_gen_liks_fp)}")
     if cfg.overwrite_ig or not fs.exists(constrained_liks_df_beta_hat_fp):
         constrained_liks_df_beta_hat.to_json(constrained_liks_df_beta_hat_fp, orient="records", lines=True)
 
@@ -3284,6 +3361,7 @@ def main(cfg: DictConfig):
             sft_dataset_fp = create_propen_sft_dataset(
                 cfg, file_client, prev_round_outputs_fp, filename_prefix=f"sft_init_r{i}_", n=n, initial_sft=True
             )
+            
             combined_sft_dataset_fp = combine_new_with_old_datasets(
                 cfg, file_client, all_prev_sft_datasets, sft_dataset_fp, random_seed
             )
@@ -3297,7 +3375,7 @@ def main(cfg: DictConfig):
             sft_dir = train_initial_sft(
                 cfg,
                 file_client,
-                combined_sft_dataset_fp,
+                sft_dataset_fp, #combined_sft_dataset_fp, ## Only training on most recently generated data
                 ga_data_dir,
                 initial_sft_run_name=f"{cfg.run_name}_sft_init_r{i}",
                 model_dir=all_model_paths[-1],
@@ -3305,23 +3383,30 @@ def main(cfg: DictConfig):
             )
             
 
-            logger.info(f"Trained initial SFT model: {sft_dir}")
-            all_model_paths.append(sft_dir)
-
-            
-
+            if i == 0:
+                seeds_fp = ''
 
             seeds_fp = get_seeds_from_training_data(
                 cfg, file_client,
-                training_data_fp=combined_sft_dataset_fp,
+                prev_seeds_fp=seeds_fp,
+                curr_training_data_fp=sft_dataset_fp,
                 output_dir=sft_dir,
                 sample_size=cfg.iterative_generation.init_args.sample_size,
                 sampling_method=cfg.iterative_generation.init_args.sampling_method,
                 pi_optimizer_name=pi_optimizer_name,
                 setting = setting if i == cfg.num_init_sft_rounds - 1 else "", ## Only include setting string if is last SFT round and will use seeds for policy improvement (or if changing overall config)
                 # random_seed = cfg.iterative_generation.init_args.seed, ## Use fixed random seed in initial SFT training
-                random_seed = random_seed
+                random_seed = random_seed,
+                first_iter = i == 0
             )
+
+            logger.info(f"Trained initial SFT model: {sft_dir}")
+            all_model_paths.append(sft_dir)
+
+            
+
+
+
 
 
 
@@ -3462,6 +3547,8 @@ def main(cfg: DictConfig):
             sft_dataset_fp = create_propen_sft_dataset(
                 cfg, file_client, prev_round_outputs_fp, filename_prefix=f"{setting}_r{i}", n=n
             )
+
+
             combined_sft_dataset_fp = combine_new_with_old_datasets(
                 cfg, file_client, all_prev_sft_datasets, sft_dataset_fp, random_seed
             )
@@ -3476,24 +3563,19 @@ def main(cfg: DictConfig):
             sft_dir = train_sft(
                 cfg,
                 file_client,
-                combined_sft_dataset_fp,
+                combined_sft_dataset_fp, #sft_dataset_fp, # ## Only training on most recently generated data
                 ga_data_dir,
                 sft_run_name=f"{cfg.run_name}_alpha{cfg.conformal_policy_control.alpha}_{setting}_r{i}",
                 model_dir=all_model_paths[-1],
                 train_from_scratch=train_from_scratch,
             )
-            
-            ## Add new trained model to list
-            logger.info(f"Trained SFT model: {sft_dir}")
-            all_model_paths.append(sft_dir)
-            pi_model_fp_list.append(sft_dir)
 
-
-
-            ## SELECT PROMPTS: Select new prompts/seeds from recent training data
+            ## SELECT PROMPTS: Select new prompts/seeds from historical training data
+            old_seeds_idx = 0 if cfg.select_old_seeds_from == "init" else -1
             seeds_fp = get_seeds_from_training_data(
                 cfg, file_client,
-                training_data_fp=combined_sft_dataset_fp,
+                prev_seeds_fp=pi_seeds_filepaths_list[old_seeds_idx],
+                curr_training_data_fp=sft_dataset_fp,
                 output_dir=sft_dir,
                 sample_size=cfg.iterative_generation.args.sample_size,
                 sampling_method=cfg.iterative_generation.args.sampling_method,
@@ -3503,6 +3585,15 @@ def main(cfg: DictConfig):
                 random_seed = random_seed
             )
             pi_seeds_filepaths_list.append(seeds_fp)
+            
+            ## Add new trained model to list
+            logger.info(f"Trained SFT model: {sft_dir}")
+            all_model_paths.append(sft_dir)
+            pi_model_fp_list.append(sft_dir)
+
+
+
+
 
 
             if cfg.temperature_scaling:
@@ -3689,6 +3780,7 @@ def main(cfg: DictConfig):
             dpo_dataset_fp = create_propen_preference_dataset(
                 cfg, file_client, prev_round_outputs_fp, filename_prefix=f"alpha{cfg.conformal_policy_control.alpha}_{setting}_r{i}", n=n
             )
+
             combined_dpo_dataset_fp = combine_new_with_old_datasets(
                 cfg, file_client, all_prev_dpo_datasets, dpo_dataset_fp, random_seed
             )
@@ -3705,27 +3797,19 @@ def main(cfg: DictConfig):
             dpo_dir = train_dpo(
                 cfg,
                 file_client,
-                data_fp=combined_dpo_dataset_fp,
+                data_fp=combined_dpo_dataset_fp, #dpo_dataset_fp, # ## Only training on most recently generated data
                 ga_data_dir=ga_data_dir,
                 run_name=f"{cfg.run_name}_alpha{cfg.conformal_policy_control.alpha}_{setting}_r{i}",
                 ref_model_path=all_model_paths[-1],
                 # train_from_scratch=train_from_scratch,
             )
 
-
-            
-            ## Add new trained model to list
-            logger.info(f"Trained DPO model: {dpo_dir}")
-            all_model_paths.append(dpo_dir)
-            pi_model_fp_list.append(dpo_dir)
-
-
-
-
-            ## SELECT PROMPTS: Select new prompts/seeds from recent training data
+            ## SELECT PROMPTS: Select new prompts/seeds from historical training data
+            old_seeds_idx = 0 if cfg.select_old_seeds_from == "init" else -1
             seeds_fp = get_seeds_from_training_data(
                 cfg, file_client,
-                training_data_fp=combined_dpo_dataset_fp,
+                prev_seeds_fp=pi_seeds_filepaths_list[old_seeds_idx],
+                curr_training_data_fp=dpo_dataset_fp,
                 output_dir=dpo_dir,
                 sample_size=cfg.iterative_generation.args.sample_size,
                 sampling_method=cfg.iterative_generation.args.sampling_method,
@@ -3739,6 +3823,16 @@ def main(cfg: DictConfig):
                 random_seed = random_seed
             )
             pi_seeds_filepaths_list.append(seeds_fp)
+            
+            ## Add new trained model to list
+            logger.info(f"Trained DPO model: {dpo_dir}")
+            all_model_paths.append(dpo_dir)
+            pi_model_fp_list.append(dpo_dir)
+
+
+
+
+
 
 
 
@@ -3858,10 +3952,10 @@ def main(cfg: DictConfig):
             else:
                 safe_prop_mix_weight = 1 / (1 + beta_t)
 
-            if cfg.conformal_policy_control.mixture_proposal and cfg.conformal_policy_control.alpha < 1.0:
-                proposal = "mixture"
+            # if cfg.conformal_policy_control.mixture_proposal and cfg.conformal_policy_control.alpha < 1.0:
+            #     proposal = "mixture"
 
-            if cfg.conformal_policy_control.mixture_proposal_factor * psi_hat_intersection_safe < psi_hat_intersection_unconstrained and cfg.conformal_policy_control.alpha < 1.0:
+            if cfg.conformal_policy_control.mixture_proposal and cfg.conformal_policy_control.mixture_proposal_factor * psi_hat_intersection_safe < psi_hat_intersection_unconstrained and cfg.conformal_policy_control.alpha < 1.0:
                 proposal = "mixture"
             
 
@@ -3869,7 +3963,7 @@ def main(cfg: DictConfig):
             unconstrained_df, unconstrained_gen_liks_fp, constrained_liks_df, constrained_gen_liks_fp\
                 = accept_reject_sample_and_get_likelihoods(cfg, file_client, pi_model_fp_list, pi_seeds_filepaths_list, dpo_dir,\
                                                         betas_list, psis_list, \
-                                                        cfg.conformal_policy_control.accept_reject.n_target,\
+                                                        cfg.conformal_policy_control.accept_reject.n_target_post_cpc,\
                                                         ga_data_dir, higher_score_particle_field="prompt",
                                                         lower_score_particle_field="chosen",
                                                         higher_score_field="prompt_score",
@@ -3879,6 +3973,7 @@ def main(cfg: DictConfig):
                                                         env_const = envelope_const_constrained_over_proposal, global_random_seed=random_seed)
 
 
+            
             '''Split last batch of generated outputs into training and calibration data'''
             cal_df, cal_unconstrained_output_path, train_df, train_output_path = \
                 train_cal_split_gen_outputs(cfg, file_client, unconstrained_gen_liks_fp, dpo_dir, setting=setting, random_seed=random_seed) #, sample_num_cal=cfg.num_cal_per_step, sample_num_train=cfg.num_train_per_step)
@@ -3982,24 +4077,19 @@ def main(cfg: DictConfig):
             marge_dir = train_marge(
                 cfg,
                 file_client,
-                data_fp=combined_marge_dataset_fp,
+                data_fp=combined_marge_dataset_fp, #marge_dataset_fp, # ## Only training on most recently generated data
                 ga_data_dir=ga_data_dir,
                 run_name=f"{cfg.run_name}_alpha{cfg.conformal_policy_control.alpha}_{setting}_r{i}",
                 ref_model_path=all_model_paths[-1],
                 # train_from_scratch=train_from_scratch,
             )
 
-
-            ## Add new trained model to list
-            logger.info(f"Trained MARGE model: {marge_dir}")
-            all_model_paths.append(marge_dir)
-            pi_model_fp_list.append(marge_dir)
-
-
-            ## SELECT PROMPTS: Select new prompts/seeds from recent training data
+            ## SELECT PROMPTS: Select new prompts/seeds from historical training data
+            old_seeds_idx = 0 if cfg.select_old_seeds_from == "init" else -1
             seeds_fp = get_seeds_from_training_data(
                 cfg, file_client,
-                training_data_fp=combined_marge_dataset_fp,
+                prev_seeds_fp=pi_seeds_filepaths_list[old_seeds_idx],
+                curr_training_data_fp=marge_dataset_fp,
                 output_dir=marge_dir,
                 sample_size=cfg.iterative_generation.args.sample_size,
                 sampling_method=cfg.iterative_generation.args.sampling_method,
@@ -4009,6 +4099,13 @@ def main(cfg: DictConfig):
                 random_seed = random_seed
             )
             pi_seeds_filepaths_list.append(seeds_fp)
+
+
+            ## Add new trained model to list
+            logger.info(f"Trained MARGE model: {marge_dir}")
+            all_model_paths.append(marge_dir)
+            pi_model_fp_list.append(marge_dir)
+
 
 
 
@@ -4118,21 +4215,21 @@ def main(cfg: DictConfig):
             if cfg.conformal_policy_control.alpha >= 1.0:
                 safe_prop_mix_weight = 0.0
             elif cfg.conformal_policy_control.use_overlap_mix_weight:
-                safe_prop_mix_weight = psi_hat_intersection_safe / (psi_hat_intersection_safe + psi_hat_intersection_unconstrained)
+                safe_prop_mix_weight = max(psi_hat_intersection_safe / (psi_hat_intersection_safe + psi_hat_intersection_unconstrained), cfg.conformal_policy_control.min_safe_mix_weight)
             else:
                 safe_prop_mix_weight = 1 / (1 + beta_t)
 
-            if cfg.conformal_policy_control.mixture_proposal and cfg.conformal_policy_control.alpha < 1.0:
-                proposal = "mixture"
+            # if cfg.conformal_policy_control.mixture_proposal and cfg.conformal_policy_control.alpha < 1.0:
+            #     proposal = "mixture"
 
-            if cfg.conformal_policy_control.mixture_proposal_factor * psi_hat_intersection_safe < psi_hat_intersection_unconstrained and cfg.conformal_policy_control.alpha < 1.0:
+            if cfg.conformal_policy_control.mixture_proposal and cfg.conformal_policy_control.mixture_proposal_factor * psi_hat_intersection_safe < psi_hat_intersection_unconstrained and cfg.conformal_policy_control.alpha < 1.0:
                 proposal = "mixture"
             
             ## Sample with conformal policy control
             unconstrained_df, unconstrained_gen_liks_fp, constrained_liks_df, constrained_gen_liks_fp\
                 = accept_reject_sample_and_get_likelihoods(cfg, file_client, pi_model_fp_list, pi_seeds_filepaths_list, marge_dir,\
                                                         betas_list, psis_list, \
-                                                        cfg.conformal_policy_control.accept_reject.n_target,\
+                                                        cfg.conformal_policy_control.accept_reject.n_target_post_cpc,\
                                                         ga_data_dir, proposal = proposal, post_policy_control=True, \
                                                         safe_prop_mix_weight = safe_prop_mix_weight, \
                                                         env_const = envelope_const_constrained_over_proposal, global_random_seed=random_seed)
