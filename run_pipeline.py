@@ -330,6 +330,10 @@ def gpt_model_already_trained(
     return None
 
 
+def append_df_len_to_fp(fp, df):
+    return "{0}_{2}.{1}".format(*fp.rsplit('.', 1) + [f'{len(df)}'])
+
+
 def train_cal_split_gen_outputs(cfg: DictConfig, 
                                 fs: LocalOrS3Client, 
                                 gen_outputs : str, 
@@ -354,6 +358,15 @@ def train_cal_split_gen_outputs(cfg: DictConfig,
         cal_output_path = os.path.join(sft_dir, f"{setting}_alpha{cfg.conformal_policy_control.alpha}_cal_gens_all_likelihoods_temp{cfg.temperature}.jsonl")
         train_output_path = os.path.join(sft_dir, f"{setting}_alpha{cfg.conformal_policy_control.alpha}_train_gens_all_likelihoods_temp{cfg.temperature}.jsonl")
 
+    if len(gen_outputs_df) < cfg.conformal_policy_control.accept_reject.n_target_post_cpc:
+
+        # breakpoint()
+
+        cal_output_path = append_df_len_to_fp(cal_output_path, gen_outputs_df)
+        train_output_path = append_df_len_to_fp(train_output_path, gen_outputs_df)
+    
+    
+    
     overwrite_split_flag = cfg.overwrite_split_init if first_iter else cfg.overwrite_split
 
     if not overwrite_split_flag and fs.exists(cal_output_path) and fs.exists(train_output_path):
@@ -2420,8 +2433,8 @@ def accept_reject_sample_and_get_likelihoods(
             # u_output_filename_prefix = f"accepted_uLiks_alpha{cfg.conformal_policy_control.alpha}_gens_likelihood_{cfg.iterative_generation.args.sample_size}sample_{cfg.iterative_generation.args.max_iterations}iter"
             # c_output_filename_prefix = f"accepted_cLiks_alpha{cfg.conformal_policy_control.alpha}_gens_likelihood_{cfg.iterative_generation.args.sample_size}sample_{cfg.iterative_generation.args.max_iterations}iter"
 
-            u_output_filename = f"accepted_uLiks_{base_output_name}"
-            c_output_filename = f"accepted_cLiks_{base_output_name}"
+            u_output_filename = f"accepted_uLiks_{base_output_name}" #f"accepted_uLiks_{base_output_name}"
+            c_output_filename = f"accepted_cLiks_{base_output_name}" #f"accepted_cLiks_{base_output_name}"
 
             accepted_unconstrained_gen_liks_fp = os.path.join(os.path.dirname(gen_liks_fp), u_output_filename)
             accepted_constrained_gen_liks_fp = os.path.join(os.path.dirname(gen_liks_fp), c_output_filename)
@@ -2492,20 +2505,30 @@ def run_conformal_policy_control(
     if n_cal_sets != len(prev_cal_data_unconstrained_liks_fp_list):
         raise ValueError("Number of unconstrained and constrained cal sets must be the same")
 
-    cal_data_constrained_all = pd.read_json(prev_cal_data_constrained_liks_fp_list[0], orient="records", lines=True)
-    cal_data_unconstrained_all = pd.read_json(prev_cal_data_unconstrained_liks_fp_list[0], orient="records", lines=True)
 
-
-
-    n_cal_per_model = [len(cal_data_constrained_all)]
     unconstrained_lik_cols = [f'lik_r{i}' for i in range(n_cal_sets)]
     constrained_lik_cols = [f'con_lik_r{i}' for i in range(n_cal_sets)]
 
+    cal_data_constrained_all = pd.read_json(prev_cal_data_constrained_liks_fp_list[0], orient="records", lines=True)
+    cal_data_unconstrained_all = pd.read_json(prev_cal_data_unconstrained_liks_fp_list[0], orient="records", lines=True)
+
+    ## Subset to currently relevant likelihood columns (relevant for rerunning from checkpoint)
+    # cal_data_constrained_all = cal_data_constrained_all[list(cal_data_constrained_all.columns[0:2]) + constrained_lik_cols]
+    # cal_data_unconstrained_all = cal_data_unconstrained_all[list(cal_data_unconstrained_all.columns[0:2]) + unconstrained_lik_cols]
+
     #pd.read_json(prev_cal_data_unconstrained_liks_fp_list[2], orient="records", lines=True)
+
+    n_cal_per_model = [len(cal_data_constrained_all)]
 
     for i in range(1, n_cal_sets):
         cal_data_constrained_curr = pd.read_json(prev_cal_data_constrained_liks_fp_list[i], orient="records", lines=True)
         cal_data_unconstrained_curr = pd.read_json(prev_cal_data_unconstrained_liks_fp_list[i], orient="records", lines=True)
+
+        ## Subset to currently relevant likelihood columns (relevant for rerunning from checkpoint)
+        # breakpoint()
+
+        # cal_data_constrained_curr = cal_data_constrained_curr[list(cal_data_constrained_curr.columns[0:2]) + constrained_lik_cols]
+        # cal_data_unconstrained_curr = cal_data_unconstrained_curr[list(cal_data_unconstrained_curr.columns[0:2]) + unconstrained_lik_cols]
 
         if (len(cal_data_constrained_curr) != len(cal_data_unconstrained_curr)):
             raise ValueError("Num samples in constrained and constrained cal sets should be same (ie, same particles)!")
@@ -2518,12 +2541,24 @@ def run_conformal_policy_control(
             cal_data_unconstrained_all = pd.concat([cal_data_unconstrained_all, cal_data_unconstrained_curr], ignore_index=True)
 
         else:
-            breakpoint()
-            logger.info(f"cal_data_constrained_all.columns : {cal_data_constrained_all.columns}")
-            logger.info(f"cal_data_constrained_curr.columns : {cal_data_constrained_curr.columns}")
-            logger.info(f"cal_data_unconstrained_all.columns : {cal_data_unconstrained_all.columns}")
-            logger.info(f"cal_data_unconstrained_curr.columns : {cal_data_unconstrained_curr.columns}")
-            raise ValueError(f"Error: cal_data_constrained_all.columns. equals(cal_data_constrained_curr.columns) : {cal_data_constrained_all.columns.equals(cal_data_constrained_curr.columns)}")
+            ## If columns are not the same, try to subset to currently relevant likelihood columns
+            cal_data_constrained_all = cal_data_constrained_all[list(cal_data_constrained_all.columns[0:2]) + constrained_lik_cols]
+            cal_data_unconstrained_all = cal_data_unconstrained_all[list(cal_data_unconstrained_all.columns[0:2]) + unconstrained_lik_cols]
+            cal_data_constrained_curr = cal_data_constrained_curr[list(cal_data_constrained_curr.columns[0:2]) + constrained_lik_cols]
+            cal_data_unconstrained_curr = cal_data_unconstrained_curr[list(cal_data_unconstrained_curr.columns[0:2]) + unconstrained_lik_cols]
+
+            ## Try again to concatenate
+            if cal_data_constrained_all.columns.equals(cal_data_constrained_curr.columns) and cal_data_unconstrained_all.columns.equals(cal_data_unconstrained_curr.columns):
+                cal_data_constrained_all = pd.concat([cal_data_constrained_all, cal_data_constrained_curr], ignore_index=True)
+                cal_data_unconstrained_all = pd.concat([cal_data_unconstrained_all, cal_data_unconstrained_curr], ignore_index=True)
+            
+            else:
+                breakpoint()
+                logger.info(f"cal_data_constrained_all.columns : {cal_data_constrained_all.columns}")
+                logger.info(f"cal_data_constrained_curr.columns : {cal_data_constrained_curr.columns}")
+                logger.info(f"cal_data_unconstrained_all.columns : {cal_data_unconstrained_all.columns}")
+                logger.info(f"cal_data_unconstrained_curr.columns : {cal_data_unconstrained_curr.columns}")
+                raise ValueError(f"Error: cal_data_constrained_all.columns. equals(cal_data_constrained_curr.columns) : {cal_data_constrained_all.columns.equals(cal_data_constrained_curr.columns)}")
 
     check_col_names(cal_data_constrained_all)
     check_col_names(cal_data_unconstrained_all)
@@ -2883,9 +2918,20 @@ def run_conformal_policy_control(
 
                 n_safe_prop_include = int(safe_prop_mix_weight *len(prop_data_t0_safe_and_t_unconstrained_liks_dict['safe']))
                 n_unconstrained_prop_include = int((1-safe_prop_mix_weight) * len(prop_data_t0_safe_and_t_unconstrained_liks_dict['unconstrained']))
+                
+                if cfg.conformal_policy_control.mixture_proposal_subsample_cpc:
+                    ## Subsample proposals from safe and unconstrained proposals, here first for constrained likelihoods
+                    constrained_liks_df_safe = constrained_liks_df_dict['safe'].sample(n=n_safe_prop_include) ## Constrained liks for safe proposal
+                    constrained_liks_df_unconstrained = constrained_liks_df_dict['unconstrained'].sample(n=n_unconstrained_prop_include) ## Constrained liks for unconstrained proposal
+                    ## Use same indices to get unconstrained likelihoods corresponding to sampled proposal samples
+                    unconstrained_liks_df_safe = unconstrained_df_dict['safe'].loc[constrained_liks_df_safe.index] ## Unconstrained liks for safe proposal
+                    unconstrained_liks_df_unconstrained = unconstrained_df_dict['unconstrained'].loc[constrained_liks_df_unconstrained.index] ## Unconstrained liks for unconstrained proposal
 
-                constrained_liks_df = pd.concat([constrained_liks_df_dict['safe'].iloc[:n_safe_prop_include], constrained_liks_df_dict['unconstrained'].iloc[:n_unconstrained_prop_include]], ignore_index=True)
-                unconstrained_df = pd.concat([unconstrained_df_dict['safe'].iloc[:n_safe_prop_include], unconstrained_df_dict['unconstrained'].iloc[:n_unconstrained_prop_include]], ignore_index=True)
+                    constrained_liks_df = pd.concat([constrained_liks_df_safe, constrained_liks_df_unconstrained], ignore_index=True)
+                    unconstrained_df = pd.concat([unconstrained_liks_df_safe, unconstrained_liks_df_unconstrained], ignore_index=True)
+                else:
+                    constrained_liks_df = pd.concat([constrained_liks_df_dict['safe'].iloc[:n_safe_prop_include], constrained_liks_df_dict['unconstrained'].iloc[:n_unconstrained_prop_include]], ignore_index=True)
+                    unconstrained_df = pd.concat([unconstrained_df_dict['safe'].iloc[:n_safe_prop_include], unconstrained_df_dict['unconstrained'].iloc[:n_unconstrained_prop_include]], ignore_index=True)
 
 
                 prop_data_t0_safe_and_t_unconstrained_liks = np.vstack((prop_data_t0_safe_and_t_unconstrained_liks_dict['safe'][:n_safe_prop_include], prop_data_t0_safe_and_t_unconstrained_liks_dict['unconstrained'][:n_unconstrained_prop_include]))
@@ -3983,7 +4029,7 @@ def main(cfg: DictConfig):
             logger.info(f"train_r0 (n_tr{i}={len(train_df)}) output path: {train_output_path}")
 
 
-            ## Save new calibration data with constrained likelihoods  
+
             # cal_constrained_liks_df = constrained_liks_df_beta_hat.loc[cal_df.index]
             cal_constrained_liks_df = constrained_liks_df.loc[cal_df.index]
             cal_constrained_liks_df = cal_constrained_liks_df.rename(columns={'lik_r0' : 'con_lik_r0'})
