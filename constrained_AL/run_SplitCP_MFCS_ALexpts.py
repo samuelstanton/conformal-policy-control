@@ -31,6 +31,8 @@ from tqdm import tqdm
 from scipy.stats import logistic
 from copy import deepcopy
 
+from scipy.io import arff
+
 
 
 def get_rel_ranks(arr):
@@ -142,7 +144,7 @@ if __name__ == "__main__":
     parser.add_argument('--save_weight_computations', type=bool, default=False, help='Bool about whether to save weights')
     parser.add_argument('--noise_level', type=float, default=1.0, help='White kernel noise level')
     parser.add_argument('--sigma_0', type=float, default=1.0, help='Dot product kernel noise level')
-    parser.add_argument('--aci_step_size', type=float, default=0.5, help='ACI step size gamma') #0.005
+    parser.add_argument('--aci_step_size', type=float, default=0.1, help='ACI step size gamma') #0.005
     parser.add_argument('--prob_bound_inf', type=float, default=1.0, help='prob_bound_inf : max acceptable probability of infinite interval width. prob_bound_inf=1.0 --> unbounded query function; prob_bound_inf=0.0 --> bounded query function (Appendix C)')
     parser.add_argument('--record_weights', type=bool, default=False, help='Bool indicating whether to record the calibration + test point weights (takes extra storage and time)')
     parser.add_argument('--risk_control', type=str, default='Y', help='Whether to run risk control: Y or N')
@@ -302,7 +304,13 @@ if __name__ == "__main__":
         n_blog = len(Y_blog)
         errs_blog = compute_errors_for_measurements(X_blog, Y_blog) if heteroscedastic == 'Y' else None
 
-
+    elif (dataset == 'robot_arm'):
+        robot_arm_data_, meta_ = arff.loadarff(os.getcwd().removesuffix('bash_scripts') + '/datasets/robot_arm/dataset_2175_kin8nm.arff')
+        robot_arm_data = pd.DataFrame(robot_arm_data_)
+        X_robot_arm = robot_arm_data.iloc[:, :-1].to_numpy()
+        Y_robot_arm = robot_arm_data.iloc[:, -1].to_numpy()
+        n_robot_arm = len(robot_arm_data)
+    
 
     X_all = eval('X_'+dataset)
     all_inds = np.arange(eval('n_'+dataset))
