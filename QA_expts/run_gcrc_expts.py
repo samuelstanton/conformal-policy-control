@@ -1,3 +1,11 @@
+'''
+    Code for reproducing medical QA experiments in Prinster, et al., (2026) "Conformal Policy Control"
+
+    Code is partially adapted from https://github.com/jjcherian/conformal-safety
+    Data is copied from that repo
+'''
+
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
