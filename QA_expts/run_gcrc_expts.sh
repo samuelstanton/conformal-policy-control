@@ -5,4 +5,4 @@
 #SBATCH --partition=parallel
 #SBATCH --gpus-per-task=0
 source .venv/bin/activate
-python run_gcrc_expts.py --method_names monotized_losses_crc ltt gcrc --score_names logprobs # logprobs frequency selfeval
+python run_gcrc_expts.py --method_names monotized_losses_crc ltt gcrc --score_names logprobs # logprobs frequency selfevals
