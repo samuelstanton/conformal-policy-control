@@ -8,7 +8,7 @@ if module_path not in sys.path:
     
 import numpy as np
     
-import assay_mfcs
+# import assay_mfcs
 import calibrate_mfcs as cal
 from calibrate_mfcs import mixture_pdf_from_densities_mat, constrained_pdf_gpr_lik_ratio
 from calibrate_mfcs import compute_risk_control_weights_lik_ratio, compute_risk_control_weights_lik_ratio_preset_beta
@@ -125,7 +125,8 @@ if __name__ == "__main__":
     
     parser.add_argument('--dataset', type=str, default='airfoil', help='Dataset name.')
     parser.add_argument('--n_initial_all', type=int, help='Initial number of training points', required = True)
-    parser.add_argument('--lmbdas', nargs='+', help='Values of lmbda to try', required = True)
+    # parser.add_argument('--lmbdas', nargs='+', help='Values of lmbda to try', required = True)
+    parser.add_argument('--lmbda', type=float, default=10.0, help='Param controlling aggressiveness of unconstrained policy')
     parser.add_argument('--n_seed', type=int, default=500, help='Number of trials')
     parser.add_argument('--n_steps', type=int, default=10, help='Number of MFCS steps (active learning iterations)')
     parser.add_argument('--alpha', type=float, default=0.1, help='alpha value corresponding to 1-alpha target coverage')
@@ -144,17 +145,20 @@ if __name__ == "__main__":
     parser.add_argument('--save_weight_computations', type=bool, default=False, help='Bool about whether to save weights')
     parser.add_argument('--noise_level', type=float, default=1.0, help='White kernel noise level')
     parser.add_argument('--sigma_0', type=float, default=1.0, help='Dot product kernel noise level')
-    parser.add_argument('--aci_step_size', type=float, default=0.1, help='ACI step size gamma') #0.005
+    parser.add_argument('--aci_step_size', type=float, default=0.1, help='ACI step size, gamma') #0.005
+
+    parser.add_argument('--cdt_step_size', type=float, default=0.1, help='CDT step size, eta') #0.005
+
     parser.add_argument('--prob_bound_inf', type=float, default=1.0, help='prob_bound_inf : max acceptable probability of infinite interval width. prob_bound_inf=1.0 --> unbounded query function; prob_bound_inf=0.0 --> bounded query function (Appendix C)')
-    parser.add_argument('--record_weights', type=bool, default=False, help='Bool indicating whether to record the calibration + test point weights (takes extra storage and time)')
+    # parser.add_argument('--record_weights', type=bool, default=False, help='Bool indicating whether to record the calibration + test point weights (takes extra storage and time)')
     parser.add_argument('--risk_control', type=str, default='Y', help='Whether to run risk control: Y or N')
-    parser.add_argument('--aci_risk_control', type=str, default='N', help='Whether to run ACI-style (retroactive)risk control: Y or N')
+    parser.add_argument('--cdt_risk_control', type=str, default='N', help='Whether to run CDT (retroactive)risk control: Y or N')
 
     parser.add_argument('--constrain_vs_init', type=str, default='Y', help='Whether to constrain vs initial policy, rather than most recent')
     parser.add_argument('--pc_alpha', type=float, default=0.5, help='Target risk control level')
     # parser.add_argument('--meps_constraint_tol', type=float, default=0.5, help='Tolerance for MEPS dataset constraint (amount by which can underestimate healthcare utilization.')
     parser.add_argument('--heteroscedastic', type=str, default='N', help='Whether to have heteroscedastic label noise (N will be homoscedastic).')
-
+    parser.add_argument('--compute_pred_set_metrics', type=str, default='N', help='Whether to compute prediction set coverage, width (N or Y)')
 
 
     ## python run_SplitCP_MultistepFCS_expts.py --dataset airfoil --n_initial_all 48 --lmbdas 10 --n_seed 200 --p_split_train 0.6 
@@ -162,8 +166,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
     dataset = args.dataset
     n_initial_all = args.n_initial_all
-    lmbdas = [float(lmbda) for lmbda in args.lmbdas]
-    lmbdas_str = ''.join(str(l) for l in lmbdas)
+    # lmbdas = [float(lmbda) for lmbda in args.lmbdas]
+    # lmbdas_str = ''.join(str(l) for l in lmbdas)
+    lmbda = args.lmbda
     n_seed = args.n_seed
     alpha = args.alpha
     muh = args.muh
@@ -186,14 +191,16 @@ if __name__ == "__main__":
     noise_level = args.noise_level
     sigma_0 = args.sigma_0
     aci_step_size = args.aci_step_size
+    cdt_step_size = args.cdt_step_size
     prob_bound_inf = args.prob_bound_inf
-    record_weights = args.record_weights
+    # record_weights = args.record_weights
     risk_control = args.risk_control
-    aci_risk_control = args.aci_risk_control
+    cdt_risk_control = args.cdt_risk_control
     constrain_vs_init = args.constrain_vs_init
     pc_alpha = args.pc_alpha
     # meps_constraint_tol = args.meps_constraint_tol
     heteroscedastic = args.heteroscedastic
+    compute_pred_set_metrics = args.compute_pred_set_metrics
 
 
     # risk_control = True ## (Drew added 20250707) Run Risk Control experiments
@@ -216,26 +223,31 @@ if __name__ == "__main__":
 
     method_names.append('wsplit_mixture')
         
-    method_names.append('aci')
+    method_names.append('cdt')
     
     print("Running with methods : ", method_names)
     
     
-    
-    # print('Running with '+ dataset + '_' + muh + '_nInitial' + str(n_initial_all) + '_steps' + str(n_steps) + '_nseed' + str(n_seed) + '_lmbda' + lmbdas_str + '_wDepths' + str_dep_maxes + '_PIs_addTrainProb'+str(add_to_train_split_prob)+'_replace'+str(replacement)+'_kernel'+kernel_str +'pcaExpSampling'+str(initial_sampling_bias) + str(aci_step_size)+ '_probBoundInf' + str(prob_bound_inf))
 
-    print(f"Setting: ALExpts_{dataset}_{muh}_nInitial{n_initial_all}_steps{n_steps}_nseed{n_seed}_wDepths{str_dep_maxes}_propTrainInit{p_split_train}_addTrainProb{add_to_train_split_prob}_noise{noise_magnitude}_pcaExpSampling{initial_sampling_bias}_aciStepSize{aci_step_size}_probBoundInf{prob_bound_inf}_rc{risk_control}_PCalpha{pc_alpha}_constrainVSinit{constrain_vs_init}")
+    print(f"Setting: ALExpts_{dataset}_{muh}_nInitial{n_initial_all}_steps{n_steps}_nseed{n_seed}_wDepths{str_dep_maxes}_propTrainInit{p_split_train}_addTrainProb{add_to_train_split_prob}_noise{noise_magnitude}_pcaExpSampling{initial_sampling_bias}_cdtStepSize{cdt_step_size}_probBoundInf{prob_bound_inf}_rc{risk_control}_PCalpha{pc_alpha}_constrainVSinit{constrain_vs_init}")
     
 
 
     n_train_proper_initial = int(np.floor(n_initial_all * p_split_train))
     n_cal_initial = n_initial_all - n_train_proper_initial
-    
-    
-    if (record_weights):
-        results_by_seed = pd.DataFrame(columns = np.concatenate([['seed', 'step', 't_cal', 'dataset', 'muh_fun','method','coverage','width', 'MSE', 'muh_test', 'y_test', 'B', 'prop_B', 'alpha_aci', 'Feasible'], ['w_cal' + str(i) for i in range(0, n_cal_initial+n_steps-1)], ['w_test']]))
+
+
+    if compute_pred_set_metrics == 'Y':
+        results_columns = np.array(['seed', 'step', 't_cal', 'dataset', 'muh_fun','method','coverage','width', 'MSE', 'muh_test', 'y_test', 'B', 'prop_B', 'alpha_aci', 'Feasible'])
+        
     else:
-        results_by_seed = pd.DataFrame(columns = np.concatenate([['seed', 'step', 't_cal', 'dataset', 'muh_fun','method','coverage','width', 'MSE', 'muh_test', 'y_test', 'B', 'prop_B', 'alpha_aci', 'Feasible']]))
+        results_columns = np.array(['seed', 'step', 't_cal', 'dataset', 'muh_fun','method', 'MSE', 'muh_test', 'y_test', 'B', 'prop_B', 'alpha_aci', 'Feasible'])
+    
+    # if (record_weights):
+    #     results_columns = np.concatenate((results_columns, ))
+        
+    results_by_seed = pd.DataFrame(columns = results_columns)
+        
 
     
 
@@ -330,9 +342,6 @@ if __name__ == "__main__":
     # X_all_pca_exp_rel_ranks_logistic = logistic.cdf(X_all_pca_exp_rel_ranks, loc=0.45, scale=0.1) # loc=0.55, scale=0.1)
     Feasible_all = np.random.binomial(n=1, p = X_all_pca_exp_rel_ranks_logistic)
 
-
-    # X_all_pca_exp_minmax = (X_all_pca_exp - min(X_all_pca_exp)) / (max(X_all_pca_exp) - min(X_all_pca_exp))
-    # Feasible_all = np.random.binomial(n=1, p=X_all_pca_exp_minmax)
     
     print(f'Population average risk : {1-np.mean(Feasible_all)}')
     # print(f'np.median(Feasible_all) : {np.median(Feasible_all)}')
@@ -341,494 +350,399 @@ if __name__ == "__main__":
     split_mfcs_AL = cal.SplitConformalMFCS(muh_fun, ptrain_fn, X_all)
 
     
-    ## Loop for repeating experiment with different lmbdas (shift magnitudes)
-    for l, lmbda in enumerate(lmbdas):
+
+    for seed in tqdm(range(seed_initial, seed_initial + n_seed)):
+        if heteroscedastic == 'Y':
+            Y_all = noisy_measurements(all_inds, eval('Y_'+dataset), eval('errs_'+dataset), noise_magnitude, seed)
+        else:
+            Y_all = noisy_measurements(all_inds, eval('Y_'+dataset), None, noise_magnitude, seed)
+
+        ## Note: Validation set won't change, train and pool will
+        np.random.seed(seed)
+        val_inds = list(np.random.choice(eval('n_'+dataset),n_val,replace=False))
+        non_val_inds = np.setdiff1d(all_inds, val_inds)
+        X_nonval = X_all[non_val_inds]
+
         
 
-        for seed in tqdm(range(seed_initial, seed_initial + n_seed)):
-            if heteroscedastic == 'Y':
-                Y_all = noisy_measurements(all_inds, eval('Y_'+dataset), eval('errs_'+dataset), noise_magnitude, seed)
+        ## Bias initial sampling of training and calibration data to simulate selection bias in active learning
+        # X_nonval_pca_, pca_fitted = get_PCA(X_nonval)
+        # X_nonval_pca_, pca_fitted = get_PCA(X_all) ## (20250708: having this
+        X_nonval_pca_ = pca_all_fitted.transform(X_nonval)
+        X_nonval_pca = X_nonval_pca_.flatten()
+        min_X_nonval_pca = min(X_nonval_pca)
+        max_X_nonval_pca = max(X_nonval_pca)
+        X_nonval_pca_minmax = (X_nonval_pca - min_X_nonval_pca) / (max_X_nonval_pca - min_X_nonval_pca)
+        X_nonval_pca_minmax_nonvals_exp = np.exp(X_nonval_pca_minmax * initial_sampling_bias)
+        sum_X_nonval_pca_minmax_nonvals_exp = np.sum(X_nonval_pca_minmax_nonvals_exp)
+        X_nonval_pca_minmax_nonvals_exp_normed = X_nonval_pca_minmax_nonvals_exp / sum_X_nonval_pca_minmax_nonvals_exp
+
+        # upper_q_exp_normed_val = np.quantile(X_nonval_pca_minmax_nonvals_exp_normed, 0.75)
+
+        # def source_pdf(X, min_X_nonval_pca, max_X_nonval_pca, initial_sampling_bias, sum_X_nonval_pca_minmax_nonvals_exp, pca_fitted):
+        def source_pdf(X):
+            X_pca = pca_all_fitted.transform(X)
+            X_pca_minmax = (X_pca - min_X_nonval_pca) / (max_X_nonval_pca - min_X_nonval_pca)
+            X_pca_minmax_exp = np.exp(X_pca_minmax * initial_sampling_bias)
+            X_pca_minmax_exp_normed = X_pca_minmax_exp / sum_X_nonval_pca_minmax_nonvals_exp
+            return X_pca_minmax_exp_normed.flatten()
+
+        train_inds = list(np.random.choice(non_val_inds, n_initial_all, replace=replacement, p=X_nonval_pca_minmax_nonvals_exp_normed))
+
+        ## Pool inds are those not in training or validation data.
+        pool_inds = list(np.setdiff1d(np.setdiff1d(np.arange(eval('n_'+dataset)),train_inds), val_inds))
+
+        ## Create validation set (won't change)
+        Xval = eval('X_'+dataset)[val_inds]
+        yval = Y_all[val_inds]
+        Feasible_val = Feasible_all[val_inds]
+
+        idx_split = list(np.random.permutation(train_inds))
+        train_inds_split, cal_inds_split = list(idx_split[:n_train_proper_initial]), list(idx_split[n_train_proper_initial:])
+
+        ## Note: Calibration set for split won't change
+        Xtrain_split = eval('X_'+dataset)[train_inds_split]
+        ytrain_split = Y_all[train_inds_split]
+        Feasible_train_split = Feasible_all[train_inds_split]
+        
+        # print(f'np.histogram(X_all_pca_exp_rel_ranks_logistic) : {np.histogram(X_all_pca_exp_rel_ranks_logistic)}')
+        print(f'np.mean(Feasible_train_split) : {np.mean(Feasible_train_split)}')
+        print(f'np.median(Feasible_train_split) : {np.median(Feasible_train_split)}')
+        
+        Xcal_split = eval('X_'+dataset)[cal_inds_split]
+        ycal_split = Y_all[cal_inds_split]
+        Feasible_cal_split = Feasible_all[cal_inds_split]
+        print(f'np.mean(Feasible_cal_split) : {np.mean(Feasible_cal_split)}')
+        print(f'np.median(Feasible_cal_split) : {np.median(Feasible_cal_split)}')
+
+        source_risk_ = np.mean(np.concatenate((Feasible_train_split, Feasible_cal_split)))
+        print(f"source risk : {1-source_risk_}")
+        
+        ## Pool inds for split are initially the same but will be different later
+        pool_inds_split = list(np.setdiff1d(np.setdiff1d(np.arange(eval('n_'+dataset)),train_inds), val_inds))
+        Feasible_pool_split = Feasible_all[pool_inds_split]
+        print(f'np.mean(Feasible_pool_split) : {np.mean(Feasible_pool_split)}')
+        print(f'np.median(Feasible_pool_split) : {np.median(Feasible_pool_split)}')
+        
+
+        ## Initialize train and pool data for sample splitting (will change)
+        Xpool_split = eval('X_'+dataset)[pool_inds_split]
+        ypool_split = Y_all[pool_inds_split]
+
+        source_densities_pool = source_pdf(Xpool_split)
+
+
+        #### Keep track of unconstrained and constrained densities (and important constants) for pool and cal set
+        ## Pool:
+        exp_vals_pool_list_of_vecs_all_steps = [source_densities_pool] ## Unconstrained densities
+        constrained_densities_pool_running_list = [source_densities_pool] ## Constrained densities
+
+        ## Important constants
+        max_constrained_densities_pool_running_list = [np.max(source_densities_pool)]
+        var_pool_min_max_norms = [None]
+        exp_pool_sum_norms = [np.sum(source_densities_pool)]
+        pc_params_list = [None]
+
+        ## Cal:
+        constrained_densities_cal_running_list = [list(source_pdf(Xcal_split))] ## Note: First entry will be source_pdf
+
+        
+        # Feasible_test_split = []
+        
+        w_split_mus_prev_steps = [None]
+
+        ## t_cal = (num points in calibration set actively selected) + 1
+        t_cal = 1
+
+        ## Initialize alpha_aci_curr to alpha
+        alpha_aci_curr = alpha
+        weight_bounds = []
+
+        for step in range(n_steps):
+
+            ## 1. Fit Gaussian process regression and use it to select queries from pool
+            gpr_split = muh_fun.fit(Xtrain_split, ytrain_split)
+
+            ## 2. Compute unnormalized weights for pool
+            y_preds_pool_split, std_preds_pool_split_ = gpr_split.predict(Xpool_split, return_std=True)
+            std_preds_pool_split = get_f_std(std_preds_pool_split_, gpr_split)
+
+            var_preds_pool_split = std_preds_pool_split**2
+            var_pool_min_max_norm = max(var_preds_pool_split) - min(var_preds_pool_split)
+            var_pool_min_max_norms.append(var_pool_min_max_norm)
+            var_preds_pool_split_minmax_normed = (var_preds_pool_split) / var_pool_min_max_norm
+            exp_var_preds_pool_split = np.exp(var_preds_pool_split_minmax_normed * lmbda)
+            exp_pool_sum_norms.append(np.sum(exp_var_preds_pool_split))
+
+            exp_vals_pool_list_of_vecs_all_steps.append(exp_var_preds_pool_split) 
+
+            exp_var_preds_pool_split_sorted = np.sort(exp_var_preds_pool_split)
+
+            
+            ## 3. Compute unnormalized weights for calibration data
+            ycal_preds_split, std_preds_cal_split_ = gpr_split.predict(Xcal_split, return_std=True)
+            std_preds_cal_split = get_f_std(std_preds_cal_split_, gpr_split)
+
+            var_preds_cal_split = std_preds_cal_split**2
+            var_preds_cal_split_minmax_normed = (var_preds_cal_split) / (max(var_preds_pool_split) - min(var_preds_pool_split))
+            exp_var_preds_cal_split = np.exp(var_preds_cal_split_minmax_normed * lmbda)
+
+
+            ## 4. Compute bound on weight
+            i_B, B = compute_weight_bound_binary_search(prob_bound_inf, exp_var_preds_cal_split, exp_var_preds_pool_split_sorted, start=0, end=len(exp_var_preds_pool_split_sorted)-1, alpha=alpha)
+            weight_bounds.append(B)
+
+
+            ## 4.5 (Drew added 20250707) Control proposal distribution based on feasible set risk control
+            # compute_risk_control_weights(X_cal_test, Feasible_cal, var_pool_min_max_norm, exp_var_preds_pool_split_sorted, Xpool_split,\
+            #                              gpr_model, lmbda, source_pdf, alpha=0.1)
+            if cdt_risk_control != 'Y':
+                pc_param = 0 ## Default risk control parameter is 0 (no risk control)
+                ## log space so means exp(0) <-> lik_ratio_bound = 1
             else:
-                Y_all = noisy_measurements(all_inds, eval('Y_'+dataset), None, noise_magnitude, seed)
-
-            ## Note: Validation set won't change, train and pool will
-            np.random.seed(seed)
-            val_inds = list(np.random.choice(eval('n_'+dataset),n_val,replace=False))
-            non_val_inds = np.setdiff1d(all_inds, val_inds)
-            X_nonval = X_all[non_val_inds]
-
-            
-
-            ## Bias initial sampling of training and calibration data to simulate selection bias in active learning
-            # X_nonval_pca_, pca_fitted = get_PCA(X_nonval)
-            # X_nonval_pca_, pca_fitted = get_PCA(X_all) ## (20250708: having this
-            X_nonval_pca_ = pca_all_fitted.transform(X_nonval)
-            X_nonval_pca = X_nonval_pca_.flatten()
-            min_X_nonval_pca = min(X_nonval_pca)
-            max_X_nonval_pca = max(X_nonval_pca)
-            X_nonval_pca_minmax = (X_nonval_pca - min_X_nonval_pca) / (max_X_nonval_pca - min_X_nonval_pca)
-            X_nonval_pca_minmax_nonvals_exp = np.exp(X_nonval_pca_minmax * initial_sampling_bias)
-            sum_X_nonval_pca_minmax_nonvals_exp = np.sum(X_nonval_pca_minmax_nonvals_exp)
-            X_nonval_pca_minmax_nonvals_exp_normed = X_nonval_pca_minmax_nonvals_exp / sum_X_nonval_pca_minmax_nonvals_exp
-
-            # upper_q_exp_normed_val = np.quantile(X_nonval_pca_minmax_nonvals_exp_normed, 0.75)
-
-            # def source_pdf(X, min_X_nonval_pca, max_X_nonval_pca, initial_sampling_bias, sum_X_nonval_pca_minmax_nonvals_exp, pca_fitted):
-            def source_pdf(X):
-                X_pca = pca_all_fitted.transform(X)
-                X_pca_minmax = (X_pca - min_X_nonval_pca) / (max_X_nonval_pca - min_X_nonval_pca)
-                X_pca_minmax_exp = np.exp(X_pca_minmax * initial_sampling_bias)
-                X_pca_minmax_exp_normed = X_pca_minmax_exp / sum_X_nonval_pca_minmax_nonvals_exp
-                return X_pca_minmax_exp_normed.flatten()
-
-            train_inds = list(np.random.choice(non_val_inds, n_initial_all, replace=replacement, p=X_nonval_pca_minmax_nonvals_exp_normed))
-
-            ## Pool inds are those not in training or validation data.
-            pool_inds = list(np.setdiff1d(np.setdiff1d(np.arange(eval('n_'+dataset)),train_inds), val_inds))
-
-            ## Create validation set (won't change)
-            Xval = eval('X_'+dataset)[val_inds]
-            yval = Y_all[val_inds]
-            Feasible_val = Feasible_all[val_inds]
-
-            idx_split = list(np.random.permutation(train_inds))
-            train_inds_split, cal_inds_split = list(idx_split[:n_train_proper_initial]), list(idx_split[n_train_proper_initial:])
-
-            ## Note: Calibration set for split won't change
-            Xtrain_split = eval('X_'+dataset)[train_inds_split]
-            ytrain_split = Y_all[train_inds_split]
-            Feasible_train_split = Feasible_all[train_inds_split]
-            
-            # print(f'np.histogram(X_all_pca_exp_rel_ranks_logistic) : {np.histogram(X_all_pca_exp_rel_ranks_logistic)}')
-            print(f'np.mean(Feasible_train_split) : {np.mean(Feasible_train_split)}')
-            print(f'np.median(Feasible_train_split) : {np.median(Feasible_train_split)}')
-            
-            Xcal_split = eval('X_'+dataset)[cal_inds_split]
-            ycal_split = Y_all[cal_inds_split]
-            Feasible_cal_split = Feasible_all[cal_inds_split]
-            print(f'np.mean(Feasible_cal_split) : {np.mean(Feasible_cal_split)}')
-            print(f'np.median(Feasible_cal_split) : {np.median(Feasible_cal_split)}')
-
-            source_risk_ = np.mean(np.concatenate((Feasible_train_split, Feasible_cal_split)))
-            print(f"source risk : {1-source_risk_}")
-            
-            ## Pool inds for split are initially the same but will be different later
-            pool_inds_split = list(np.setdiff1d(np.setdiff1d(np.arange(eval('n_'+dataset)),train_inds), val_inds))
-            Feasible_pool_split = Feasible_all[pool_inds_split]
-            print(f'np.mean(Feasible_pool_split) : {np.mean(Feasible_pool_split)}')
-            print(f'np.median(Feasible_pool_split) : {np.median(Feasible_pool_split)}')
-            
-
-            ## Initialize train and pool data for sample splitting (will change)
-            Xpool_split = eval('X_'+dataset)[pool_inds_split]
-            ypool_split = Y_all[pool_inds_split]
-
-            source_densities_pool = source_pdf(Xpool_split)
-
-
-            #### Keep track of unconstrained and constrained densities (and important constants) for pool and cal set
-            ## Pool:
-            exp_vals_pool_list_of_vecs_all_steps = [source_densities_pool] ## Unconstrained densities
-            constrained_densities_pool_running_list = [source_densities_pool] ## Constrained densities
-
-            ## Important constants
-            max_constrained_densities_pool_running_list = [np.max(source_densities_pool)]
-            var_pool_min_max_norms = [None]
-            exp_pool_sum_norms = [np.sum(source_densities_pool)]
-            pc_params_list = [None]
-
-            ## Cal:
-            constrained_densities_cal_running_list = [list(source_pdf(Xcal_split))] ## Note: First entry will be source_pdf
-
-            
-            # Feasible_test_split = []
-            
-            w_split_mus_prev_steps = [None]
-
-            ## t_cal = (num points in calibration set actively selected) + 1
-            t_cal = 1
-
-            ## Initialize alpha_aci_curr to alpha
-            alpha_aci_curr = alpha
-            weight_bounds = []
-
-            for step in range(n_steps):
-
-                ## 1. Fit Gaussian process regression and use it to select queries from pool
-                gpr_split = muh_fun.fit(Xtrain_split, ytrain_split)
-
-                ## 2. Compute unnormalized weights for pool
-                y_preds_pool_split, std_preds_pool_split_ = gpr_split.predict(Xpool_split, return_std=True)
-                std_preds_pool_split = get_f_std(std_preds_pool_split_, gpr_split)
-
-                var_preds_pool_split = std_preds_pool_split**2
-                var_pool_min_max_norm = max(var_preds_pool_split) - min(var_preds_pool_split)
-                var_pool_min_max_norms.append(var_pool_min_max_norm)
-                var_preds_pool_split_minmax_normed = (var_preds_pool_split) / var_pool_min_max_norm
-                exp_var_preds_pool_split = np.exp(var_preds_pool_split_minmax_normed * lmbda)
-                exp_pool_sum_norms.append(np.sum(exp_var_preds_pool_split))
-
-                exp_vals_pool_list_of_vecs_all_steps.append(exp_var_preds_pool_split) 
-
-                exp_var_preds_pool_split_sorted = np.sort(exp_var_preds_pool_split)
-
+                if step == 0:
+                    pc_param = 0 #np.inf
                 
-                ## 3. Compute unnormalized weights for calibration data
-                ycal_preds_split, std_preds_cal_split_ = gpr_split.predict(Xcal_split, return_std=True)
-                std_preds_cal_split = get_f_std(std_preds_cal_split_, gpr_split)
+            # source_densities_pool = source_pdf(Xpool_split)
+            source_densities_cal  = source_pdf(Xcal_split)
+            pc_densities_pool = None
+            pc_densities_cal = None
 
-                var_preds_cal_split = std_preds_cal_split**2
-                var_preds_cal_split_minmax_normed = (var_preds_cal_split) / (max(var_preds_pool_split) - min(var_preds_pool_split))
-                exp_var_preds_cal_split = np.exp(var_preds_cal_split_minmax_normed * lmbda)
+            exp_var_preds_pool_split_sum = np.sum(exp_var_preds_pool_split)
+            exp_var_preds_pool_split_normed = exp_var_preds_pool_split / exp_var_preds_pool_split_sum
+            # print(f'max pool lik ratio : {max(exp_var_preds_pool_split_normed / source_densities_pool)}')
 
-
-                ## 4. Compute bound on weight
-                i_B, B = compute_weight_bound_binary_search(prob_bound_inf, exp_var_preds_cal_split, exp_var_preds_pool_split_sorted, start=0, end=len(exp_var_preds_pool_split_sorted)-1, alpha=alpha)
-                weight_bounds.append(B)
+            mixture_weights = np.concatenate((np.array([n_cal_initial]), np.ones(len(w_split_mus_prev_steps)-1)))
 
 
-                ## 4.5 (Drew added 20250707) Control proposal distribution based on feasible set risk control
-                # compute_risk_control_weights(X_cal_test, Feasible_cal, var_pool_min_max_norm, exp_var_preds_pool_split_sorted, Xpool_split,\
-                #                              gpr_model, lmbda, source_pdf, alpha=0.1)
-                if aci_risk_control != 'Y':
-                    pc_param = 0 ## Default risk control parameter is 0 (no risk control)
-                    ## log space so means exp(0) <-> lik_ratio_bound = 1
+            
+            if (risk_control == 'Y'):
+                constrained_densities_pool_running_arr = np.array(constrained_densities_pool_running_list)
+
+
+                if (cdt_risk_control == 'Y'):
+                    pc_densities_pool, pc_densities_cal, pc_lik_ratio_cal, pool_mixture_pdf_T_min_1, pc_param = \
+                                                compute_risk_control_weights_lik_ratio_preset_beta(Xcal_split,  Feasible_cal_split, \
+                                                                                        mixture_weights, var_pool_min_max_norm, \
+                                                                                        exp_var_preds_pool_split, \
+                                                                                        source_densities_cal, \
+                                                                                        source_densities_pool, gpr_split, lmbda, \
+                                                                                        constrained_densities_cal_running_list, \
+                                                                                        constrained_densities_pool_running_list, 
+                                                                                        pc_param, \
+                                                                                        constrain_vs_init=constrain_vs_init,
+                                                                                        alpha=pc_alpha)
+                    
                 else:
-                    if step == 0:
-                        pc_param = 0 #np.inf
+                    pc_densities_pool, pc_densities_cal, pc_lik_ratio_cal, pool_mixture_pdf_T_min_1, pc_param = \
+                                                compute_risk_control_weights_lik_ratio(Xcal_split,  Feasible_cal_split, \
+                                                                                        mixture_weights, var_pool_min_max_norm, \
+                                                                                        exp_var_preds_pool_split, \
+                                                                                        source_densities_cal, \
+                                                                                        source_densities_pool, gpr_split, lmbda, \
+                                                                                        constrained_densities_cal_running_list, \
+                                                                                        constrained_densities_pool_running_list, \
+                                                                                        constrain_vs_init=constrain_vs_init,
+                                                                                        alpha=pc_alpha)
+
                     
-                # source_densities_pool = source_pdf(Xpool_split)
-                source_densities_cal  = source_pdf(Xcal_split)
-                pc_densities_pool = None
-                pc_densities_cal = None
-
-                exp_var_preds_pool_split_sum = np.sum(exp_var_preds_pool_split)
-                exp_var_preds_pool_split_normed = exp_var_preds_pool_split / exp_var_preds_pool_split_sum
-                # print(f'max pool lik ratio : {max(exp_var_preds_pool_split_normed / source_densities_pool)}')
-
-                mixture_weights = np.concatenate((np.array([n_cal_initial]), np.ones(len(w_split_mus_prev_steps)-1)))
-
-
-                ## For MEPS data, at each iteration re-define "Feasible" indicators 
-                ## as whether actual healthcare utilization is no more than predicted + tolerance
-                # if dataset == 'meps':
-                #     y_preds_pool_split_ = gpr_split.predict(Xpool_split, return_std=False)
-                #     y_preds_cal_split_ = gpr_split.predict(Xcal_split, return_std=False)
-                #     y_preds_train_split_ = gpr_split.predict(Xtrain_split, return_std=False)
-                #     y_preds_val_split_ = gpr_split.predict(Xval, return_std=False)
                     
-                #     Feasible_pool_split = np.array(ypool_split <= y_preds_pool_split_ + meps_constraint_tol).astype(int)
-                #     Feasible_cal_split = np.array(ycal_split <= y_preds_cal_split_ + meps_constraint_tol).astype(int)
-                #     Feasible_train_split = np.array(ytrain_split <= y_preds_train_split_ + meps_constraint_tol).astype(int)
-                #     Feasible_val = np.array(yval <= y_preds_val_split_ + meps_constraint_tol).astype(int)
+                pool_mixture_pdf_T_min_1_list = list(pool_mixture_pdf_T_min_1)
+
+                
+            else:
+                pc_densities_pool =  exp_var_preds_pool_split_normed
+                pc_densities_cal = exp_var_preds_cal_split / exp_var_preds_pool_split_sum
+                # pc_densities_cal_test = np.concatenate((pc_densities_cal, np.max(pc_densities_pool)))
+                pc_param = np.inf
+
+            constrained_densities_cal_running_list.append(list(pc_densities_cal))
+            constrained_densities_pool_running_list.append(list(pc_densities_pool))
+            max_constrained_densities_pool_running_list.append([max(pc_densities_pool)])
+                
+            pc_params_list.append(pc_param)
+
+
+            ## NOTE: nan to num and re-normalizing here is avoiding numerical issues, but may sacrifice exact precision in some extreme cases
+            probs_pool_split = np.nan_to_num(pc_densities_pool, nan=1.0) 
+            probs_pool_split = probs_pool_split / np.sum(probs_pool_split)
                 
                 
-                if (risk_control == 'Y'):
-                    constrained_densities_pool_running_arr = np.array(constrained_densities_pool_running_list)
-                    # print(f'constrained_densities_pool_running_arr shape : {constrained_densities_pool_running_arr.shape}')
-                    # print(f'constrained_densities_pool_running_arr : {constrained_densities_pool_running_arr}')
-                    # pool_mixture_pdf_T_min_1 = list(mixture_pdf_from_densities_mat(constrained_densities_pool_running_arr, mixture_weights))
-                    # print(f'pool_mixture_pdf_T_min_1 : {pool_mixture_pdf_T_min_1}')
+            
 
-                    if (aci_risk_control == 'Y'):
-                        pc_densities_pool, pc_densities_cal, pc_lik_ratio_cal, pool_mixture_pdf_T_min_1, pc_param = \
-                                                    compute_risk_control_weights_lik_ratio_preset_beta(Xcal_split,  Feasible_cal_split, \
-                                                                                            mixture_weights, var_pool_min_max_norm, \
-                                                                                            exp_var_preds_pool_split, \
-                                                                                            source_densities_cal, \
-                                                                                            source_densities_pool, gpr_split, lmbda, \
-                                                                                            constrained_densities_cal_running_list, \
-                                                                                            constrained_densities_pool_running_list, 
-                                                                                            pc_param, \
-                                                                                            constrain_vs_init=constrain_vs_init,
-                                                                                            alpha=pc_alpha)
-                        
+            query_ann_inds_split = list(np.random.choice(pool_inds_split, n_queries_ann, replace=replacement, p=probs_pool_split)) 
+
+            Xtest_split = eval('X_'+dataset)[query_ann_inds_split]
+            if heteroscedastic == 'Y':
+                ytest_split = noisy_measurements(query_ann_inds_split, eval('Y_'+dataset), eval('errs_'+dataset), noise_magnitude, seed)
+            else:
+                ytest_split = noisy_measurements(query_ann_inds_split, eval('Y_'+dataset), None, noise_magnitude, seed)
+                
+            ## Feasible set annotations (Added by Drew 20250707)
+            Feasible_test_split = Feasible_all[query_ann_inds_split]
+
+            
+            ## Cal Test densities
+            test_idx_in_pool = [pool_inds_split.index(query_ann_inds_split[j]) for j in range(n_queries_ann)]
+            
+            pc_densities_test = probs_pool_split[test_idx_in_pool]
+            pc_densities_cal_test = np.concatenate((pc_densities_cal, np.atleast_1d(pc_densities_test)))
+
+
+            ## Get mixture CP weights
+            if (risk_control == 'Y'):
+                mixture_densities_test = np.array([pool_mixture_pdf_T_min_1_list[j] for j in test_idx_in_pool])
+                pc_lik_ratio_test = np.atleast_1d(pc_densities_test / mixture_densities_test)
+
+                pc_lik_ratio_cal_test_normalized = np.zeros((n_queries_ann, len(Xcal_split) + 1))
+                for j in range(n_queries_ann):
+                    print(f'pc_lik_ratio_test : {pc_lik_ratio_test}')
+                    pc_lik_ratio_cal_normalized = pc_lik_ratio_cal / (np.sum(pc_lik_ratio_cal) + pc_lik_ratio_test[j])
+                    pc_lik_ratio_test_normalized = np.atleast_1d(pc_lik_ratio_test[j] / (np.sum(pc_lik_ratio_cal) + pc_lik_ratio_test[j]))
+                    pc_lik_ratio_cal_test_normalized[j] = np.concatenate((pc_lik_ratio_cal_normalized, np.atleast_1d(pc_lik_ratio_test_normalized)))
+            # pc_lik_ratio_cal_test_normalized = np.concatenate((pc_lik_ratio_cal_normalized, [pc_lik_ratio_test_normalized]))
+            
+            else:
+                pc_lik_ratio_cal_test_normalized = np.array([pc_densities_cal_test / np.sum(pc_densities_cal_test)])
+
+            
+            ## 6. For later MSE calculation: Compute predictions on validation data
+            y_preds_val_split, std_preds_val_split_ = gpr_split.predict(Xval, return_std=True)
+            std_preds_val_split = get_f_std(std_preds_val_split_, gpr_split)
+
+            ytest_preds_split = gpr_split.predict(Xtest_split)
+
+            
+            ## 7. Only if sampling without replacement, remove queried point from pool
+            ## (note, code not tested on without replacement case yet)
+            if (not replacement):
+
+                pool_inds_split = list(set(pool_inds_split) - set(query_ann_inds_split))
+                Xpool_split = eval('X_'+dataset)[pool_inds_split]
+
+
+            ## Update running densities list of lists for cal set (now has cal and test densities)
+
+            w_split_mus_prev_steps.append(deepcopy(gpr_split))
+            
+            for t in range(len(constrained_densities_cal_running_list)):
+                if (t == 0):
+                    source_pdf_test = source_pdf(Xtest_split)
+                    for j in range(len(Xtest_split)):
+                        constrained_densities_cal_running_list[t].append(source_pdf_test[j])
+                else:
+                    if constrain_vs_init == 'Y':
+                        constrained_pdf_test = constrained_pdf_gpr_lik_ratio(Xtest_split, var_pool_min_max_norms[t], exp_pool_sum_norms[t], w_split_mus_prev_steps[t], lmbda, pc_params_list[t], constrained_densities_pool_running_list[0], constrained_densities_cal_running_list[0][-1], pc_densities_pool)
                     else:
-                        pc_densities_pool, pc_densities_cal, pc_lik_ratio_cal, pool_mixture_pdf_T_min_1, pc_param = \
-                                                    compute_risk_control_weights_lik_ratio(Xcal_split,  Feasible_cal_split, \
-                                                                                            mixture_weights, var_pool_min_max_norm, \
-                                                                                            exp_var_preds_pool_split, \
-                                                                                            source_densities_cal, \
-                                                                                            source_densities_pool, gpr_split, lmbda, \
-                                                                                            constrained_densities_cal_running_list, \
-                                                                                            constrained_densities_pool_running_list, \
-                                                                                            constrain_vs_init=constrain_vs_init,
-                                                                                            alpha=pc_alpha)
+                        constrained_pdf_test = constrained_pdf_gpr_lik_ratio(Xtest_split, var_pool_min_max_norms[t], exp_pool_sum_norms[t], w_split_mus_prev_steps[t], lmbda, pc_params_list[t], constrained_densities_pool_running_list[-1], constrained_densities_cal_running_list[-1][-1], pc_densities_pool)
+                    for j in range(len(Xtest_split)):
+                        constrained_densities_cal_running_list[t].append(constrained_pdf_test[j])
 
-                        
-                        
-                    pool_mixture_pdf_T_min_1_list = list(pool_mixture_pdf_T_min_1)
+            
+            if compute_pred_set_metrics == 'Y':
+                PIs, w_split_mus_prev_steps, weights_normalized_wsplit_all = split_mfcs_AL.compute_confidence_sets_active(Xtrain_split, Xcal_split, ytrain_split, ycal_split, Xtest_split, ytest_split, Xpool_split, w_split_mus_prev_steps, exp_vals_pool_list_of_vecs_all_steps, constrained_densities_cal_running_list, constrained_densities_pool_running_list, pc_lik_ratio_cal_test_normalized, var_pool_min_max_norms, exp_pool_sum_norms, method_names, pc_densities_cal_test, pc_densities_pool, t_cal=t_cal, X_dataset = eval('X_'+dataset), n_cal_initial = n_cal_initial, alpha_aci_curr = alpha_aci_curr, weight_bounds = weight_bounds, source_pdf=source_pdf, pc_params_list=pc_params_list, weight_depth_maxes=weight_depth_maxes, lmbda = lmbda, bandwidth = 1.0, alpha=alpha, n_initial_all = n_initial_all, n_dataset = eval('n_'+dataset), replacement = replacement) #, record_weights = record_weights)
 
-                    
-                else:
-                    pc_densities_pool =  exp_var_preds_pool_split_normed
-                    pc_densities_cal = exp_var_preds_cal_split / exp_var_preds_pool_split_sum
-                    # pc_densities_cal_test = np.concatenate((pc_densities_cal, np.max(pc_densities_pool)))
-                    pc_param = np.inf
-
-                constrained_densities_cal_running_list.append(list(pc_densities_cal))
-                constrained_densities_pool_running_list.append(list(pc_densities_pool))
-                max_constrained_densities_pool_running_list.append([max(pc_densities_pool)])
-                    
-                pc_params_list.append(pc_param)
-                # pc_params_list.append(1)
-                
-                # pc_densities_pool = pc_param * source_densities_pool + (1 - pc_param) * (exp_var_preds_pool_split / np.sum(exp_var_preds_pool_split))
-
-                # pc_densities_cal = pc_param * source_densities_cal + (1 - pc_param) * (exp_var_preds_cal_split / np.sum(exp_var_preds_cal_split))
-
-                # print(f'pc_param : {pc_param}')
-
-                ## NOTE: nan to num and re-normalizing here is avoiding numerical issues, but may sacrifice exact precision in some extreme cases
-                probs_pool_split = np.nan_to_num(pc_densities_pool, nan=1.0) 
-                probs_pool_split = probs_pool_split / np.sum(probs_pool_split)
-                    
-                    
-                    
-                # else:
-                #     ## 5. Compute normalized pool weights and use those for sampling a query point
-                #     probs_pool_split = np.minimum(exp_var_preds_pool_split, B) / np.sum(np.minimum(exp_var_preds_pool_split, B))
-
-                
-                
-
-                query_ann_inds_split = list(np.random.choice(pool_inds_split, n_queries_ann, replace=replacement, p=probs_pool_split)) 
-
-                Xtest_split = eval('X_'+dataset)[query_ann_inds_split]
-                if heteroscedastic == 'Y':
-                    ytest_split = noisy_measurements(query_ann_inds_split, eval('Y_'+dataset), eval('errs_'+dataset), noise_magnitude, seed)
-                else:
-                    ytest_split = noisy_measurements(query_ann_inds_split, eval('Y_'+dataset), None, noise_magnitude, seed)
-                    
-                ## Feasible set annotations (Added by Drew 20250707)
-                Feasible_test_split = Feasible_all[query_ann_inds_split]
-
-                
-                ## Cal Test densities
-                test_idx_in_pool = [pool_inds_split.index(query_ann_inds_split[j]) for j in range(n_queries_ann)]
-                
-                pc_densities_test = probs_pool_split[test_idx_in_pool]
-                pc_densities_cal_test = np.concatenate((pc_densities_cal, np.atleast_1d(pc_densities_test)))
-
-                # print(f'pool_inds_split shape : {np.shape(pool_inds_split)}')
-                # print(f'pool_mixture_pdf_T_min_1 shape : {np.shape(pool_mixture_pdf_T_min_1)}')
-                
-                ## Get mixture CP weights
-                if (risk_control == 'Y'):
-                    mixture_densities_test = np.array([pool_mixture_pdf_T_min_1_list[j] for j in test_idx_in_pool])
-                    pc_lik_ratio_test = np.atleast_1d(pc_densities_test / mixture_densities_test)
-
-                    pc_lik_ratio_cal_test_normalized = np.zeros((n_queries_ann, len(Xcal_split) + 1))
-                    for j in range(n_queries_ann):
-                        print(f'pc_lik_ratio_test : {pc_lik_ratio_test}')
-                        pc_lik_ratio_cal_normalized = pc_lik_ratio_cal / (np.sum(pc_lik_ratio_cal) + pc_lik_ratio_test[j])
-                        pc_lik_ratio_test_normalized = np.atleast_1d(pc_lik_ratio_test[j] / (np.sum(pc_lik_ratio_cal) + pc_lik_ratio_test[j]))
-                        pc_lik_ratio_cal_test_normalized[j] = np.concatenate((pc_lik_ratio_cal_normalized, np.atleast_1d(pc_lik_ratio_test_normalized)))
-                # pc_lik_ratio_cal_test_normalized = np.concatenate((pc_lik_ratio_cal_normalized, [pc_lik_ratio_test_normalized]))
-                
-                else:
-                    pc_lik_ratio_cal_test_normalized = np.array([pc_densities_cal_test / np.sum(pc_densities_cal_test)])
-
-                # print(f"pc_lik_ratio_cal_test_normalized shape : {np.shape(pc_lik_ratio_cal_test_normalized)}")
-
-                # source_density_test = source_pdf(Xtest_split)
-                # # ## Compute (unnormalized) total test point weight
-                # _, std_muh_test_ = muh_split_curr.predict(Xtest_split, return_std=True)
-                # std_muh_test = get_f_std(std_muh_test_, gpr_split)
-                
-                # var_test_muh_test = std_muh_test**2
-                # var_test_muh_test_minmax_normed = (var_test_muh_test)  / (max(var_preds_pool_split) - min(var_preds_pool_split))
-                # exp_test_val = np.exp(var_cal_test_muh_test_minmax_normed * lmbda)
-                # test_density = exp_test_val / exp_pool_sum_norms[-1]
-
-                # pc_density_test = pc_param * source_density_test + (1 - pc_param) * test_density
-
-                # pc_densities_cal_test = np.concatenate((pc_densities_cal, [pc_density_test]))
+            MSE_split = np.mean((y_preds_val_split - yval)**2)
             
 
-                
-                ## 6. For later MSE calculation: Compute predictions on validation data
-                y_preds_val_split, std_preds_val_split_ = gpr_split.predict(Xval, return_std=True)
-                std_preds_val_split = get_f_std(std_preds_val_split_, gpr_split)
+            for m_i, method in enumerate(method_names):
 
-                ytest_preds_split = gpr_split.predict(Xtest_split)
-
-                
-                ## 7. Only if sampling without replacement, remove queried point from pool
-                ## (note, code not tested on without replacement case yet)
-                if (not replacement):
-
-                    pool_inds_split = list(set(pool_inds_split) - set(query_ann_inds_split))
-                    Xpool_split = eval('X_'+dataset)[pool_inds_split]
-
-
-                ## Update running densities list of lists for cal set (now has cal and test densities)
-                # print(f'len(constrained_densities_cal_running_list) : {len(constrained_densities_cal_running_list)}')
-                # print(f'len var_pool_min_max_norms : {len(var_pool_min_max_norms)}')
-                # print(f'len(exp_pool_sum_norms) : {len(exp_pool_sum_norms)}')
-                # print(f'len w_split_mus_prev_steps : {len(w_split_mus_prev_steps)}')
-                # print(f'len(pc_params_list) : {len(pc_params_list)} ')
-                # print(f'len(constrained_densities_pool_running_list) : {len(constrained_densities_pool_running_list)}')
-                # print(f'len(constrained_densities_cal_running_list) : {len(constrained_densities_cal_running_list)}')
-
-                w_split_mus_prev_steps.append(deepcopy(gpr_split))
-                
-                for t in range(len(constrained_densities_cal_running_list)):
-                    if (t == 0):
-                        source_pdf_test = source_pdf(Xtest_split)
-                        for j in range(len(Xtest_split)):
-                            constrained_densities_cal_running_list[t].append(source_pdf_test[j])
-                    else:
-                        if constrain_vs_init == 'Y':
-                            constrained_pdf_test = constrained_pdf_gpr_lik_ratio(Xtest_split, var_pool_min_max_norms[t], exp_pool_sum_norms[t], w_split_mus_prev_steps[t], lmbda, pc_params_list[t], constrained_densities_pool_running_list[0], constrained_densities_cal_running_list[0][-1], pc_densities_pool)
-                        else:
-                            constrained_pdf_test = constrained_pdf_gpr_lik_ratio(Xtest_split, var_pool_min_max_norms[t], exp_pool_sum_norms[t], w_split_mus_prev_steps[t], lmbda, pc_params_list[t], constrained_densities_pool_running_list[-1], constrained_densities_cal_running_list[-1][-1], pc_densities_pool)
-                        for j in range(len(Xtest_split)):
-                            constrained_densities_cal_running_list[t].append(constrained_pdf_test[j])
-
-                
-
-                PIs, w_split_mus_prev_steps, weights_normalized_wsplit_all = split_mfcs_AL.compute_confidence_sets_active(Xtrain_split, Xcal_split, ytrain_split, ycal_split, Xtest_split, ytest_split, Xpool_split, w_split_mus_prev_steps, exp_vals_pool_list_of_vecs_all_steps, constrained_densities_cal_running_list, constrained_densities_pool_running_list, pc_lik_ratio_cal_test_normalized, var_pool_min_max_norms, exp_pool_sum_norms, method_names, pc_densities_cal_test, pc_densities_pool, t_cal=t_cal, X_dataset = eval('X_'+dataset), n_cal_initial = n_cal_initial, alpha_aci_curr = alpha_aci_curr, weight_bounds = weight_bounds, source_pdf=source_pdf, pc_params_list=pc_params_list, weight_depth_maxes=weight_depth_maxes, lmbda = lmbda, bandwidth = 1.0, alpha=alpha, n_initial_all = n_initial_all, n_dataset = eval('n_'+dataset), replacement = replacement, record_weights = record_weights)
-
-                MSE_split = np.mean((y_preds_val_split - yval)**2)
-                
-                # print(f'Feasible_test_split : {Feasible_test_split[0]}')
-
-                for m_i, method in enumerate(method_names):
-
+                if compute_pred_set_metrics == 'Y':
                     coverage_by_seed = ((PIs[method]['lower'] <= ytest_split)&(PIs[method]['upper'] >= ytest_split)).mean()
-                    muh_test_by_seed = ytest_preds_split.mean()
+                    
                     coverage_all = ((PIs[method]['lower'] <= ytest_split)&(PIs[method]['upper'] >= ytest_split))
-                    muh_test_all = ytest_preds_split
-                    ytest_method = ytest_split
-                    MSE = MSE_split
-
-
                     width_by_seed = (PIs[method]['upper'] - PIs[method]['lower']).median()
                     width_all = (PIs[method]['upper'] - PIs[method]['lower'])
-
-                    if (m_i == 0 or method == 'aci'):
-                        
-                        if (record_weights):
-                            cal_test_weights = np.concatenate([np.repeat(1 / (n_cal_initial + t_cal), \
-                                                                     n_cal_initial + t_cal - 1), \
-                                                           np.repeat(0, n_steps-t_cal), \
-                                                           [1/(n_cal_initial + t_cal)]])
-
-
-                    else:
-                        if (record_weights):
-                            cal_test_weights = np.concatenate([weights_normalized_wsplit_all[m_i-1][:-1], \
-                                                               np.repeat(0, n_steps-t_cal), [weights_normalized_wsplit_all[m_i-1][-1]]])
-
-
-                    prop_B = i_B / len(pool_inds_split)
-
-                    # print(f'Feasible_test_split : {Feasible_test_split}')
                     
-                    if (record_weights):
-                        results_by_seed.loc[len(results_by_seed)]=np.concatenate([[seed,step,t_cal-1, dataset, muh, method,coverage_by_seed,\
-                                                                                   width_by_seed,MSE,muh_test_all[0], ytest_method[0], B, prop_B,\
-                                                                                   alpha_aci_curr, Feasible_test_split[0]], cal_test_weights])
-                    else:
-                        results_by_seed.loc[len(results_by_seed)]=np.concatenate([[seed,step,t_cal-1, dataset, muh, method,coverage_by_seed,\
-                                                                                   width_by_seed,MSE,muh_test_all[0], ytest_method[0], B, prop_B,\
-                                                                                   alpha_aci_curr, Feasible_test_split[0]]])
+                muh_test_by_seed = ytest_preds_split.mean()
+                muh_test_all = ytest_preds_split
+                ytest_method = ytest_split
+                MSE = MSE_split
 
-                    if (method == 'aci'):
 
+
+
+                prop_B = i_B / len(pool_inds_split)
+
+
+                if compute_pred_set_metrics == 'Y':
+                    results_by_seed.loc[len(results_by_seed)]=np.concatenate([[seed,step,t_cal-1, dataset, muh, method,coverage_by_seed,\
+                                                                           width_by_seed,MSE,muh_test_all[0], ytest_method[0], B, prop_B,\
+                                                                           alpha_aci_curr, Feasible_test_split[0]]])
+
+                    if (method == 'cdt'):
+    
                         if (PIs[method]['lower'].values[0] <= ytest_split[0] and PIs[method]['upper'].values[0] >= ytest_split[0]):
                             alpha_aci_curr = min(alpha_aci_curr + aci_step_size * (alpha),1)
                         else:
                             alpha_aci_curr = max(alpha_aci_curr + aci_step_size * (alpha - 1),0)
 
-                ## Update ACI param
-                if aci_risk_control == 'Y':
-                    if Feasible_test_split == 1:
-                        ## If feasible (0 loss)
-                        pc_param = pc_param + aci_step_size * (pc_alpha)
-                    else:
-                        pc_param = pc_param + aci_step_size * (pc_alpha - 1)
-                    print(f"aci pc_param_updated : {pc_param}")
-
-                ## Add point that was queried for annotation to the training or calibration data 
-                U = np.random.uniform()
-                n_query = len(query_ann_inds_split)
-                if (U <= add_to_train_split_prob):
-                    ### Update train data for sample splitting
-                    
-                    for q_ann in query_ann_inds_split:
-                        train_inds_split.append(q_ann) ## Add queried samples to training set
-
-                    Xtrain_split = eval('X_'+dataset)[train_inds_split]
-                    ytrain_split = np.concatenate((ytrain_split, ytest_split))
-
-                    ## If added point to training data, then do not record this weight function, the exp pool weights, etc
-                    w_split_mus_prev_steps = w_split_mus_prev_steps[:-1]
-                    exp_vals_pool_list_of_vecs_all_steps = exp_vals_pool_list_of_vecs_all_steps[:-1]
-                    weight_bounds = weight_bounds[:-1]
-                    var_pool_min_max_norms = var_pool_min_max_norms[:-1]
-                    exp_pool_sum_norms = exp_pool_sum_norms[:-1]
-                    pc_params_list = pc_params_list[:-1]
-
-                    constrained_densities_cal_running_list = constrained_densities_cal_running_list[:-1]
-                    constrained_densities_pool_running_list = constrained_densities_pool_running_list[:-1]
-                    max_constrained_densities_pool_running_list = max_constrained_densities_pool_running_list[:-1]
-                    # Feasible_cal_split = Feasible_cal_split[:-1]
-                    
-                    for t in range(len(constrained_densities_cal_running_list)):
-                        ## Removing all queried points bc weren't added to cal set
-                        constrained_densities_cal_running_list[t] = constrained_densities_cal_running_list[t][:-n_query]
-
-
                 else:
-                    ### Update calibration data for sample splitting
-                    for q_ann in query_ann_inds_split:
-                        cal_inds_split.append(q_ann) ## Add queried samples to training set
-
-                    Xcal_split = eval('X_'+dataset)[cal_inds_split]
-                    ycal_split = np.concatenate((ycal_split, ytest_split))
-                    Feasible_cal_split = np.concatenate((Feasible_cal_split, Feasible_test_split))
-
-                    ## Incrememnt the number of actively selected calibration points
-                    t_cal += n_query
-
-                    source_densities_cal = np.concatenate((source_densities_cal, source_pdf(Xtest_split)))
-                    mixture_weights = np.concatenate((mixture_weights, [n_query]))
-
-
-
-                # ## Rerun policy control for the incumbant policy to ensure is safe for next step, after observing Feasible_test
-                # pc_densities_pool, pc_densities_cal, pc_lik_ratio_cal, pool_mixture_pdf_T_min_1, pc_param = \
-                #                             compute_risk_control_weights_lik_ratio(Xcal_split,  Feasible_cal_split, \
-                #                                                                     mixture_weights, var_pool_min_max_norm, \
-                #                                                                     exp_var_preds_pool_split, \
-                #                                                                     source_densities_cal, \
-                #                                                                     source_densities_pool, gpr_split, lmbda, \
-                #                                                                     constrained_densities_cal_running_list, \
-                #                                                                     constrained_densities_pool_running_list, \
-                #                                                                     alpha=0.5)
-                # constrained_densities_cal_running_list[-1] = list(pc_densities_cal)
-                # constrained_densities_pool_running_list[-1] = list(pc_densities_pool)
-                # pc_params_list[-1] = pc_param
-                
-
-                # ## Update running densities list of lists for cal set
-                # for t in range(len(constrained_densities_cal_running_list)):
-                #     if (t == 0):
-                #         constrained_densities_cal_running_list[t].append(source_pdf(Xtest_split))
-                #     else:
-                #         constrained_densities_cal_running_list[t].append(constrained_pdf_gpr_lik_ratio(Xtest_split, var_pool_min_max_norms[t], exp_pool_sum_norms[t], w_split_mus_prev_steps[t], lmbda, pc_params_list[t], constrained_densities_pool_running_list[t-1], constrained_densities_cal_running_list[t-1], pc_densities_pool))
-                        
-
+                    results_by_seed.loc[len(results_by_seed)]=np.concatenate([[seed,step,t_cal-1, dataset, muh, method,MSE,muh_test_all[0], \
+                                                                               ytest_method[0], B, prop_B,\
+                                                                               alpha_aci_curr, Feasible_test_split[0]]])
                     
-        
+
+            ## Update CDT param
+            if cdt_risk_control == 'Y':
+                if Feasible_test_split == 1:
+                    ## If feasible (0 loss)
+                    pc_param = pc_param + cdt_step_size * (pc_alpha)
+                else:
+                    pc_param = pc_param + cdt_step_size * (pc_alpha - 1)
+                print(f"cdt pc_param_updated : {pc_param}")
+
+            ## Add point that was queried for annotation to the training or calibration data 
+            U = np.random.uniform()
+            n_query = len(query_ann_inds_split)
+            if (U <= add_to_train_split_prob):
+                ### Update train data for sample splitting
                 
+                for q_ann in query_ann_inds_split:
+                    train_inds_split.append(q_ann) ## Add queried samples to training set
+
+                Xtrain_split = eval('X_'+dataset)[train_inds_split]
+                ytrain_split = np.concatenate((ytrain_split, ytest_split))
+
+                ## If added point to training data, then do not record this weight function, the exp pool weights, etc
+                w_split_mus_prev_steps = w_split_mus_prev_steps[:-1]
+                exp_vals_pool_list_of_vecs_all_steps = exp_vals_pool_list_of_vecs_all_steps[:-1]
+                weight_bounds = weight_bounds[:-1]
+                var_pool_min_max_norms = var_pool_min_max_norms[:-1]
+                exp_pool_sum_norms = exp_pool_sum_norms[:-1]
+                pc_params_list = pc_params_list[:-1]
+
+                constrained_densities_cal_running_list = constrained_densities_cal_running_list[:-1]
+                constrained_densities_pool_running_list = constrained_densities_pool_running_list[:-1]
+                max_constrained_densities_pool_running_list = max_constrained_densities_pool_running_list[:-1]
+                # Feasible_cal_split = Feasible_cal_split[:-1]
+                
+                for t in range(len(constrained_densities_cal_running_list)):
+                    ## Removing all queried points bc weren't added to cal set
+                    constrained_densities_cal_running_list[t] = constrained_densities_cal_running_list[t][:-n_query]
+
+
+            else:
+                ### Update calibration data for sample splitting
+                for q_ann in query_ann_inds_split:
+                    cal_inds_split.append(q_ann) ## Add queried samples to training set
+
+                Xcal_split = eval('X_'+dataset)[cal_inds_split]
+                ycal_split = np.concatenate((ycal_split, ytest_split))
+                Feasible_cal_split = np.concatenate((Feasible_cal_split, Feasible_test_split))
+
+                ## Incrememnt the number of actively selected calibration points
+                t_cal += n_query
+
+                source_densities_cal = np.concatenate((source_densities_cal, source_pdf(Xtest_split)))
+                mixture_weights = np.concatenate((mixture_weights, [n_query]))
+
+                                
         print(f'pc_params_list : {pc_params_list}')
 
         if (((seed+1) % 25) == 0):
             src_dir = os.getcwd().removesuffix('bash_scripts')
-            output_fp = f'{src_dir}/results/{date.today()}_ALExpts_{dataset}_{muh}_nInitial{n_initial_all}_steps{n_steps}_nseed{n_seed}_lmbda{lmbda}_wDepths{str_dep_maxes}_propTrainInit{p_split_train}_addTrainProb{add_to_train_split_prob}_noise{noise_magnitude}_pcaExpSampling{initial_sampling_bias}_aciStepSize{aci_step_size}_probBoundInf{prob_bound_inf}_rc{risk_control}_aciRC{aci_risk_control}_PCalpha{pc_alpha}_cVSinit{constrain_vs_init}.csv'
+            output_fp = f'{src_dir}/results/{date.today()}_ALExpts_{dataset}_{muh}_nInitial{n_initial_all}_steps{n_steps}_nseed{n_seed}_lmbda{lmbda}_wDepths{str_dep_maxes}_propTrainInit{p_split_train}_addTrainProb{add_to_train_split_prob}_noise{noise_magnitude}_pcaExpSampling{initial_sampling_bias}_cdtStepSize{cdt_step_size}_probBoundInf{prob_bound_inf}_rc{risk_control}_cdtRC{cdt_risk_control}_PCalpha{pc_alpha}_cVSinit{constrain_vs_init}.csv'
             results_by_seed.to_csv(output_fp,index=False)
             
 # constrain_vs_init', type=str, default='Y', help='Whether to constrain vs initial policy, rather than most recent')
@@ -838,6 +752,6 @@ if __name__ == "__main__":
 
     print("Total time (minutes) : ", (end_time - start_time)/60)
     src_dir = os.getcwd().removesuffix('bash_scripts')
-    output_fp = f'{src_dir}/results/{date.today()}_ALExpts_{dataset}_{muh}_nInitial{n_initial_all}_steps{n_steps}_nseed{n_seed}_lmbda{lmbda}_wDepths{str_dep_maxes}_propTrainInit{p_split_train}_addTrainProb{add_to_train_split_prob}_noise{noise_magnitude}_pcaExpSampling{initial_sampling_bias}_aciStepSize{aci_step_size}_probBoundInf{prob_bound_inf}_rc{risk_control}_aciRC{aci_risk_control}_PCalpha{pc_alpha}_cVSinit{constrain_vs_init}.csv'
+    output_fp = f'{src_dir}/results/{date.today()}_ALExpts_{dataset}_{muh}_nInitial{n_initial_all}_steps{n_steps}_nseed{n_seed}_lmbda{lmbda}_wDepths{str_dep_maxes}_propTrainInit{p_split_train}_addTrainProb{add_to_train_split_prob}_noise{noise_magnitude}_pcaExpSampling{initial_sampling_bias}_cdtStepSize{cdt_step_size}_probBoundInf{prob_bound_inf}_rc{risk_control}_cdtRC{cdt_risk_control}_PCalpha{pc_alpha}_cVSinit{constrain_vs_init}.csv'
     results_by_seed.to_csv(output_fp,index=False)
             
