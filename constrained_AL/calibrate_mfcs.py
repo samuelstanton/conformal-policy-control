@@ -147,11 +147,13 @@ def conformal_policy_control(X_cal, Feasible_cal, mixture_weights, var_pool_min_
         constrained_pool_unnormalized = np.where(opt_safe_log_lik_ratios_pool < pc_param, opt_densities_pool, np.exp(pc_param)*np.array(constrained_densities_pool_running_list[idx_safe]))
         constrained_pool_sum = np.sum(constrained_pool_unnormalized)
         constrained_densities_pool = constrained_pool_unnormalized / constrained_pool_sum
-        constrained_densities_over_Tmin1_mixture_pool = constrained_densities_pool / Tmin1_mixture_pool
+        constrained_over_mixture_lik_ratio_pool = constrained_densities_pool / Tmin1_mixture_pool
 
+        
         if max_weight_test:
             ## Default condition (assumed in theory), conservatively over-estimate weight of unknown test point by maximum
             max_constrained_over_mixture_lik_ratio_pool = test_pt_factor*np.max(constrained_over_mixture_lik_ratio_pool)
+            
 
         else:
             max_constrained_over_mixture_lik_ratio_pool = test_pt_factor*np.sum(constrained_over_mixture_lik_ratio_pool * constrained_densities_pool)
