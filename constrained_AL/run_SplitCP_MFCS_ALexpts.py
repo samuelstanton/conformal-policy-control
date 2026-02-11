@@ -11,7 +11,7 @@ import numpy as np
 # import assay_mfcs
 import calibrate_mfcs as cal
 from calibrate_mfcs import mixture_pdf_from_densities_mat, constrained_pdf_gpr_lik_ratio
-from calibrate_mfcs import compute_risk_control_weights_lik_ratio, compute_risk_control_weights_lik_ratio_preset_beta
+from calibrate_mfcs import conformal_policy_control, compute_risk_control_weights_lik_ratio_preset_beta
 
 from sklearn.neural_network import MLPRegressor
 from sklearn.ensemble import RandomForestRegressor
@@ -535,7 +535,7 @@ if __name__ == "__main__":
                     
                 else:
                     pc_densities_pool, pc_densities_cal, pc_lik_ratio_cal, pool_mixture_pdf_T_min_1, pc_param = \
-                                                compute_risk_control_weights_lik_ratio(Xcal_split,  Feasible_cal_split, \
+                                                conformal_policy_control(Xcal_split,  Feasible_cal_split, \
                                                                                         mixture_weights, var_pool_min_max_norm, \
                                                                                         exp_var_preds_pool_split, \
                                                                                         source_densities_cal, \

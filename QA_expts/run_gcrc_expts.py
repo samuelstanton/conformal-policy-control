@@ -60,7 +60,7 @@ def run_risk_control(claim_scores : List[np.ndarray],
                          epsilon=None,
                          method_name = "gcrc", ## "gcrc", "monotized_losses_crc", "standard_crc", "ltt"
                          small_num_adjust = 1e-10,
-                         n_grid = 500, ## Number of threshold to search, ## 1000
+                         n_grid = 200, ## Number of threshold to search, ## 1000
                          B = 1, ## Maximum loss
                          loss_name = "loss_factuality_fdr"
                         ):
@@ -185,7 +185,7 @@ if __name__ == "__main__":
     parser.add_argument('--alpha_max', type=float, default=0.1, help='Maximum alpha to run experiments on')
     parser.add_argument('--alpha_inc', type=float, default=0.005, help='Increment in alphas grid')
     parser.add_argument('--cal_frac', type=float, default=0.7, help='Fraction of labeled data used for calibration (vs training propper)')
-    parser.add_argument('--n_grid', type=int, default=500, help='Number of lambdas in grid to search over')
+    parser.add_argument('--n_grid', type=int, default=200, help='Number of lambdas in grid to search over')
     parser.add_argument('--B', type=float, default=1.0, help='Upper bound on loss functions')
     
 
@@ -375,8 +375,8 @@ if __name__ == "__main__":
                            'standard_crc' : 'standard CRC (Angelopoulos, et al., 2024)',
                            'ltt' : 'LTT (Angelopoulos, et al., 2025)'}
         
-        colors_dict = {'gcrc' : BLUE, 'monotized_losses_crc' : 'C1', 'ltt' : 'C2', 'standard_crc' : 'C6'}
-        markers_dict = {'gcrc' : 'o', 'monotized_losses_crc' : 's', 'ltt' : '^', 'standard_crc' : 'X'}
+        # colors_dict = {'gcrc' : BLUE, 'monotized_losses_crc' : 'C1', 'ltt' : 'C2', 'standard_crc' : 'C6'}
+        # markers_dict = {'gcrc' : 'o', 'monotized_losses_crc' : 's', 'ltt' : '^', 'standard_crc' : 'X'}
         
         results_df = pd.DataFrame()
         results_df['alphas'] = alphas

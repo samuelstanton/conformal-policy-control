@@ -18,6 +18,7 @@ import datetime
 
 
 def get_f_std(y_std, gpr):
+
     params = gpr.kernel_.get_params()
 
     normalized_noise_var = params["k2__noise_level"]
@@ -56,18 +57,18 @@ def constrained_pdf_gpr_lik_ratio(X, var_pool_min_max_norm, exp_pool_sum_norm, g
     # print(f'pdf_vals_cal_test_unconstrained : {pdf_vals_cal_test_unconstrained}')
     # print(f'safe_densities_cal_test : {safe_densities_cal_test}')
     
-    proposal_safe_log_lik_ratios_cal_test = np.log(pdf_vals_cal_test_unconstrained / safe_densities_cal_test) ## Log lik-ratios
-    pdf_vals_cal_test_constrained = np.where(proposal_safe_log_lik_ratios_cal_test < pc_param, pdf_vals_cal_test_unconstrained, np.exp(pc_param)*np.array(safe_densities_cal_test)) ## Clipped PDFs (not normalized yet)
-    pdf_vals_cal_test_constrained_normalized = pdf_vals_cal_test_constrained / np.sum(pc_densities_pool) ## Normalized Clipped PDFs
+    opt_safe_log_lik_ratios_cal_test = np.log(pdf_vals_cal_test_unconstrained / safe_densities_cal_test) ## Log lik-ratios
+    pdf_vals_cal_test_constrained = np.where(opt_safe_log_lik_ratios_cal_test < pc_param, pdf_vals_cal_test_unconstrained, np.exp(pc_param)*np.array(safe_densities_cal_test)) ## constrained PDFs (not normalized yet)
+    pdf_vals_cal_test_constrained_normalized = pdf_vals_cal_test_constrained / np.sum(pc_densities_pool) ## Normalized constrained PDFs
 
     return pdf_vals_cal_test_constrained_normalized
 
 
 
-def compute_risk_control_weights_lik_ratio(X_cal, Feasible_cal, mixture_weights, var_pool_min_max_norm, exp_var_preds_pool_split, \
+def conformal_policy_control(X_cal, Feasible_cal, mixture_weights, var_pool_min_max_norm, exp_var_preds_pool_split, \
                                            source_densities_cal, source_densities_pool, gpr_model, lmbda, \
                                            constrained_densities_cal_running_list, constrained_densities_pool_running_list, \
-                                           alpha=0.5, constrain_vs_init='Y', max_weight_test=True):
+                                           alpha=0.5, constrain_vs_init='Y', max_weight_test=True, n_grid=200):
     '''
     X_cal                     : dim (n + t - 1, d), array where each row is a data input of dimension d
     Feasible_cal              : dim (n + t - 1), array of Feasible set indicators for cal data (not test data)
@@ -88,15 +89,15 @@ def compute_risk_control_weights_lik_ratio(X_cal, Feasible_cal, mixture_weights,
         test_pt_factor = 1
     else:
         ## Constrain relative to most recent policy
+        ## NOTE: Current guarantees may break in this case, as is assuming that most recent policy is safe asymptotically
         idx_safe = -1
         test_pt_factor = 2
 
+
     ## Check risk level in source distribution:
     source_densities_pool_max = np.max(source_densities_pool)
-    # source_densities_pool_max = np.sum(source_densities_pool * )
     source_weights_cal_pool_max = np.concatenate((source_densities_cal, [source_densities_pool_max]))
     source_weights_cal_pool_max_normalized = source_weights_cal_pool_max / np.sum(source_weights_cal_pool_max)
-
 
     if (np.sum(source_densities_cal[Feasible_cal == 0]) + source_densities_pool_max > alpha):
         
@@ -105,112 +106,102 @@ def compute_risk_control_weights_lik_ratio(X_cal, Feasible_cal, mixture_weights,
         return source_weights_cal_pool_max_normalized, 1
         
 
-    #### On Pool Set: 
-        ## 1. Get *Current, Unconstrained* (for time t) Values: (unnormalized) max val, normalization constant, & densities 
-    # exp_var_preds_pool_split_max = np.max(exp_var_preds_pool_split) ## Changed to max
-    exp_var_preds_pool_split_sum = np.sum(exp_var_preds_pool_split)
-    exp_var_preds_pool_split_normed = exp_var_preds_pool_split / exp_var_preds_pool_split_sum
 
-        ## 2. Get *Previous, Constrained Mixture* (for times 1:(t-1)) Densities
+    #### On Pool Set: ####
+    ## 1. Get *Current, Unconstrained* (for time t) densities and normalization constant
+    norm_constant_pool = np.sum(exp_var_preds_pool_split)
+    opt_densities_pool = exp_var_preds_pool_split / norm_constant_pool
+
+    ## 2. Get Mixture for Previous (for times 1:(t-1)) Constrained Densities
     constrained_densities_pool_running_arr = np.array(constrained_densities_pool_running_list)
-    pool_mixture_pdf_T_min_1 = mixture_pdf_from_densities_mat(constrained_densities_pool_running_arr, mixture_weights)
-
-    #     ## 3. Get Lik-Ratios (Current Unconstrained / Previous Constrained Mixture)
-    # pool_lik_ratio_unconstrained_over_mixture = exp_var_preds_pool_split_normed / pool_mixture_pdf_T_min_1
-    # max_pool_lik_ratio_unconstrained_over_mixture = np.max(pool_lik_ratio_unconstrained_over_mixture)
+    Tmin1_mixture_pool = mixture_pdf_from_densities_mat(constrained_densities_pool_running_arr, mixture_weights)
+    
 
     
-    #### On Cal Set: 
-        ## 1. Get *Current, Unconstrained* (for time t) Densities 
+    #### On Cal Set: ####
+    ## 1. Get *Current, Unconstrained* (for time t) Densities 
     _, std_cal_ = gpr_model.predict(X_cal, return_std=True)
     std_cal = get_f_std(std_cal_, gpr_model)
     var_cal = std_cal**2
     var_cal_normed = var_cal / var_pool_min_max_norm
-    pdf_vals = np.exp(var_cal_normed * lmbda) / exp_var_preds_pool_split_sum
+    opt_densities_cal = np.exp(var_cal_normed * lmbda) / norm_constant_pool
 
-        ## 2. Get *Previous, Constrained Mixture* (for times 1:(t-1)) Densities
+    ## 2. Get *Previous, Constrained Mixture* (for times 1:(t-1)) Densities
     constrained_densities_cal_running_arr = np.array(constrained_densities_cal_running_list)
-    mixture_pdf_T_min_1 = mixture_pdf_from_densities_mat(constrained_densities_cal_running_arr, mixture_weights)
+    Tmin1_mixture_cal = mixture_pdf_from_densities_mat(constrained_densities_cal_running_arr, mixture_weights)
 
-    ## Initialization for policy control search
-    proposal_safe_log_lik_ratios_pool = np.log(exp_var_preds_pool_split_normed / constrained_densities_pool_running_list[idx_safe])
-    proposal_safe_log_lik_ratios_cal = np.log(pdf_vals / np.array(constrained_densities_cal_running_list[idx_safe]))
+    ## 3. Get lik-ratios for optimized/safe policies. 
+    opt_safe_log_lik_ratios_pool = np.log(opt_densities_pool / constrained_densities_pool_running_list[idx_safe])
+    opt_safe_log_lik_ratios_cal = np.log(opt_densities_cal / np.array(constrained_densities_cal_running_list[idx_safe]))
     
-    max_log_lik_ratio = max(proposal_safe_log_lik_ratios_pool)
-    min_log_lik_ratio = min(proposal_safe_log_lik_ratios_pool)
-    pc_params_grid = np.linspace(min_log_lik_ratio, max_log_lik_ratio, num=200)  #[::-1]
+    ## 4. Initialization for policy control search
+    max_log_lik_ratio = max(opt_safe_log_lik_ratios_pool)
+    min_log_lik_ratio = min(opt_safe_log_lik_ratios_pool)
+    pc_params_grid = np.linspace(min_log_lik_ratio, max_log_lik_ratio, num=n_grid)  #[::-1]
     
-    ## Find the smallest risk-controlling parameter
 
-    # print(f"pc_params_grid : {pc_params_grid}")
-    # breakpoint()
+    ## 5. Loop to find the most aggressive risk-controlling parameter
     for p_i, pc_param in enumerate(pc_params_grid):
 
-        ## For Test Point: Compute max(Current Constrained Density / Previous Mixture Density)
-        # print(f'constrained_densities_pool_running_list[-1] : {constrained_densities_pool_running_list[-1]}')
-        clipped_proposal_pool_unnormalized = np.where(proposal_safe_log_lik_ratios_pool < pc_param, exp_var_preds_pool_split_normed, np.exp(pc_param)*np.array(constrained_densities_pool_running_list[idx_safe]))
-        clipped_proposal_pool_sum = np.sum(clipped_proposal_pool_unnormalized)
-        clipped_proposal_pool_normalized = clipped_proposal_pool_unnormalized / clipped_proposal_pool_sum
-        clipped_proposal_over_mixture_lik_ratio_pool = clipped_proposal_pool_normalized / pool_mixture_pdf_T_min_1
+        ## For Unknown Test Point: Compute max(Current Constrained Density / Previous Mixture Density)
+        constrained_pool_unnormalized = np.where(opt_safe_log_lik_ratios_pool < pc_param, opt_densities_pool, np.exp(pc_param)*np.array(constrained_densities_pool_running_list[idx_safe]))
+        constrained_pool_sum = np.sum(constrained_pool_unnormalized)
+        constrained_densities_pool = constrained_pool_unnormalized / constrained_pool_sum
+        constrained_densities_over_Tmin1_mixture_pool = constrained_densities_pool / Tmin1_mixture_pool
 
         if max_weight_test:
-            max_clipped_proposal_over_mixture_lik_ratio_pool = test_pt_factor*np.max(clipped_proposal_over_mixture_lik_ratio_pool)
+            ## Default condition (assumed in theory), conservatively over-estimate weight of unknown test point by maximum
+            max_constrained_over_mixture_lik_ratio_pool = test_pt_factor*np.max(constrained_over_mixture_lik_ratio_pool)
 
-            # max_clipped_proposal_over_mixture_lik_ratio_pool = 2*np.max(clipped_proposal_over_mixture_lik_ratio_pool)
-        # print(f'max lik-ratio weight : {max_clipped_proposal_over_mixture_lik_ratio_pool}')
         else:
-            max_clipped_proposal_over_mixture_lik_ratio_pool = test_pt_factor*np.sum(clipped_proposal_over_mixture_lik_ratio_pool * clipped_proposal_pool_normalized)
-            # max_clipped_proposal_over_mixture_lik_ratio_pool = 2*np.sum(clipped_proposal_over_mixture_lik_ratio_pool * clipped_proposal_pool_normalized)
-        # print(f'weighted average lik-ratio weight : {max_clipped_proposal_over_mixture_lik_ratio_pool}')
+            max_constrained_over_mixture_lik_ratio_pool = test_pt_factor*np.sum(constrained_over_mixture_lik_ratio_pool * constrained_densities_pool)
 
         
         ## For Cal Points: Compute (Current Constrained Density / Previous Mixture Density)
-        clipped_proposal_cal_unnormalized = np.where(proposal_safe_log_lik_ratios_cal < pc_param, pdf_vals, np.exp(pc_param)*np.array(constrained_densities_cal_running_list[idx_safe]))
-        clipped_proposal_cal_normalized = clipped_proposal_cal_unnormalized / clipped_proposal_pool_sum
-        clipped_proposal_over_mixture_lik_ratio_cal = clipped_proposal_cal_normalized / mixture_pdf_T_min_1
+        constrained_cal_unnormalized = np.where(opt_safe_log_lik_ratios_cal < pc_param, opt_densities_cal, np.exp(pc_param)*np.array(constrained_densities_cal_running_list[idx_safe]))
+        constrained_densities_cal = constrained_cal_unnormalized / constrained_pool_sum
+        constrained_over_mixture_lik_ratio_cal = constrained_densities_cal / Tmin1_mixture_cal
 
-        ## Compute Normalized Weights (For Cal and Test Data)
-        clipped_proposal_over_mixture_lik_ratio_cal_test = np.concatenate((clipped_proposal_over_mixture_lik_ratio_cal, [max_clipped_proposal_over_mixture_lik_ratio_pool]))
+        ## Compute Conformal Weights (For Cal and Test Data)
+        # Unnormalized conformal weights:
+        constrained_over_mixture_lik_ratio_cal_test = np.concatenate((constrained_over_mixture_lik_ratio_cal, [max_constrained_over_mixture_lik_ratio_pool]))
 
-        pc_weights_cal_test_normalized = clipped_proposal_over_mixture_lik_ratio_cal_test / np.sum(clipped_proposal_over_mixture_lik_ratio_cal_test)
+        # Normalized conformal weights:
+        pc_weights_cal_test_normalized = constrained_over_mixture_lik_ratio_cal_test / np.sum(constrained_over_mixture_lik_ratio_cal_test)
 
 
+        ## If (weighted) risk is not controlled, then stop searching and return most recent safe policy control parameter (and associated quantities)
         if (np.sum(pc_weights_cal_test_normalized[:-1][Feasible_cal == 0]) + pc_weights_cal_test_normalized[-1] > alpha or p_i == len(pc_params_grid)-1):
             
             pc_param_selected = pc_params_grid[p_i - 1] if p_i > 0 else pc_params_grid[0] #p_i
 
-                    ## For Test Point: Compute max(Current Constrained Density / Previous Mixture Density)
-            # print(f'constrained_densities_pool_running_list[-1] : {constrained_densities_pool_running_list[-1]}')
-            clipped_proposal_pool_unnormalized = np.where(proposal_safe_log_lik_ratios_pool < pc_param_selected, exp_var_preds_pool_split_normed, np.exp(pc_param_selected)*np.array(constrained_densities_pool_running_list[idx_safe]))
-            clipped_proposal_pool_sum = np.sum(clipped_proposal_pool_unnormalized)
-            clipped_proposal_pool_normalized = clipped_proposal_pool_unnormalized / clipped_proposal_pool_sum
-            clipped_proposal_over_mixture_lik_ratio_pool = clipped_proposal_pool_normalized / pool_mixture_pdf_T_min_1
+            ## For Test Point: Compute max(Current Constrained Density / Previous Mixture Density)
+            constrained_pool_unnormalized = np.where(opt_safe_log_lik_ratios_pool < pc_param_selected, opt_densities_pool, np.exp(pc_param_selected)*np.array(constrained_densities_pool_running_list[idx_safe]))
+            constrained_pool_sum = np.sum(constrained_pool_unnormalized)
+            constrained_densities_pool = constrained_pool_unnormalized / constrained_pool_sum
+            constrained_over_mixture_lik_ratio_pool = constrained_densities_pool / Tmin1_mixture_pool
             if max_weight_test:
-                max_clipped_proposal_over_mixture_lik_ratio_pool = np.max(clipped_proposal_over_mixture_lik_ratio_pool)
+                max_constrained_over_mixture_lik_ratio_pool = np.max(constrained_over_mixture_lik_ratio_pool)
     
-                # max_clipped_proposal_over_mixture_lik_ratio_pool = 2*np.max(clipped_proposal_over_mixture_lik_ratio_pool)
-            # print(f'max lik-ratio weight : {max_clipped_proposal_over_mixture_lik_ratio_pool}')
             else:
-                max_clipped_proposal_over_mixture_lik_ratio_pool = np.sum(clipped_proposal_over_mixture_lik_ratio_pool * clipped_proposal_pool_normalized)
-                # max_clipped_proposal_over_mixture_lik_ratio_pool = 2*np.sum(clipped_proposal_over_mixture_lik_ratio_pool * clipped_proposal_pool_normalized)
-            # print(f'weighted average lik-ratio weight : {max_clipped_proposal_over_mixture_lik_ratio_pool}')
-    
+                max_constrained_over_mixture_lik_ratio_pool = np.sum(constrained_over_mixture_lik_ratio_pool * constrained_densities_pool)
+
             
             ## For Cal Points: Compute (Current Constrained Density / Previous Mixture Density)
-            clipped_proposal_cal_unnormalized = np.where(proposal_safe_log_lik_ratios_cal < pc_param_selected, pdf_vals, np.exp(pc_param_selected)*np.array(constrained_densities_cal_running_list[idx_safe]))
-            clipped_proposal_cal_normalized = clipped_proposal_cal_unnormalized / clipped_proposal_pool_sum
-            clipped_proposal_over_mixture_lik_ratio_cal = clipped_proposal_cal_normalized / mixture_pdf_T_min_1
+            constrained_cal_unnormalized = np.where(opt_safe_log_lik_ratios_cal < pc_param_selected, opt_densities_cal, np.exp(pc_param_selected)*np.array(constrained_densities_cal_running_list[idx_safe]))
+            constrained_densities_cal = constrained_cal_unnormalized / constrained_pool_sum
+            constrained_over_mixture_lik_ratio_cal = constrained_densities_cal / Tmin1_mixture_cal
     
             ## Compute Normalized Weights (For Cal and Test Data)
-            clipped_proposal_over_mixture_lik_ratio_cal_test = np.concatenate((clipped_proposal_over_mixture_lik_ratio_cal, [max_clipped_proposal_over_mixture_lik_ratio_pool]))
+            constrained_over_mixture_lik_ratio_cal_test = np.concatenate((constrained_over_mixture_lik_ratio_cal, [max_constrained_over_mixture_lik_ratio_pool]))
     
-            pc_weights_cal_test_normalized = clipped_proposal_over_mixture_lik_ratio_cal_test / np.sum(clipped_proposal_over_mixture_lik_ratio_cal_test)
+            pc_weights_cal_test_normalized = constrained_over_mixture_lik_ratio_cal_test / np.sum(constrained_over_mixture_lik_ratio_cal_test)
             
             print(f'selected policy control param : {pc_param_selected}')
             break
 
 
-    return clipped_proposal_pool_normalized, clipped_proposal_cal_normalized, clipped_proposal_over_mixture_lik_ratio_cal_test[:-1], pool_mixture_pdf_T_min_1, pc_param_selected
+    return constrained_densities_pool, constrained_densities_cal, constrained_over_mixture_lik_ratio_cal_test[:-1], Tmin1_mixture_pool, pc_param_selected
 
 
 
@@ -221,9 +212,9 @@ def compute_risk_control_weights_lik_ratio(X_cal, Feasible_cal, mixture_weights,
 def compute_risk_control_weights_lik_ratio_preset_beta(X_cal, Feasible_cal, mixture_weights, var_pool_min_max_norm, exp_var_preds_pool_split, \
                                            source_densities_cal, source_densities_pool, gpr_model, lmbda, \
                                            constrained_densities_cal_running_list, constrained_densities_pool_running_list,\
-                                           pc_param, alpha=0.5, constrain_vs_init='Y', max_weight_test=True):
+                                           pc_param, alpha=0.5, constrain_vs_init='Y', max_weight_test=True, n_grid=200):
     '''
-    For CDT (Lekeufack, et al., 2024) method
+    For CDT (Lekeufack, et al., 2024) method; assumes policy-control param was updated online outside of loop (retroactively)
     
     X_cal                     : dim (n + t - 1, d), array where each row is a data input of dimension d
     Feasible_cal              : dim (n + t - 1), array of Feasible set indicators for cal data (not test data)
@@ -249,12 +240,9 @@ def compute_risk_control_weights_lik_ratio_preset_beta(X_cal, Feasible_cal, mixt
 
     ## Check risk level in source distribution:
     source_densities_pool_max = np.max(source_densities_pool)
-    # source_densities_pool_max = np.sum(source_densities_pool * )
     source_weights_cal_pool_max = np.concatenate((source_densities_cal, [source_densities_pool_max]))
     source_weights_cal_pool_max_normalized = source_weights_cal_pool_max / np.sum(source_weights_cal_pool_max)
 
-    # print(f"np.sum(source_densities_cal[Feasible_cal == 0]) + source_densities_pool_max : {np.sum(source_densities_cal[Feasible_cal == 0]) + source_densities_pool_max}")
-    # print(f" alpha : {alpha}")
     if (np.sum(source_densities_cal[Feasible_cal == 0]) + source_densities_pool_max > alpha):
         
         # raise Exception("Feasible set risk must be controlled in source distribution to begin")
@@ -264,17 +252,13 @@ def compute_risk_control_weights_lik_ratio_preset_beta(X_cal, Feasible_cal, mixt
 
     #### On Pool Set: 
         ## 1. Get *Current, Unconstrained* (for time t) Values: (unnormalized) max val, normalization constant, & densities 
-    # exp_var_preds_pool_split_max = np.max(exp_var_preds_pool_split) ## Changed to max
-    exp_var_preds_pool_split_sum = np.sum(exp_var_preds_pool_split)
-    exp_var_preds_pool_split_normed = exp_var_preds_pool_split / exp_var_preds_pool_split_sum
+    norm_constant_pool = np.sum(exp_var_preds_pool_split)
+    exp_var_preds_pool_split_normed = exp_var_preds_pool_split / norm_constant_pool
 
         ## 2. Get *Previous, Constrained Mixture* (for times 1:(t-1)) Densities
     constrained_densities_pool_running_arr = np.array(constrained_densities_pool_running_list)
-    pool_mixture_pdf_T_min_1 = mixture_pdf_from_densities_mat(constrained_densities_pool_running_arr, mixture_weights)
+    Tmin1_mixture_pool = mixture_pdf_from_densities_mat(constrained_densities_pool_running_arr, mixture_weights)
 
-    #     ## 3. Get Lik-Ratios (Current Unconstrained / Previous Constrained Mixture)
-    # pool_lik_ratio_unconstrained_over_mixture = exp_var_preds_pool_split_normed / pool_mixture_pdf_T_min_1
-    # max_pool_lik_ratio_unconstrained_over_mixture = np.max(pool_lik_ratio_unconstrained_over_mixture)
 
     
     #### On Cal Set: 
@@ -283,92 +267,74 @@ def compute_risk_control_weights_lik_ratio_preset_beta(X_cal, Feasible_cal, mixt
     std_cal = get_f_std(std_cal_, gpr_model)
     var_cal = std_cal**2
     var_cal_normed = var_cal / var_pool_min_max_norm
-    pdf_vals = np.exp(var_cal_normed * lmbda) / exp_var_preds_pool_split_sum
+    opt_densities_cal = np.exp(var_cal_normed * lmbda) / norm_constant_pool
 
         ## 2. Get *Previous, Constrained Mixture* (for times 1:(t-1)) Densities
     constrained_densities_cal_running_arr = np.array(constrained_densities_cal_running_list)
-    mixture_pdf_T_min_1 = mixture_pdf_from_densities_mat(constrained_densities_cal_running_arr, mixture_weights)
+    Tmin1_mixture_cal = mixture_pdf_from_densities_mat(constrained_densities_cal_running_arr, mixture_weights)
 
     ## Initialization for policy control search
-    proposal_safe_log_lik_ratios_pool = np.log(exp_var_preds_pool_split_normed / constrained_densities_pool_running_list[idx_safe])
-    proposal_safe_log_lik_ratios_cal = np.log(pdf_vals / np.array(constrained_densities_cal_running_list[idx_safe]))
+    opt_safe_log_lik_ratios_pool = np.log(exp_var_preds_pool_split_normed / constrained_densities_pool_running_list[idx_safe])
+    opt_safe_log_lik_ratios_cal = np.log(opt_densities_cal / np.array(constrained_densities_cal_running_list[idx_safe]))
     
-    max_log_lik_ratio = max(proposal_safe_log_lik_ratios_pool)
-    min_log_lik_ratio = min(proposal_safe_log_lik_ratios_pool)
-    pc_params_grid = np.linspace(min_log_lik_ratio, max_log_lik_ratio, num=200)  #[::-1]
+    max_log_lik_ratio = max(opt_safe_log_lik_ratios_pool)
+    min_log_lik_ratio = min(opt_safe_log_lik_ratios_pool)
+    pc_params_grid = np.linspace(min_log_lik_ratio, max_log_lik_ratio, num=n_grid)  #[::-1]
     
-    ## Find the smallest risk-controlling parameter
-
-    # print(f"pc_params_grid : {pc_params_grid}")
-    # breakpoint()
-    # for p_i, pc_param in enumerate(pc_params_grid):
 
     
     ## For Test Point: Compute max(Current Constrained Density / Previous Mixture Density)
-    # print(f'constrained_densities_pool_running_list[-1] : {constrained_densities_pool_running_list[-1]}')
-    clipped_proposal_pool_unnormalized = np.where(proposal_safe_log_lik_ratios_pool < pc_param, exp_var_preds_pool_split_normed, np.exp(pc_param)*np.array(constrained_densities_pool_running_list[idx_safe]))
-    clipped_proposal_pool_sum = np.sum(clipped_proposal_pool_unnormalized)
-    clipped_proposal_pool_normalized = clipped_proposal_pool_unnormalized / clipped_proposal_pool_sum
-    clipped_proposal_over_mixture_lik_ratio_pool = clipped_proposal_pool_normalized / pool_mixture_pdf_T_min_1
+    constrained_pool_unnormalized = np.where(opt_safe_log_lik_ratios_pool < pc_param, exp_var_preds_pool_split_normed, np.exp(pc_param)*np.array(constrained_densities_pool_running_list[idx_safe]))
+    constrained_pool_sum = np.sum(constrained_pool_unnormalized)
+    constrained_densities_pool = constrained_pool_unnormalized / constrained_pool_sum
+    constrained_over_mixture_lik_ratio_pool = constrained_densities_pool / Tmin1_mixture_pool
 
     if max_weight_test:
-        max_clipped_proposal_over_mixture_lik_ratio_pool = test_pt_factor*np.max(clipped_proposal_over_mixture_lik_ratio_pool)
+        max_constrained_over_mixture_lik_ratio_pool = test_pt_factor*np.max(constrained_over_mixture_lik_ratio_pool)
 
-        # max_clipped_proposal_over_mixture_lik_ratio_pool = 2*np.max(clipped_proposal_over_mixture_lik_ratio_pool)
-    # print(f'max lik-ratio weight : {max_clipped_proposal_over_mixture_lik_ratio_pool}')
+
     else:
-        max_clipped_proposal_over_mixture_lik_ratio_pool = test_pt_factor*np.sum(clipped_proposal_over_mixture_lik_ratio_pool * clipped_proposal_pool_normalized)
-        # max_clipped_proposal_over_mixture_lik_ratio_pool = 2*np.sum(clipped_proposal_over_mixture_lik_ratio_pool * clipped_proposal_pool_normalized)
-    # print(f'weighted average lik-ratio weight : {max_clipped_proposal_over_mixture_lik_ratio_pool}')
+        max_constrained_over_mixture_lik_ratio_pool = test_pt_factor*np.sum(constrained_over_mixture_lik_ratio_pool * constrained_densities_pool)
 
     
     ## For Cal Points: Compute (Current Constrained Density / Previous Mixture Density)
-    clipped_proposal_cal_unnormalized = np.where(proposal_safe_log_lik_ratios_cal < pc_param, pdf_vals, np.exp(pc_param)*np.array(constrained_densities_cal_running_list[idx_safe]))
-    clipped_proposal_cal_normalized = clipped_proposal_cal_unnormalized / clipped_proposal_pool_sum
-    clipped_proposal_over_mixture_lik_ratio_cal = clipped_proposal_cal_normalized / mixture_pdf_T_min_1
+    constrained_cal_unnormalized = np.where(opt_safe_log_lik_ratios_cal < pc_param, opt_densities_cal, np.exp(pc_param)*np.array(constrained_densities_cal_running_list[idx_safe]))
+    constrained_densities_cal = constrained_cal_unnormalized / constrained_pool_sum
+    constrained_over_mixture_lik_ratio_cal = constrained_densities_cal / Tmin1_mixture_cal
 
     ## Compute Normalized Weights (For Cal and Test Data)
-    clipped_proposal_over_mixture_lik_ratio_cal_test = np.concatenate((clipped_proposal_over_mixture_lik_ratio_cal, [max_clipped_proposal_over_mixture_lik_ratio_pool]))
+    constrained_over_mixture_lik_ratio_cal_test = np.concatenate((constrained_over_mixture_lik_ratio_cal, [max_constrained_over_mixture_lik_ratio_pool]))
 
-    pc_weights_cal_test_normalized = clipped_proposal_over_mixture_lik_ratio_cal_test / np.sum(clipped_proposal_over_mixture_lik_ratio_cal_test)
+    pc_weights_cal_test_normalized = constrained_over_mixture_lik_ratio_cal_test / np.sum(constrained_over_mixture_lik_ratio_cal_test)
 
-
-    # if (np.sum(pc_weights_cal_test_normalized[:-1][Feasible_cal == 0]) + pc_weights_cal_test_normalized[-1] > alpha or p_i == len(pc_params_grid)-1):
         
     pc_param_selected = pc_param #pc_params_grid[p_i - 1] if p_i > 0 else p_i
 
             ## For Test Point: Compute max(Current Constrained Density / Previous Mixture Density)
-    # print(f'constrained_densities_pool_running_list[-1] : {constrained_densities_pool_running_list[-1]}')
-    clipped_proposal_pool_unnormalized = np.where(proposal_safe_log_lik_ratios_pool < pc_param_selected, exp_var_preds_pool_split_normed, np.exp(pc_param_selected)*np.array(constrained_densities_pool_running_list[idx_safe]))
-    clipped_proposal_pool_sum = np.sum(clipped_proposal_pool_unnormalized)
-    clipped_proposal_pool_normalized = clipped_proposal_pool_unnormalized / clipped_proposal_pool_sum
-    clipped_proposal_over_mixture_lik_ratio_pool = clipped_proposal_pool_normalized / pool_mixture_pdf_T_min_1
+    constrained_pool_unnormalized = np.where(opt_safe_log_lik_ratios_pool < pc_param_selected, exp_var_preds_pool_split_normed, np.exp(pc_param_selected)*np.array(constrained_densities_pool_running_list[idx_safe]))
+    constrained_pool_sum = np.sum(constrained_pool_unnormalized)
+    constrained_densities_pool = constrained_pool_unnormalized / constrained_pool_sum
+    constrained_over_mixture_lik_ratio_pool = constrained_densities_pool / Tmin1_mixture_pool
     if max_weight_test:
-        max_clipped_proposal_over_mixture_lik_ratio_pool = np.max(clipped_proposal_over_mixture_lik_ratio_pool)
+        max_constrained_over_mixture_lik_ratio_pool = np.max(constrained_over_mixture_lik_ratio_pool)
 
-        # max_clipped_proposal_over_mixture_lik_ratio_pool = 2*np.max(clipped_proposal_over_mixture_lik_ratio_pool)
-    # print(f'max lik-ratio weight : {max_clipped_proposal_over_mixture_lik_ratio_pool}')
     else:
-        max_clipped_proposal_over_mixture_lik_ratio_pool = np.sum(clipped_proposal_over_mixture_lik_ratio_pool * clipped_proposal_pool_normalized)
-        # max_clipped_proposal_over_mixture_lik_ratio_pool = 2*np.sum(clipped_proposal_over_mixture_lik_ratio_pool * clipped_proposal_pool_normalized)
-    # print(f'weighted average lik-ratio weight : {max_clipped_proposal_over_mixture_lik_ratio_pool}')
+        max_constrained_over_mixture_lik_ratio_pool = np.sum(constrained_over_mixture_lik_ratio_pool * constrained_densities_pool)
+
 
     
     ## For Cal Points: Compute (Current Constrained Density / Previous Mixture Density)
-    clipped_proposal_cal_unnormalized = np.where(proposal_safe_log_lik_ratios_cal < pc_param_selected, pdf_vals, np.exp(pc_param_selected)*np.array(constrained_densities_cal_running_list[idx_safe]))
-    clipped_proposal_cal_normalized = clipped_proposal_cal_unnormalized / clipped_proposal_pool_sum
-    clipped_proposal_over_mixture_lik_ratio_cal = clipped_proposal_cal_normalized / mixture_pdf_T_min_1
+    constrained_cal_unnormalized = np.where(opt_safe_log_lik_ratios_cal < pc_param_selected, opt_densities_cal, np.exp(pc_param_selected)*np.array(constrained_densities_cal_running_list[idx_safe]))
+    constrained_densities_cal = constrained_cal_unnormalized / constrained_pool_sum
+    constrained_over_mixture_lik_ratio_cal = constrained_densities_cal / Tmin1_mixture_cal
 
     ## Compute Normalized Weights (For Cal and Test Data)
-    clipped_proposal_over_mixture_lik_ratio_cal_test = np.concatenate((clipped_proposal_over_mixture_lik_ratio_cal, [max_clipped_proposal_over_mixture_lik_ratio_pool]))
+    constrained_over_mixture_lik_ratio_cal_test = np.concatenate((constrained_over_mixture_lik_ratio_cal, [max_constrained_over_mixture_lik_ratio_pool]))
 
-    pc_weights_cal_test_normalized = clipped_proposal_over_mixture_lik_ratio_cal_test / np.sum(clipped_proposal_over_mixture_lik_ratio_cal_test)
+    pc_weights_cal_test_normalized = constrained_over_mixture_lik_ratio_cal_test / np.sum(constrained_over_mixture_lik_ratio_cal_test)
     
-    # print(f'selected policy control param : {pc_param_selected}')
-    # break
 
-
-    return clipped_proposal_pool_normalized, clipped_proposal_cal_normalized, clipped_proposal_over_mixture_lik_ratio_cal_test[:-1], pool_mixture_pdf_T_min_1, pc_param_selected
+    return constrained_densities_pool, constrained_densities_cal, constrained_over_mixture_lik_ratio_cal_test[:-1], Tmin1_mixture_pool, pc_param_selected
 
 
 
