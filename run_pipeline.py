@@ -174,7 +174,7 @@ def generate_ga_dataset(cfg: DictConfig, fs: LocalOrS3Client) -> str:
     if cfg.run_evol_dataset_gen:
         slurm_kwargs = OmegaConf.to_container(cfg.evol_dataset_gen.slurm_args)
         slurm_kwargs["job_name"] = "ga_seeds"
-        
+                
         submit_cmd_to_slurm(
             python_cmd_str,
             slurm_dump_dir,
@@ -2503,13 +2503,6 @@ def run_conformal_policy_control(
         prop_mixture_constrained_density = prop_mixture_constrained_density_dict[proposal]
 
     
-        # ## For proposal data: Use constrained likelihoods to compute mixture distribution
-        # prop_data_constrained_all = constrained_liks_df
-        # prop_data_constrained_prev_liks = prop_data_constrained_all[constrained_lik_cols].to_numpy()
-        # mixture_weights = np.array(n_cal_per_model)
-
-        # prop_mixture_constrained_density = mixture_pdf_from_densities_mat(prop_data_constrained_prev_liks, mixture_weights)
-
 
 
         ## Get infeasibility indicators for calibration data
@@ -2517,80 +2510,6 @@ def run_conformal_policy_control(
         cal_infeasible_indicators = np.isnan(cal_scores) | np.isinf(cal_scores)
 
         
-        # n_safe_actions = get_num_safe_actions(cfg, cal_infeasible_indicators, cal_data_constrained_all.iloc[:,-1].to_numpy(), cal_mixture_constrained_density, constrained_liks_df.iloc[:, -2].to_numpy(), prop_mixture_constrained_density, cfg.conformal_policy_control.accept_reject.n_target)
-        # n_safe_actions_uncon = get_num_safe_actions(cfg, cal_infeasible_indicators, cal_data_unconstrained_all.iloc[:,-1].to_numpy(), cal_mixture_constrained_density, unconstrained_df.iloc[:, -2].to_numpy(), prop_mixture_constrained_density, cfg.conformal_policy_control.accept_reject.n_target)
-        # # for steps_back_to_safe in range(1, len(cal_data_constrained_all.columns)+1):
-        # #     n_safe_actions = get_num_safe_actions(cfg, cal_infeasible_indicators, cal_data_constrained_all.iloc[:,-steps_back_to_safe].to_numpy(), cal_mixture_constrained_density, constrained_liks_df.iloc[:, -(steps_back_to_safe+1)].to_numpy(), prop_mixture_constrained_density, cfg.conformal_policy_control.accept_reject.n_target)
-        # #     # n_safe_actions_uncon = get_num_safe_actions(cfg, cal_infeasible_indicators, cal_data_unconstrained_all.iloc[:,-steps_back_to_safe].to_numpy(), cal_mixture_constrained_density, unconstrained_df.iloc[:, -(steps_back_to_safe+1)].to_numpy(), prop_mixture_constrained_density, cfg.conformal_policy_control.accept_reject.n_target)
-        
-
-        # # n_safe_actions_curr = n_safe_actions
-
-        # n_safe_actions_curr = (n_safe_actions + n_safe_actions_uncon) / 2 if n_safe_actions_uncon < n_safe_actions else n_safe_actions
-
-        # if n_safe_actions == 0:
-        #     ## If cannot take any actions under the safe policy, then that's the best can do and return with safe policy
-        #     beta_t = sys.float_info.min
-        #     psi_hat_t = importance_weighted_monte_carlo_integration(lik_ratios_unconstrained_over_safe, beta_t)
-        #                 ## Save proposals with cpc-constrained likelihoods
-            
-        #     constrained_liks_df_beta_hat = pd.concat([constrained_liks_df.iloc[:, :-1], pd.DataFrame({f'con_lik_r{n_cal_sets}' : prop_constrained_liks_curr[:,-1]})], axis=1)
-        #     constrained_liks_df_beta_hat_fp = os.path.join(os.path.dirname(constrained_gen_liks_fp), f"cpc_prop_alpha{cfg.conformal_policy_control.alpha}_beta{betas_list[-1]:.3g}_{constrained_gen_liks_fp}")
-        #     constrained_liks_df_beta_hat.to_json(constrained_liks_df_beta_hat_fp, orient="records", lines=True)
-
-        #     ## Also save proposals with unconstrained likelihoods
-        #     unconstrained_liks_df_beta_hat_fp = os.path.join(os.path.dirname(unconstrained_gen_liks_fp), f"cpc_prop_alpha{cfg.conformal_policy_control.alpha}_beta{betas_list[-1]:.3g}_{unconstrained_gen_liks_fp}")
-        #     unconstrained_df.to_json(unconstrained_liks_df_beta_hat_fp, orient="records", lines=True)
-
-        #     check_col_names(constrained_liks_df_beta_hat)
-        #     check_col_names(unconstrained_df)
-            
-        #     return beta_t, psi_hat_t, n_safe_actions, constrained_liks_df_beta_hat, constrained_liks_df_beta_hat_fp, unconstrained_df, unconstrained_liks_df_beta_hat_fp
-
-
-
-        # n_safe_actions_curr = n_safe_actions
-        # G = np.concatenate((G, [sys.float_info.min]))
-
-        # k = max(int(n_safe_actions/ cfg.conformal_policy_control.args.n_grid_safe_actions), 1)
-
-        # G_n_safe_actions = list(range(n_safe_actions))[::-k]
-
-
-        # for n_, n_safe_actions_curr in enumerate(G_n_safe_actions):
-
-        #     if n_ == len(G_n_safe_actions) - 1:
-
-        #         G = np.concatenate((G, [sys.float_info.min]))
-
-
-        # # ## Contrastive generation to get test point weight
-        # contrast_gen_outputs, hd = run_contrastive_generation(
-        #     cfg,
-        #     fs,
-        #     data_fp_list=seeds_fp_list,
-        #     data_dir=ga_data_dir,
-        #     model_dir_list=model_dir_list,
-        #     # particle_field= "higher_score_particle",
-        #     # score_field= "score",
-        #     temps=[cfg.temperature],
-        # )
-        
-        # _, hd = run_compute_liks_all_models_and_cal_data(
-        #     cfg,
-        #     fs,
-        #     seeds_fp_list=seeds_fp_list,
-        #     prev_cal_data_fp_list=[],
-        #     model_dir_list=model_dir_list,
-        #     target_fp=contrast_gen_outputs,
-        #     # score_field="cg_lik_ratio_opt_over_mix",
-        #     temps=[cfg.temperature],
-        # )
-
-
-        # contrast_gen_outputs_df = pd.read_json(contrast_gen_outputs, orient="records", lines=True)
-        
-
 
 
 

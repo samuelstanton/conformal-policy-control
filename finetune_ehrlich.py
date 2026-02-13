@@ -6,7 +6,7 @@ import os
 import numpy as np
 import pandas as pd
 import pprint
-import s3fs
+# import s3fs
 import sys
 import torch
 from contextlib import nullcontext
@@ -62,6 +62,8 @@ if TRL_USE_RICH:
     logging.basicConfig(
         format=FORMAT, datefmt="[%X]", handlers=[RichHandler()], level=logging.INFO
     )
+
+from file_handler import LocalOrS3Client
 
 
 @hydra.main(config_path="config/finetune", config_name="pythia-2.8b")
@@ -331,18 +333,30 @@ def main(cfg: DictConfig):
     with save_context:
         trainer.save_model(training_args.output_dir)
         # Now loop through files in the directory and move to S3 (excluding the checkpoint directories)
+        # if cfg.s3_output_dir is not None:
+        #     if not cfg.s3_output_dir.endswith("/"):
+        #         cfg.s3_output_dir += "/"
+        #     s3 = s3fs.S3FileSystem()
+        #     for fn in os.listdir(training_args.output_dir):
+        #         if fn.startswith(PREFIX_CHECKPOINT_DIR):
+        #             continue
+        #         fp = os.path.join(training_args.output_dir, fn)
+        #         recursive = os.path.isdir(fp)
+        #         transformers_logger.info(f"Copying {fp} to {cfg.s3_output_dir}...")
+        #         s3.put(fp, cfg.s3_output_dir, recursive=recursive)
         if cfg.s3_output_dir is not None:
-            if not cfg.s3_output_dir.endswith("/"):
-                cfg.s3_output_dir += "/"
-            s3 = s3fs.S3FileSystem()
+            transformers_logger.info("Copy output files to s3_output_dir")
+            
+            # Determine if we're using S3 or local storage
+            is_s3 = cfg.s3_output_dir.startswith("s3://")
+            fs = LocalOrS3Client(init_s3=is_s3)
+            
             for fn in os.listdir(training_args.output_dir):
-                if fn.startswith(PREFIX_CHECKPOINT_DIR):
-                    continue
-                fp = os.path.join(training_args.output_dir, fn)
-                recursive = os.path.isdir(fp)
-                transformers_logger.info(f"Copying {fp} to {cfg.s3_output_dir}...")
-                s3.put(fp, cfg.s3_output_dir, recursive=recursive)
-
+                if fn not in ["runs"]:  # skip the runs dir
+                    fp = os.path.join(training_args.output_dir, fn)
+                    recursive = os.path.isdir(fp)
+                    transformers_logger.info(f"Copying {fp} to {cfg.s3_output_dir}...")
+                    fs.put(fp, cfg.s3_output_dir, recursive=recursive)
 
 if __name__ == "__main__":
     main()

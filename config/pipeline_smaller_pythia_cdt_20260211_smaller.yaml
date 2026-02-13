@@ -284,6 +284,7 @@ gpt:
     # instrumentation
     log_level: "info"
     # wandb_mode: "online" ### 20250808 Tried commenting this out
+    wandb_mode: "offline"
     project_name: "finetune_ehrlich"
     exp_name: "gpt_smaller_pythia"
   slurm_args:
@@ -338,6 +339,7 @@ initial_sft:
     # instrumentation
     log_level: "info"
     # wandb_mode: "online" ### 20250808 Tried commenting this out
+    wandb_mode: "offline"
     project_name: "finetune_ehrlich"
     exp_name: "sft_smaller_pythia"
   slurm_args:
@@ -392,6 +394,7 @@ sft:
     # instrumentation
     log_level: "info"
     # wandb_mode: "online" ### 20250808 Tried commenting this out
+    wandb_mode: "offline"
     project_name: "finetune_ehrlich"
     exp_name: "sft_smaller_pythia"
   slurm_args:

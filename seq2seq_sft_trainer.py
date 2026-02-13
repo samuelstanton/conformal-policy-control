@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     )
     from peft import PeftConfig
 
+from file_handler import LocalOrS3Client
 
 @dataclass
 class Seq2SeqSFTConfig(SFTConfig):
@@ -82,27 +83,58 @@ class Seq2SeqSFTConfig(SFTConfig):
         return d
 
 
+# class S3Callback(TrainerCallback):
+#     def __init__(self, s3_output_dir: str, logger: logging.Logger = None):
+#         self.s3_output_dir = s3_output_dir
+#         if not self.s3_output_dir.endswith("/"):
+#             self.s3_output_dir += "/"
+#         self.logger = logger
+#         self.s3 = s3fs.S3FileSystem()
+
+#     def on_save(
+#         self,
+#         args: TrainingArguments,
+#         state: TrainerState,
+#         control: TrainerControl,
+#         **kwargs,
+#     ):
+#         """
+#         Copy all local checkpoint files to S3!
+#         """
+#         checkpoint_folder_name = f"{PREFIX_CHECKPOINT_DIR}-{state.global_step}"
+#         checkpoint_dir = os.path.join(args.output_dir, checkpoint_folder_name)
+#         self.s3.put(checkpoint_dir, self.s3_output_dir, recursive=True)
+#         if self.logger is not None:
+#             self.logger.info(
+#                 f"Successfully copied checkpoint in {checkpoint_dir} to {self.s3_output_dir}."
+#             )
+
+
+
 class S3Callback(TrainerCallback):
     def __init__(self, s3_output_dir: str, logger: logging.Logger = None):
         self.s3_output_dir = s3_output_dir
         if not self.s3_output_dir.endswith("/"):
             self.s3_output_dir += "/"
+        
+        # Use LocalOrS3Client instead of direct s3fs
+        # Detect if it's an S3 path
+        self.is_s3 = self.s3_output_dir.startswith("s3://")
+        self.fs = LocalOrS3Client(init_s3=self.is_s3)
         self.logger = logger
-        self.s3 = s3fs.S3FileSystem()
 
     def on_save(
         self,
-        args: TrainingArguments,
-        state: TrainerState,
-        control: TrainerControl,
+        args: "TrainingArguments",
+        state: "TrainerState",
+        control: "TrainerControl",
         **kwargs,
     ):
-        """
-        Copy all local checkpoint files to S3!
-        """
-        checkpoint_folder_name = f"{PREFIX_CHECKPOINT_DIR}-{state.global_step}"
-        checkpoint_dir = os.path.join(args.output_dir, checkpoint_folder_name)
-        self.s3.put(checkpoint_dir, self.s3_output_dir, recursive=True)
+        checkpoint_dir = os.path.join(
+            args.output_dir,
+            f"{PREFIX_CHECKPOINT_DIR}-{state.global_step}",
+        )
+        self.fs.put(checkpoint_dir, self.s3_output_dir, recursive=True)
         if self.logger is not None:
             self.logger.info(
                 f"Successfully copied checkpoint in {checkpoint_dir} to {self.s3_output_dir}."
