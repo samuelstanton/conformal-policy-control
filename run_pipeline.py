@@ -174,6 +174,7 @@ def generate_ga_dataset(cfg: DictConfig, fs: LocalOrS3Client) -> str:
     if cfg.run_evol_dataset_gen:
         slurm_kwargs = OmegaConf.to_container(cfg.evol_dataset_gen.slurm_args)
         slurm_kwargs["job_name"] = "ga_seeds"
+        
         submit_cmd_to_slurm(
             python_cmd_str,
             slurm_dump_dir,
@@ -909,267 +910,6 @@ def combine_new_with_old_datasets(
     return output_fp
 
 
-# def run_unconditional_generation(
-#     cfg: DictConfig,
-#     fs: LocalOrS3Client,
-#     data_fp: str,
-#     data_dir: str,
-#     model_dir: str,
-#     particle_field: str = "particle",
-#     # lower_score_particle_field: str = "lower_score_particle",
-#     score_field: str = "score",
-#     # higher_score_field: str = "higher_score",
-#     temps: List[float] = [1.0],
-# ) -> str:
-#     """
-#     Runs unconditional generation jobs, combines the outputs, and returns the combined output filepath.
-#     """
-#     opt_str = " ".join(
-#         get_all_strs_from_nested_dict(cfg["unconditional_generation"]["args"])
-#     )
-#     ## Note: In unconditional_generation, the training particles provided are *not* use as prompts, they are 
-#     ## only provided to check how much the density model is reproducing examples from training
-#     args = f"{opt_str} data_path={data_fp} model_name_or_path={model_dir} output_dir={model_dir} "
-#     args += f"test_fn_fp={data_dir}/ehrlich.jsonl "
-#     args += f"particle_field={particle_field} "
-#     # args += f"lower_score_particle_field={lower_score_particle_field} "
-#     args += f"score_field={score_field} "
-#     # args += f"higher_score_field={higher_score_field} "
-#     args += f"sanity_check={cfg.sanity_check} "
-
-#     output_filename_prefix = f"gens_uncon_likelihood_{cfg.unconditional_generation.args.sample_size}sample_{cfg.unconditional_generation.args.max_iterations}iter"
-#     # greedy_decoding_gen_args = f"generation_config.do_sample=False generation_config.num_beams=1 batch_size={cfg.greedy_gen_batch_size}"
-#     temp_sampling_gen_args = [
-#         f"generation_config.do_sample=True generation_config.num_beams=1 "
-#         + f"+generation_config.temperature={temp} "
-#         + f"generation_config.num_return_sequences={cfg.unconditional_sampling_num_return_sequences} "
-#         + f"batch_size={cfg.sampling_gen_batch_size} "
-#         for temp in temps
-#     ]
-    
-#     all_gen_args = temp_sampling_gen_args
-#     output_filenames = [f"{output_filename_prefix}_temp{temp}_{cfg.unconditional_sampling_num_return_sequences}seqs.jsonl" for temp in temps]
-
-#     output_filepaths = [f"{model_dir}/{output_fn}" for output_fn in output_filenames]
-#     combined_outputs_fp = f"{model_dir}/{output_filename_prefix}.jsonl"
-#     slurm_dump_dir = f"{cfg.local_output_dir}/slurm_logs"
-#     os.makedirs(slurm_dump_dir, exist_ok=True)
-#     hd = None
-#     if cfg.run_uncon_gen:
-#         all_args = []
-#         for gen_args, output_fn in zip(all_gen_args, output_filenames):
-#             if not cfg.overwrite_ig and fs.exists(f"{model_dir}/{output_fn}"):
-#                 logger.info(f"{model_dir}/{output_fn} already exists. Skipping...")
-#             else:
-#                 all_args.append(f"{args} {gen_args} output_filename={output_fn}")
-#         all_python_commands = [f"python -m unconditional_generation {a}" for a in all_args]
-#         slurm_kwargs = OmegaConf.to_container(cfg.unconditional_generation.slurm_args)
-#         slurm_kwargs["job_name"] = "uncon_gen"
-#         job_submissions = [
-#             submit_cmd_to_slurm(
-#                 py_cmd,
-#                 slurm_dump_dir,
-#                 blocking=False,
-#                 path_to_repo=cfg.path_to_repo,
-#                 **slurm_kwargs,
-#             )
-#             for py_cmd in all_python_commands
-#         ]
-#         wait_for_slurm_jobs_to_complete(job_submissions)
-#         hd = combine_datasets(cfg, fs, output_filepaths, combined_outputs_fp)
-#     return combined_outputs_fp, hd
-
-
-
-
-
-def run_initial_generation(
-    cfg: DictConfig,
-    fs: LocalOrS3Client,
-    data_fp: str,
-    data_dir: str,
-    model_dir: str,
-    higher_score_particle_field: str = "higher_score_particle",
-    lower_score_particle_field: str = "lower_score_particle",
-    lower_score_field: str = "lower_score",
-    higher_score_field: str = "higher_score",
-    temps: List[float] = [0.6, 0.8, 1.0, 1.2, 1.4, 1.6],
-    return_seeds: bool = True
-):
-    """
-    Runs initial generation jobs, combines the outputs, and returns the combined output filepath.
-    """
-    opt_str = " ".join(
-        get_all_strs_from_nested_dict(cfg["initial_generation"]["args"])
-    )
-    args = f"{opt_str} data_path={data_fp} model_name_or_path={model_dir} output_dir={model_dir} "
-    args += f"test_fn_fp={data_dir}/ehrlich.jsonl "
-    args += f"higher_score_particle_field={higher_score_particle_field} "
-    args += f"lower_score_particle_field={lower_score_particle_field} "
-    args += f"lower_score_field={lower_score_field} "
-    args += f"higher_score_field={higher_score_field} "
-    args += f"sanity_check={cfg.sanity_check} "
-
-    output_filename_prefix = f"alpha{cfg.conformal_policy_control.alpha}_gens_init_likelihood_{cfg.initial_generation.args.sample_size}sample_{cfg.initial_generation.args.max_iterations}iter"
-    # else:
-    #     ## If last iteration of initial SFT, then use sample_size from cfg.iterative_generation (not from cfg.initial_generation)
-    #     output_filename_prefix = f"gens_init_likelihood_{cfg.iterative_generation.args.sample_size}sample_{cfg.initial_generation.args.max_iterations}iter"
-
-    greedy_decoding_gen_args = f"generation_config.do_sample=False generation_config.num_beams=1 batch_size={cfg.greedy_gen_batch_size}"
-    temp_sampling_gen_args = [
-        f"generation_config.do_sample=True generation_config.num_beams=1 "
-        + f"+generation_config.temperature={temp} "
-        + f"generation_config.num_return_sequences={cfg.init_generation_sampling_num_return_sequences} "
-        + f"batch_size={cfg.sampling_gen_batch_size} "
-        for temp in temps
-    ]
-    if cfg.greedy_decoding:
-        all_gen_args = [greedy_decoding_gen_args, *temp_sampling_gen_args]
-        output_filenames = [
-            f"{output_filename_prefix}_greedy.jsonl",
-            *[
-                f"{output_filename_prefix}_temp{temp}_{cfg.init_generation_sampling_num_return_sequences}seqs.jsonl"
-                for temp in temps
-            ],
-        ]
-    else:
-        all_gen_args = temp_sampling_gen_args
-        output_filenames = [f"{output_filename_prefix}_temp{temp}_{cfg.init_generation_sampling_num_return_sequences}seqs.jsonl" for temp in temps]
-
-    seeds_filenames = [f'seeds_{output_filename}' for output_filename in output_filenames]
-    seeds_filepaths = [f"{model_dir}/{seeds_fn}" for seeds_fn in seeds_filenames]
-
-    output_filepaths = [f"{model_dir}/{output_fn}" for output_fn in output_filenames]
-    combined_outputs_fp = f"{model_dir}/{output_filename_prefix}.jsonl"
-    slurm_dump_dir = f"{cfg.local_output_dir}/slurm_logs"
-    os.makedirs(slurm_dump_dir, exist_ok=True)
-    hd = None
-
-
-    if cfg.run_init_gen:
-        all_args = []
-        for gen_args, output_fn in zip(all_gen_args, output_filenames):
-            if not cfg.overwrite_initg and fs.exists(f"{model_dir}/{output_fn}"):
-                logger.info(f"{model_dir}/{output_fn} already exists. Skipping...")
-            else:
-                all_args.append(f"{args} {gen_args} output_filename={output_fn}")
-        all_python_commands = [f"python -m initial_generation {a}" for a in all_args]
-        slurm_kwargs = OmegaConf.to_container(cfg.initial_generation.slurm_args)
-        slurm_kwargs["job_name"] = "init_gen"
-        job_submissions = [
-            submit_cmd_to_slurm(
-                py_cmd,
-                slurm_dump_dir,
-                blocking=False,
-                path_to_repo=cfg.path_to_repo,
-                **slurm_kwargs,
-            )
-            for py_cmd in all_python_commands
-        ]
-        wait_for_slurm_jobs_to_complete(job_submissions)
-        hd = combine_datasets(cfg, fs, output_filepaths, combined_outputs_fp)
-    if return_seeds:
-        return combined_outputs_fp, output_filepaths, hd, seeds_filepaths
-    else:
-        return combined_outputs_fp, hd
-
-
-
-
-def run_contrastive_generation(
-    cfg: DictConfig,
-    fs: LocalOrS3Client,
-    data_fp_list: List[str],
-    data_dir: str,
-    model_dir_list: List[str],
-    # particle_field: str = "higher_score_particle",
-    # score_field: str = "score",
-    higher_score_particle_field: str = "prompt", #"higher_score_particle" #
-    lower_score_particle_field: str = "chosen", #"lower_score_particle" # 
-    lower_score_field: str = "chosen_score", #"lower_score" # 
-    higher_score_field: str = "prompt_score",
-    temps: List[float] = [1.0] #[0.6, 0.8, 1.0, 1.2, 1.4, 1.6],
-) -> str:
-    """
-    Runs contrastive generation jobs, combines the outputs, and returns the combined output filepath.
-    """
-    opt_str = " ".join(
-        get_all_strs_from_nested_dict(cfg["contrastive_generation"]["args"])
-    )
-
-
-    ## Format lists of strings into a long string that python and hydra can interpret
-    data_fp_list_str = f"\\['{data_fp_list[0]}'"
-    model_dir_list_str = f"\\['{model_dir_list[0]}'"
-    for i in range(1, len(data_fp_list)):
-        data_fp_list_str += f",'{data_fp_list[i]}'"
-        model_dir_list_str += f",'{model_dir_list[i]}'"
-    data_fp_list_str += "\\]"
-    model_dir_list_str += "\\]"
-
-
-    args = f"{opt_str} data_path_list={data_fp_list_str} model_name_or_path_list={model_dir_list_str} output_dir={model_dir_list[-1]} "
-    args += f"test_fn_fp={data_dir}/ehrlich.jsonl "
-    # args += f"particle_field={particle_field} "
-    # args += f"score_field={score_field} "
-    args += f"higher_score_particle_field={higher_score_particle_field} "
-    args += f"lower_score_particle_field={lower_score_particle_field} "
-    args += f"higher_score_field={higher_score_field} "
-    args += f"lower_score_field={lower_score_field} "
-    args += f"sanity_check={cfg.sanity_check} "
-
-    output_filename_prefix = f"alpha{cfg.conformal_policy_control.alpha}_contrast_gens_likelihood_{cfg.contrastive_generation.args.sample_size}sample"
-    greedy_decoding_gen_args = f"generation_config.do_sample=False generation_config.num_beams=1 batch_size={cfg.greedy_gen_batch_size}"
-    temp_sampling_gen_args = [
-        f"generation_config.do_sample=True generation_config.num_beams=1 "
-        + f"+generation_config.temperature={temp} "
-        + f"generation_config.num_return_sequences={cfg.generation_sampling_num_return_sequences} "
-        + f"batch_size={cfg.sampling_gen_batch_size} "
-        for temp in temps
-    ]
-    if cfg.contrastive_generation.greedy_decoding:
-        all_gen_args = [greedy_decoding_gen_args, *temp_sampling_gen_args]
-        output_filenames = [
-            f"{output_filename_prefix}_greedy.jsonl",
-            *[
-                f"{output_filename_prefix}_temp{temp}_{cfg.generation_sampling_num_return_sequences}seqs.jsonl"
-                for temp in temps
-            ],
-        ]
-    else:
-        all_gen_args = temp_sampling_gen_args
-        output_filenames = [f"{output_filename_prefix}_temp{temp}_{cfg.generation_sampling_num_return_sequences}seqs.jsonl" for temp in temps]
-
-    output_filepaths = [f"{model_dir_list[-1]}/{output_fn}" for output_fn in output_filenames]
-    combined_outputs_fp = f"{model_dir_list[-1]}/{output_filename_prefix}.jsonl"
-    slurm_dump_dir = f"{cfg.local_output_dir}/slurm_logs"
-    os.makedirs(slurm_dump_dir, exist_ok=True)
-    hd = None
-    if cfg.run_contrast_gen:
-        all_args = []
-        for gen_args, output_fn in zip(all_gen_args, output_filenames):
-            if not cfg.overwrite_cg and fs.exists(f"{model_dir_list[-1]}/{output_fn}"):
-                logger.info(f"{model_dir_list[-1]}/{output_fn} already exists. Skipping contrastive generation...")
-            else:
-                logger.info(f"Running contrastive generation...")
-                all_args.append(f"{args} {gen_args} output_filename={output_fn}")
-        all_python_commands = [f"python -m contrastive_generation {a}" for a in all_args]
-        slurm_kwargs = OmegaConf.to_container(cfg.contrastive_generation.slurm_args)
-        slurm_kwargs["job_name"] = "contrast_gen"
-        
-        job_submissions = [
-            submit_cmd_to_slurm(
-                py_cmd,
-                slurm_dump_dir,
-                blocking=False,
-                path_to_repo=cfg.path_to_repo,
-                **slurm_kwargs,
-            )
-            for py_cmd in all_python_commands
-        ]
-        wait_for_slurm_jobs_to_complete(job_submissions)
-        # hd = combine_datasets(cfg, fs, output_filepaths, combined_outputs_fp)
-    return output_filepaths[0], hd
 
 
 
@@ -3256,7 +2996,6 @@ def run_compute_liks_all_models_and_cal_data(
                 ## (so, providing empty `prev_cal_data_fp_list` allows skipping this)
                 all_python_commands.extend([f"export CUDA_LAUNCH_BLOCKING=1 \n python -m compute_likelihoods_one_model_all_data {a}" for a in all_args_prev_cal])
 
-        
         slurm_kwargs = OmegaConf.to_container(cfg.compute_likelihooods_all_models.slurm_args)
         slurm_kwargs["job_name"] = "comp_lik_all_models"
         job_submissions = [
@@ -3450,36 +3189,6 @@ def main(cfg: DictConfig):
             all_model_paths.append(sft_dir)
 
             
-
-
-
-
-
-
-
-            # Take best checkpoint of trained model and get calibrated best likelihood range
-
-            # if cfg.temperature_scaling:
-            #     temps = get_temperatures(cfg, file_client, sft_dir, prev_hd)
-            # elif i < cfg.num_init_sft_rounds - 1:
-                ## At all iterations except the last, use a range of temperatures to stabilize pre-training
-            # temps = [0.6, 0.8, 1.0, 1.2, 1.4, 1.6]
-            # init_gen_outputs_combined, init_gen_outputs_list, hd, seeds_filepaths = run_initial_generation(
-            #     cfg,
-            #     file_client,
-            #     combined_sft_dataset_fp,
-            #     ga_data_dir,
-            #     sft_dir,
-            #     higher_score_particle_field="higher_score_particle",
-            #     lower_score_particle_field="lower_score_particle",
-            #     higher_score_field="higher_score",
-            #     lower_score_field="lower_score",
-            #     temps=temps,
-            # )
-
-            # else:
-                ## Last iteration of initialization SFT/generation will be treated as the first iterative generation/policy improvement iteration, which is "safer"
-                # temps = [1.0] ## At last init iteration, use only temp=1.0 for sampling initial calibration data
 
 
         if pi_optimizer_name == "dpo":
@@ -3773,18 +3482,6 @@ def main(cfg: DictConfig):
                 temps=[cfg.temperature],
             )
 
-
-            # ## Contrastive generation to get test point weight
-            # contrast_gen_outputs, hd = run_contrastive_generation(
-            #     cfg,
-            #     file_client,
-            #     data_fp_list=pi_seeds_filepaths_list,
-            #     data_dir=ga_data_dir,
-            #     model_dir_list=pi_model_fp_list,
-            #     particle_field= "higher_score_particle",
-            #     score_field= "score",
-            #     temps=[1.0],
-            # )
 
         
 
