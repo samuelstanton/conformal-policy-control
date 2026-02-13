@@ -148,15 +148,18 @@ evol_dataset_gen:
     nodes: 1
     cpus_per_task: 1
     ntasks_per_node: 1
-    gpus_per_node: 1
-    partition: "gpu"
-    #gres: "gpu:1"
+    #gpus_per_node: 1
+    partition: "preempt-priority"
     open_mode: "append"
     export: "ALL"
-    time: "12:00:00"
+    time: "24:00:00"
     mem: "100GB"
     mail_type: "BEGIN,END,FAIL"
     mail_user: "drew@cs.jhu.edu" # "ac5968@nyu.edu"
+    account: "ai4dd_preempt"
+    qos: "preempt"
+    gres: "gpu:b200:1"
+    
     #account: "cds"
 
 propen_dataset_formatting_sft:
@@ -180,8 +183,11 @@ propen_dataset_formatting_sft:
     mem: "100GB"
     mail_type: "BEGIN,END,FAIL"
     mail_user: "drew@cs.jhu.edu" # "ac5968@nyu.edu"
-    partition: "gpu"
-    gpus_per_node: 0
+    partition: "preempt-priority"
+    #gpus_per_node: 0
+    account: "ai4dd_preempt"
+    qos: "preempt"
+    gres: "gpu:b200:1"
 
 
 
@@ -206,8 +212,11 @@ propen_dataset_formatting_initial_sft:
     mem: "100GB"
     mail_type: "BEGIN,END,FAIL"
     mail_user: "drew@cs.jhu.edu" # "ac5968@nyu.edu"
-    partition: "gpu"
-    gpus_per_node: 0
+    partition: "preempt-priority"
+    #gpus_per_node: 0
+    account: "ai4dd_preempt"
+    qos: "preempt"
+    gres: "gpu:b200:1"
 
 
 propen_dataset_formatting_preference:
@@ -231,8 +240,11 @@ propen_dataset_formatting_preference:
     mem: "100GB"
     mail_type: "BEGIN,END,FAIL"
     mail_user: "drew@cs.jhu.edu" # "ac5968@nyu.edu"
-    partition: "gpu"
-    gpus_per_node: 0
+    partition: "preempt-priority"
+    #gpus_per_node: 0
+    account: "ai4dd_preempt"
+    qos: "preempt"
+    gres: "gpu:b200:1"
 
 ## Config params for GPT pretraining on unpaired sequences. Similar to SFT params, except importantly w/ format_type: "plain_pairs"
 gpt:
@@ -278,14 +290,15 @@ gpt:
     nodes: 1
     cpus_per_task: 1
     ntasks_per_node: 1
-    gpus_per_node: 1
-    partition: "gpu"
+    #gpus_per_node: 1
+    partition: "preempt-priority"
     open_mode: "append"
     export: "ALL"
     time: "24:00:00"
     mem: "100GB"
-    #gres: "gpu:1"
-    #account: "cds"
+    account: "ai4dd_preempt"
+    qos: "preempt"
+    gres: "gpu:b200:1"
 
 
 initial_sft:
@@ -331,14 +344,15 @@ initial_sft:
     nodes: 1
     cpus_per_task: 1
     ntasks_per_node: 1
-    gpus_per_node: 1
-    partition: "gpu"
+    #gpus_per_node: 1
+    partition: "preempt-priority"
     open_mode: "append"
     export: "ALL"
     time: "24:00:00"
     mem: "100GB"
-    #gres: "gpu:1"
-    #account: "cds"
+    account: "ai4dd_preempt"
+    qos: "preempt"
+    gres: "gpu:b200:1"
 
 
 sft:
@@ -384,14 +398,15 @@ sft:
     nodes: 1
     cpus_per_task: 1
     ntasks_per_node: 1
-    gpus_per_node: 1
-    partition: "gpu"
+    #gpus_per_node: 1
+    partition: "preempt-priority"
     open_mode: "append"
     export: "ALL"
     time: "24:00:00"
     mem: "100GB"
-    #gres: "gpu:1"
-    #account: "cds"
+    account: "ai4dd_preempt"
+    qos: "preempt"
+    gres: "gpu:b200:1"
 
 
 
@@ -413,14 +428,15 @@ initial_generation:
     nodes: 1
     cpus_per_task: 1
     ntasks_per_node: 1
-    gpus_per_node: 1
-    partition: "gpu"
+    #gpus_per_node: 1
+    partition: "preempt-priority"
     open_mode: "append"
     export: "ALL"
     time: "24:00:00"
     mem: "100GB"
-    # gres: "gpu:1"
-    # account: "cds"
+    account: "ai4dd_preempt"
+    qos: "preempt"
+    gres: "gpu:b200:1"
 
 
 contrastive_generation:
@@ -441,14 +457,15 @@ contrastive_generation:
     nodes: 1
     cpus_per_task: 1
     ntasks_per_node: 1
-    gpus_per_node: 1
-    partition: "gpu"
+    #gpus_per_node: 1
+    partition: "preempt-priority"
     open_mode: "append"
     export: "ALL"
     time: "24:00:00"
     mem: "100GB"
-    # gres: "gpu:1"
-    # account: "cds"
+    account: "ai4dd_preempt"
+    qos: "preempt"
+    gres: "gpu:b200:1"
 
 
 iterative_generation:
@@ -475,15 +492,17 @@ iterative_generation:
     nodes: 1
     cpus_per_task: 1
     ntasks_per_node: 1
-    gpus_per_node: 1
-    partition: "gpu"
+    #gpus_per_node: 1
+    partition: "preempt-priority"
     open_mode: "append"
     export: "ALL"
     time: "24:00:00"
-    mem: "300GB" #"100GB"
+    mem: "100GB" #"300GB" #"100GB"
+    account: "ai4dd_preempt"
+    qos: "preempt"
+    gres: "gpu:b200:1"
     # nodelist: "b200-st-b200-[2-10,13-15,23,40-41],b200-st-b200-2-[2-3,9,65,69-83]" #"b200-st-b200-41"
-    # gres: "gpu:1"
-    # account: "cds"
+
 
 
 conformal_policy_control:
@@ -531,12 +550,15 @@ compute_likelihooods_all_models:
     nodes: 1
     cpus_per_task: 1
     ntasks_per_node: 1
-    gpus_per_node: 1
-    partition: "gpu"
+    #gpus_per_node: 1
+    partition: "preempt-priority"
     open_mode: "append"
     export: "ALL"
     time: "24:00:00" #"48:00:00"
     mem: "100GB" #"100GB"
+    account: "ai4dd_preempt"
+    qos: "preempt"
+    gres: "gpu:b200:1"
 
 
 ## NOTE: DPO config taken from pipeline_dpo_f2.yaml
@@ -564,14 +586,17 @@ dpo:
       max_new_tokens: 512 #256
   slurm_args:
     nodes: 1
-    cpus_per_task: 2
-    ntasks_per_node: 2
-    gpus_per_node: 2
-    partition: "gpu"
+    cpus_per_task: 1 #2
+    ntasks_per_node: 1 #2
+    #gpus_per_node: 1 #2
+    partition: "preempt-priority"
     open_mode: "append"
     export: "ALL"
     time: "24:00:00"
-    mem: "200GB"
+    mem: "100GB" #"200GB"
+    account: "ai4dd_preempt"
+    qos: "preempt"
+    gres: "gpu:b200:1"
 
 
 marge:
@@ -600,12 +625,13 @@ marge:
     nodes: 1
     cpus_per_task: 2
     ntasks_per_node: 2
-    gpus_per_node: 1
-    partition: "gpu"
+    #gpus_per_node: 1
+    partition: "preempt-priority"
     open_mode: "append"
     export: "ALL"
-    time: "12:00:00"
+    time: "24:00:00"
     mem: "100GB"
-    # gres: "gpu:2"
-    # account: "cds"
+    account: "ai4dd_preempt"
+    qos: "preempt"
+    gres: "gpu:b200:1"
  
