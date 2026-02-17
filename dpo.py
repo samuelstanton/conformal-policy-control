@@ -11,6 +11,7 @@ import time
 import torch
 from contextlib import nullcontext
 from datasets import load_dataset, Dataset
+from file_handler import LocalOrS3Client
 from finetune_utils import (
     formatting_texts_func_edit_pairs,
     load_test_fn_from_file,
@@ -272,18 +273,20 @@ def main(cfg: DictConfig):
 
     with save_context:
         trainer.save_model(training_args.output_dir)
-        # Now loop through files in the directory and move to S3 (excluding the checkpoint directories)
+        # Now loop through files in the directory and move to S3 or parent directory (excluding the checkpoint directories)
         if cfg.s3_output_dir is not None:
             if not cfg.s3_output_dir.endswith("/"):
                 cfg.s3_output_dir += "/"
-            s3 = s3fs.S3FileSystem()
+            # Use LocalOrS3Client to handle both S3 and local paths
+            is_s3 = cfg.s3_output_dir.startswith("s3://")
+            fs = LocalOrS3Client(init_s3=is_s3)
             for fn in os.listdir(training_args.output_dir):
                 if fn.startswith(PREFIX_CHECKPOINT_DIR):
                     continue
                 fp = os.path.join(training_args.output_dir, fn)
                 recursive = os.path.isdir(fp)
                 transformers_logger.info(f"Copying {fp} to {cfg.s3_output_dir}...")
-                s3.put(fp, cfg.s3_output_dir, recursive=recursive)
+                fs.put(fp, cfg.s3_output_dir, recursive=recursive)
 
 
 if __name__ == "__main__":
