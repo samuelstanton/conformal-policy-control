@@ -1,0 +1,19 @@
+version = 1
+revision = 3
+requires-python = ">=3.10"
+
+[manifest]
+members = [
+    "cdt-agents",
+    "cpc-llm",
+]
+
+[[package]]
+name = "cdt-agents"
+version = "0.1.0"
+source = { virtual = "." }
+
+[[package]]
+name = "cpc-llm"
+version = "0.1.0"
+source = { editable = "cpc_llm" }
