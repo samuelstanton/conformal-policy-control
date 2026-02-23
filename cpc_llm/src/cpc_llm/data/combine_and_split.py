@@ -10,6 +10,8 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def append_df_len_to_fp(fp, df):
+    return "{0}_{2}.{1}".format(*fp.rsplit('.', 1) + [f'{len(df)}'])
 
 
 def combine_datasets(

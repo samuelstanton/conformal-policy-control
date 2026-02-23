@@ -1,7 +1,7 @@
 log_level: info
 run_name: smaller_pythia #smaller_pythia_0.25dist_0.1maxinf_50gen
-parent_output_dir: /cv/data/ai4dd/data/prinstea/cdt-agents/cpc_llm/parent_output_20260219 #s3://prescient-pcluster-data/prinstea/llome/parent_output_20261225 #parent_output_20251225 #parent_output_20251123 #028 #parent_output_20251013_CAinit # #parent_output_20250918_noCPC  #parent_output_20250923 #_20250901_evol0.5 #/data/bucket/prinstea/llome/parent_output
-local_output_dir: /cv/home/prinstea/cdt-agents/cpc_llm/local_output_20260219 #/homefs/home/prinstea/llome/local_output_20251225 #local_output_20251225 #local_output_20251123 #028 #local_output_20251013_CAinit # #local_output_20250918_noCPC  #local_output_20250923 #_20250901_evol0.5
+parent_output_dir: /cv/data/ai4dd/data/prinstea/cdt-agents/cpc_llm/parent_output_20260223 #s3://prescient-pcluster-data/prinstea/llome/parent_output_20261225 #parent_output_20251225 #parent_output_20251123 #028 #parent_output_20251013_CAinit # #parent_output_20250918_noCPC  #parent_output_20250923 #_20250901_evol0.5 #/data/bucket/prinstea/llome/parent_output
+local_output_dir: /cv/home/prinstea/cdt-agents/cpc_llm/local_output_20260223 #/homefs/home/prinstea/llome/local_output_20251225 #local_output_20251225 #local_output_20251123 #028 #local_output_20251013_CAinit # #local_output_20250918_noCPC  #local_output_20250923 #_20250901_evol0.5
 overwrite_ga: False ## If False, will only run genetic algorithm when output file does not already exist.
 overwrite_gpt: False ## If False, will only run GPT pretraining when output file does not already exist.
 overwrite_initial_sft: False ## If False, will only run SFT when output file does not already exist.
@@ -38,7 +38,7 @@ overwrite_dpo_formatter: False #True
 overwrite_dpo: False #True # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
 
 
-setting_str: 20260220_replication_subsampleMixture_v4 #20260211_replication_subsampleMixture_1envConst #"20251225_MixProp_fixedGetSeeds_0.2Hist_50minOld" 
+setting_str: 20260223_replication_subsampleMixture #20260211_replication_subsampleMixture_1envConst #"20251225_MixProp_fixedGetSeeds_0.2Hist_50minOld" 
 
 
  # False ## Whether to allow parsing and scoring of particles that are not exact lenght of test_fn dim, or invalid values
@@ -509,7 +509,7 @@ iterative_generation:
 
 
 conformal_policy_control:
-  alpha: 0.7 #0.5 #1.0 #0.25 #0.5 #0.3 #1.0 #0.5
+  alpha: 0.4 #0.5 #1.0 #0.25 #0.5 #0.3 #1.0 #0.5
   num_starts_beta_search: 1
   mixture_proposal: True #True #True ## Whether to do mixture proposal in place of optimized proposal (else use safe and then optimized proposal)
   mixture_proposal_factor: 1 #1 ## Do mixture proposal if mixture_proposal_factor *overlap_coef_{safe} < overlap_coef_{unconstrained}. So, 0 or -1 does nothing
