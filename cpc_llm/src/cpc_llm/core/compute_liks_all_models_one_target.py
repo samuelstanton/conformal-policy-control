@@ -203,10 +203,28 @@ def compute_likelihoods_all_models_one_target(cfg: DictConfig, logger: logging.L
     if 'score' in target_df.columns:
         logger.info(f"target_df[['particle', 'score'] + lik_col_names_old] : {target_df[['particle', 'score'] + lik_col_names_old]}")
         logger.info(f"np.array(all_timestep_likelihoods).T : {np.array(all_timestep_likelihoods).T}")
-        target_all_likelihoods_df = pd.DataFrame(np.c_[target_df[['particle', 'score'] + lik_col_names_old], np.array(all_timestep_likelihoods).T], columns=['particle', 'score'] + lik_col_names_old + lik_col_names_new)
+        
+        # Check if there are new likelihoods to add
+        if len(lik_col_names_new) > 0 and len(all_timestep_likelihoods) > 0:
+            target_all_likelihoods_df = pd.DataFrame(
+                np.c_[target_df[['particle', 'score'] + lik_col_names_old], np.array(all_timestep_likelihoods).T], 
+                columns=['particle', 'score'] + lik_col_names_old + lik_col_names_new
+            )
+        else:
+            # No new likelihoods to compute, just use existing data
+            logger.info("No new likelihoods to compute, using existing data")
+            target_all_likelihoods_df = target_df[['particle', 'score'] + lik_col_names_old].copy()
     else:
         ## Handles case where want to compute likelihoods for contrastive-generation particle
-        target_all_likelihoods_df = pd.DataFrame(np.c_[target_df[target_df.columns[0:2] + lik_col_names_old], np.array(all_timestep_likelihoods).T], columns=target_df.columns[0:2] + lik_col_names_old + lik_col_names_new)
+        if len(lik_col_names_new) > 0 and len(all_timestep_likelihoods) > 0:
+            target_all_likelihoods_df = pd.DataFrame(
+                np.c_[target_df[target_df.columns[0:2] + lik_col_names_old], np.array(all_timestep_likelihoods).T], 
+                columns=target_df.columns[0:2] + lik_col_names_old + lik_col_names_new
+            )
+        else:
+            # No new likelihoods to compute, just use existing data
+            logger.info("No new likelihoods to compute, using existing data")
+            target_all_likelihoods_df = target_df[target_df.columns[0:2] + lik_col_names_old].copy()
     logger.info(f"target_all_likelihoods_df.columns : {target_all_likelihoods_df.columns}")
     target_all_likelihoods_df.to_json(output_fp, orient="records", lines=True)
 
