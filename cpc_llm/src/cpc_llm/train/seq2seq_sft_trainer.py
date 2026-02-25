@@ -134,6 +134,18 @@ class S3Callback(TrainerCallback):
             args.output_dir,
             f"{PREFIX_CHECKPOINT_DIR}-{state.global_step}",
         )
+        
+        # Check if checkpoint still exists before trying to copy
+        # It may have been deleted due to save_total_limit or failing validity checks
+        if not os.path.exists(checkpoint_dir):
+            if self.logger is not None:
+                self.logger.warning(
+                    f"Checkpoint {checkpoint_dir} does not exist. "
+                    "It may have been deleted due to save_total_limit or failing validity checks. "
+                    "Skipping S3 upload."
+                )
+            return
+        
         self.fs.put(checkpoint_dir, self.s3_output_dir, recursive=True)
         if self.logger is not None:
             self.logger.info(

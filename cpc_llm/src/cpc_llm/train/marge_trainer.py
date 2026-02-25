@@ -1515,7 +1515,11 @@ class MargeTrainer(Trainer):
         # assert unwrap_model(model) is self.model, "internal model should be a reference to self.model"
 
         # Save model checkpoint
-        checkpoint_folder = f"{PREFIX_CHECKPOINT_DIR}-{self.state.global_step}"
+        # Calculate a monotonically increasing checkpoint number that never resets across epochs
+        # This prevents checkpoint name collisions when step numbers reset each epoch
+        # We use: (epoch_number * 10000) + step_within_epoch to ensure uniqueness
+        checkpoint_number = int(self.state.epoch) * 10000 + self.state.global_step
+        checkpoint_folder = f"{PREFIX_CHECKPOINT_DIR}-{checkpoint_number}"
 
         if self.hp_search_backend is None and trial is None:
             self.store_flos()
@@ -1591,6 +1595,7 @@ class MargeTrainer(Trainer):
 
         # Maybe delete some older checkpoints.
         if self.args.should_save:
-            # Solely rely on numerical checkpoint id for rotation.
-            # mtime is not reliable especially on some fuse fs in cloud environments.
+            # Use numerical checkpoint id for rotation (reliable on all filesystems)
+            # Checkpoint numbers are now monotonically increasing across epochs
             self._rotate_checkpoints(use_mtime=False, output_dir=run_dir)
+
