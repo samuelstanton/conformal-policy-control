@@ -265,9 +265,13 @@ def run_smoke_test(cache: bool = False):
     else:
         output_dir = f"{app_path}/outputs"
         # Clear any stale cached outputs so --no-cache is a clean run
-        if Path(OUTPUTS_PATH).exists():
-            shutil.rmtree(OUTPUTS_PATH)
-            Path(OUTPUTS_PATH).mkdir()
+        outputs_dir = Path(OUTPUTS_PATH)
+        if outputs_dir.exists():
+            for child in outputs_dir.iterdir():
+                if child.is_dir():
+                    shutil.rmtree(child)
+                else:
+                    child.unlink()
             outputs_volume.commit()
             logger.info("Cleared cached outputs volume")
 
