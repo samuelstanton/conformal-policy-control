@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import datasets
 import hydra
 import logging
@@ -17,16 +19,17 @@ from ..test_functions.finetune_utils import (
 from holo.test_functions.closed_form import Ehrlich, RoughMtFuji
 from ..core.model_client import ModelClient
 from omegaconf import DictConfig, OmegaConf
+from transformers import GenerationConfig
 from tqdm import tqdm
 
 
 def run_iterative_generation_inmemory(
-    input_ds,
-    model_client: "ModelClient",
-    test_fn,
-    gen_config,
+    input_ds: datasets.Dataset,
+    model_client: ModelClient,
+    test_fn: Ehrlich | RoughMtFuji,
+    gen_config: GenerationConfig,
     cfg: DictConfig,
-    logger: logging.Logger = None,
+    logger: logging.Logger | None = None,
 ) -> pd.DataFrame:
     """Core generation loop that operates entirely in memory.
 
@@ -86,7 +89,7 @@ def run_iterative_generation_inmemory(
             trunc_output_logps.append(logps)
 
         # store outputs and create inputs for the next iteration
-        for output_idx in range(gen_config.num_return_sequences):
+        for output_idx in range(len(trunc_outputs)):
             output = trunc_outputs[output_idx]
             output_logp = trunc_output_logps[output_idx]
 

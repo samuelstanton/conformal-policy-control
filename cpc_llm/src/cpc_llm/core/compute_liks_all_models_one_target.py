@@ -9,6 +9,8 @@ import pprint
 import time
 import torch
 
+from typing import List
+
 from ..test_functions.finetune_utils import formatting_texts_func_single_seq
 
 from ..core.model_client import ModelClient
@@ -17,11 +19,11 @@ from omegaconf import DictConfig, OmegaConf
 
 def compute_likelihoods_inmemory(
     target_df: pd.DataFrame,
-    input_data_list,
-    model_name_or_path_list,
-    model_indices,
+    input_data_list: List[pd.DataFrame],
+    model_name_or_path_list: List[str],
+    model_indices: List[int],
     cfg: DictConfig,
-    logger: logging.Logger = None,
+    logger: logging.Logger | None = None,
 ) -> pd.DataFrame:
     """Compute likelihoods for target_df under each model, entirely in memory.
 

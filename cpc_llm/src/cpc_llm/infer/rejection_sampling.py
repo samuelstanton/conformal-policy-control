@@ -1,12 +1,16 @@
+from __future__ import annotations
+
 import datasets
 import numpy as np
 import pandas as pd
+import random
+import time
 import torch
 
 import logging
 import os
 
-from typing import List, Optional
+from typing import List
 from omegaconf import DictConfig, OmegaConf
 from transformers import GenerationConfig
 
@@ -30,12 +34,19 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def _is_direct_mode(cfg):
+def _is_direct_mode(cfg: DictConfig) -> bool:
     return getattr(cfg, "job_submission_system", "slurm") == "direct"
 
 
-def _load_test_fn(ga_data_dir):
-    """Load the test function from the ehrlich.jsonl parameter file."""
+def _load_test_fn(ga_data_dir: str) -> Ehrlich | RoughMtFuji:
+    """Load the test function from the ehrlich.jsonl parameter file.
+
+    Args:
+        ga_data_dir: Directory containing the ehrlich.jsonl parameter file.
+
+    Returns:
+        An Ehrlich or RoughMtFuji test function instance.
+    """
     test_fn_fp = os.path.join(ga_data_dir, "ehrlich.jsonl")
     params = pd.read_json(test_fn_fp, orient="records", lines=True).to_dict("records")[
         0
@@ -61,11 +72,19 @@ def _load_test_fn(ga_data_dir):
     )
 
 
-def _init_model_client_with_retry(model_name_or_path, max_new_tokens, _logger):
-    """Initialize a ModelClient with CUDA exponential-backoff retry."""
-    import random
-    import time
+def _init_model_client_with_retry(
+    model_name_or_path: str, max_new_tokens: int, _logger: logging.Logger
+) -> ModelClient:
+    """Initialize a ModelClient with CUDA exponential-backoff retry.
 
+    Args:
+        model_name_or_path: HuggingFace model identifier or local path.
+        max_new_tokens: Maximum number of tokens to generate.
+        _logger: Logger instance for status messages.
+
+    Returns:
+        An initialized ModelClient on CUDA (or CPU as fallback).
+    """
     max_retries = 5
     retry_delay = 1.0
     model_client = None
@@ -119,20 +138,33 @@ def _init_model_client_with_retry(model_name_or_path, max_new_tokens, _logger):
 
 
 def _generate_inmemory(
-    cfg,
-    seeds_fp,
-    model_client,
-    test_fn,
-    temp,
-    higher_score_particle_field,
-    lower_score_particle_field,
-    higher_score_field,
-    lower_score_field,
-    random_seed,
-):
+    cfg: DictConfig,
+    seeds_fp: str,
+    model_client: ModelClient,
+    test_fn: Ehrlich | RoughMtFuji,
+    temp: float,
+    higher_score_particle_field: str,
+    lower_score_particle_field: str,
+    higher_score_field: str,
+    lower_score_field: str,
+    random_seed: int,
+) -> pd.DataFrame:
     """Read seeds, select, and generate proposals entirely in memory.
 
-    Returns a DataFrame with columns: particle, score, loglikelihood, num_particles_generated.
+    Args:
+        cfg: Pipeline config with iterative_generation settings.
+        seeds_fp: Path to the JSONL seeds file.
+        model_client: Pre-initialized ModelClient for generation.
+        test_fn: Test function for scoring generated particles.
+        temp: Generation temperature.
+        higher_score_particle_field: Column name for higher-score particles.
+        lower_score_particle_field: Column name for lower-score particles.
+        higher_score_field: Column name for higher scores.
+        lower_score_field: Column name for lower scores.
+        random_seed: Random seed for reproducible seed selection.
+
+    Returns:
+        DataFrame with columns: particle, score, loglikelihood, num_particles_generated.
     """
     df = pd.read_json(seeds_fp, orient="records", lines=True)
 
@@ -203,8 +235,12 @@ def _generate_inmemory(
 
 
 def _compute_liks_all_models_inmemory(
-    cfg, target_df, seeds_fp_list, model_dir_list, model_indices
-):
+    cfg: DictConfig,
+    target_df: pd.DataFrame,
+    seeds_fp_list: List[str],
+    model_dir_list: List[str],
+    model_indices: List[int],
+) -> pd.DataFrame:
     """Compute likelihoods for all models in memory, without subprocesses."""
     input_data_list = [
         pd.read_json(fp, orient="records", lines=True) for fp in seeds_fp_list
@@ -257,8 +293,8 @@ def generate_proposals_for_AR_sampling(
     call_idx: int = 1,
     proportion_of_target_n_accepted: float = 0.0,
     global_random_seed: int = 0,
-    _gen_model_client: Optional[ModelClient] = None,
-    _test_fn=None,
+    _gen_model_client: ModelClient | dict[str, ModelClient] | None = None,
+    _test_fn: Ehrlich | RoughMtFuji | None = None,
 ) -> str:
 
     n_models = len(model_dir_list)
