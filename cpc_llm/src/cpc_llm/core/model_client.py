@@ -851,13 +851,8 @@ class ModelClient:
         Returns:
             Tuple-of-tuples KV cache with batch dimension expanded.
         """
-        # Normalize DynamicCache (or similar) to tuple-of-tuples
-        if not isinstance(past_key_values, tuple):
-            past_key_values = tuple(
-                (past_key_values[i][0], past_key_values[i][1])
-                for i in range(len(past_key_values))
-            )
-
+        # Iterate via __iter__ which yields (key, value) per layer.
+        # Works for both tuple-of-tuples and DynamicCache.
         return tuple(
             (
                 k.expand(batch_size, -1, -1, -1).contiguous(),
