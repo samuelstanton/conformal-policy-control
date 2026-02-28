@@ -354,11 +354,11 @@ def accept_reject_sample_and_get_likelihoods(
     ## Initialize data frames for storing data for accepted samples
     unconstrained_lik_cols = [f"lik_r{i}" for i in range(n_models)]
     unconstrained_col_names = ["particle", "score"] + unconstrained_lik_cols
-    accepted_unconstrained_df = pd.DataFrame(columns=unconstrained_col_names)
-
     constrained_lik_cols = [f"con_lik_r{i}" for i in range(n_models)]
     constrained_col_names = ["particle", "score"] + constrained_lik_cols
-    accepted_constrained_df = pd.DataFrame(columns=constrained_col_names)
+
+    accepted_unconstrained_dfs = []
+    accepted_constrained_dfs = []
 
     call_idx = 0
 
@@ -485,19 +485,11 @@ def accept_reject_sample_and_get_likelihoods(
                 else:
                     accepted_curr.append(False)
 
-            accepted_unconstrained_df = pd.concat(
-                [
-                    accepted_unconstrained_df,
-                    gen_liks_df[: len(accepted_curr)][accepted_curr],
-                ],
-                ignore_index=True,
+            accepted_unconstrained_dfs.append(
+                gen_liks_df[: len(accepted_curr)][accepted_curr]
             )
-            accepted_constrained_df = pd.concat(
-                [
-                    accepted_constrained_df,
-                    constrained_liks_df[: len(accepted_curr)][accepted_curr],
-                ],
-                ignore_index=True,
+            accepted_constrained_dfs.append(
+                constrained_liks_df[: len(accepted_curr)][accepted_curr]
             )
 
     elif proposal == "safe":
@@ -719,19 +711,11 @@ def accept_reject_sample_and_get_likelihoods(
                 else:
                     accepted_curr.append(False)
 
-            accepted_unconstrained_df = pd.concat(
-                [
-                    accepted_unconstrained_df,
-                    gen_liks_df[: len(accepted_curr)][accepted_curr],
-                ],
-                ignore_index=True,
+            accepted_unconstrained_dfs.append(
+                gen_liks_df[: len(accepted_curr)][accepted_curr]
             )
-            accepted_constrained_df = pd.concat(
-                [
-                    accepted_constrained_df,
-                    constrained_liks_df[: len(accepted_curr)][accepted_curr],
-                ],
-                ignore_index=True,
+            accepted_constrained_dfs.append(
+                constrained_liks_df[: len(accepted_curr)][accepted_curr]
             )
 
     elif proposal == "mixture":
@@ -921,23 +905,15 @@ def accept_reject_sample_and_get_likelihoods(
                     accepted_curr_dict[proposal_curr].append(False)
 
             for proposal_curr in ["safe", "unconstrained"]:
-                accepted_unconstrained_df = pd.concat(
-                    [
-                        accepted_unconstrained_df,
-                        gen_liks_df_dict[proposal_curr][
-                            : len(accepted_curr_dict[proposal_curr])
-                        ][accepted_curr_dict[proposal_curr]],
-                    ],
-                    ignore_index=True,
+                accepted_unconstrained_dfs.append(
+                    gen_liks_df_dict[proposal_curr][
+                        : len(accepted_curr_dict[proposal_curr])
+                    ][accepted_curr_dict[proposal_curr]]
                 )
-                accepted_constrained_df = pd.concat(
-                    [
-                        accepted_constrained_df,
-                        constrained_liks_df_dict[proposal_curr][
-                            : len(accepted_curr_dict[proposal_curr])
-                        ][accepted_curr_dict[proposal_curr]],
-                    ],
-                    ignore_index=True,
+                accepted_constrained_dfs.append(
+                    constrained_liks_df_dict[proposal_curr][
+                        : len(accepted_curr_dict[proposal_curr])
+                    ][accepted_curr_dict[proposal_curr]]
                 )
 
     else:
@@ -946,6 +922,18 @@ def accept_reject_sample_and_get_likelihoods(
     # ## Save accepted with unconstrained likelihoods
     # t = len(model_dir_list)-1
     # accepted_unconstrained_df = gen_liks_df[accepted]
+
+    if accepted_unconstrained_dfs:
+        accepted_unconstrained_df = pd.concat(
+            accepted_unconstrained_dfs, ignore_index=True
+        )
+    else:
+        accepted_unconstrained_df = pd.DataFrame(columns=unconstrained_col_names)
+
+    if accepted_constrained_dfs:
+        accepted_constrained_df = pd.concat(accepted_constrained_dfs, ignore_index=True)
+    else:
+        accepted_constrained_df = pd.DataFrame(columns=constrained_col_names)
 
     base_output_name = f"alpha{cfg.conformal_policy_control.alpha}_gens_likelihood_{cfg.iterative_generation.args.sample_size}sample_{cfg.iterative_generation.args.max_iterations}iter_temp{temps[-1]}_{cfg.generation_sampling_num_return_sequences}seqs.jsonl"
 
