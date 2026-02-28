@@ -81,7 +81,6 @@ def main(cfg: DictConfig):
         **cfg_dict["training_args"],
         generation_config=generation_config,
     )
-    assert training_args.include_inputs_for_metrics  # required for compute_metrics
     model_config = ModelConfig(**cfg_dict["model_config"])
     logger.info(f"training_args: {training_args}")
     logger.info(f"model_config: {model_config}")

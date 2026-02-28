@@ -15,7 +15,6 @@ training_args:
   do_eval: True
   eval_strategy: "steps"
   eval_steps: 100
-  include_inputs_for_metrics: True
   load_best_model_at_end: True
   batch_eval_metrics: True
   predict_with_generate: True
