@@ -834,6 +834,34 @@ class ModelClient:
 
         return all_likelihoods
 
+    def _expand_kv_cache(
+        self,
+        past_key_values: tuple,
+        batch_size: int,
+    ) -> tuple:
+        """Expand a batch-1 KV cache to the target batch size (zero-copy)."""
+        try:
+            from transformers.cache_utils import DynamicCache
+        except ImportError:
+            DynamicCache = None
+
+        if DynamicCache is not None and isinstance(past_key_values, DynamicCache):
+            expanded = DynamicCache()
+            for layer_idx in range(len(past_key_values)):
+                expanded.update(
+                    past_key_values.key_cache[layer_idx].expand(batch_size, -1, -1, -1),
+                    past_key_values.value_cache[layer_idx].expand(
+                        batch_size, -1, -1, -1
+                    ),
+                    layer_idx,
+                )
+            return expanded
+
+        return tuple(
+            (k.expand(batch_size, -1, -1, -1), v.expand(batch_size, -1, -1, -1))
+            for k, v in past_key_values
+        )
+
     @torch.no_grad()
     def compute_likelihoods_avg(
         self,
@@ -841,162 +869,101 @@ class ModelClient:
         targets: List[str],
         batch_size: int = 10,
         device: str = "cuda",
-        float_constant: int = 10
-        ** 10,  ## constant to scale probabilities by to reduce float point issues
-        # add_start_token: bool = True,
+        float_constant: int = 10**10,
         logger: logging.Logger = None,
     ) -> List[float]:
-        """
-        Compute likelihoods of target sequences, averaged over all provided seeds
-        """
+        """Compute likelihoods of target sequences, averaged over all provided input seeds.
 
+        Uses KV caching: each input prefix is encoded once and the cached
+        key/value states are reused across all target batches.
+        """
         logger.info(f"temperature : {self.temperature}")
 
-        # Compute length-normalized likelihoods of target tokens given the input
-        # TODO: write test to check that the logprobs match what model.generate and compute_transition_scores gives!
         if device is not None:
-            assert device in [
-                "gpu",
-                "cpu",
-                "cuda",
-            ], "device should be in ['gpu', 'cpu', 'cuda']."
+            assert device in ["gpu", "cpu", "cuda"]
             if device == "gpu":
                 device = "cuda"
         else:
             device = self.device
 
-        # all_likelihoods = []
-        all_likelihoods_torch = torch.zeros(len(targets), dtype=torch.float64)
+        all_likelihoods = torch.zeros(len(targets), dtype=torch.float64)
 
-        ## Looping over target sequences
-        for t, target in enumerate(
-            tqdm(targets, desc="Computing log likelihoods averaged over inputs...")
+        # Use right-padding for targets so position IDs are correct with KV cache
+        orig_padding_side = self.tokenizer.padding_side
+        self.tokenizer.padding_side = "right"
+
+        for input_text in tqdm(
+            inputs, desc="Computing log likelihoods averaged over inputs..."
         ):
-            log_likelihoods_target = []
+            # --- encode input prefix once, cache KV states ---
+            input_tok = self._tokenize_batch([input_text], max_generate_length=0).to(
+                self.device
+            )
+            input_out = self.model(**input_tok, use_cache=True)
+            kv_cache = input_out.past_key_values
+            # Logit at last input position predicts the first target token
+            input_last_logit = input_out.logits[:, -1:, :]
+            input_len = input_tok.attention_mask.sum().item()
 
-            ## Looping over batches of input sequences
-            for start_index in range(0, len(inputs), batch_size):
-                end_index = min(start_index + batch_size, len(inputs))
+            # --- process targets in batches using cached KV ---
+            for t_start in range(0, len(targets), batch_size):
+                t_end = min(t_start + batch_size, len(targets))
+                target_batch = targets[t_start:t_end]
+                cur_batch_size = len(target_batch)
 
-                ## For a given target, minibatch of concatenations with subset of input prompt sequences
-                batch = [f"{input}{target}" for input in inputs[start_index:end_index]]
-
-                tokenized = self._tokenize_batch(batch, max_generate_length=0).to(
-                    self.device
-                )
-                outputs = self.model(**tokenized)
-                scores = outputs.logits / self.temperature
-
-                # probs = torch.exp(torch.nn.functional.log_softmax(scores, dim=-1)) ## Seems unnecessary to do exp(log(softmax)) ??
-                probs = torch.nn.functional.log_softmax(scores, dim=-1)
-
-                # probs = torch.clip(torch.nn.functional.softmax(scores, dim=-1), min=sys.float_info.min) ## Clip probabilities at minimum float value
-
-                # logger.info(f"torch.nn.functional.softmax(scores, dim=-1) : {torch.nn.functional.softmax(scores, dim=-1).shape}")
-                # logger.info(f"clipped probs : {probs.shape}")
-
-                # # probs = torch.log(scores)
-
-                # logger.info(f"log clipped probs : {probs.shape}")
-
-                ## TO DO: Compute probabilities averaged over input sequences
-
-                # get probs and mask out both padding and input tokens
-                inputs_tokenized = self._tokenize_batch(inputs[start_index:end_index])
-                input_seq_lens = inputs_tokenized.attention_mask.sum(-1)  ## length = 75
-                # logger.info(f"input_seq_lens : {input_seq_lens}")
-                input_tokens_mask = torch.LongTensor(
-                    [
-                        [0 for _ in range(input_seq_lens[i].item())]
-                        + [
-                            1
-                            for _ in range(
-                                tokenized.input_ids.shape[1] - input_seq_lens[i].item()
-                            )
-                        ]
-                        for i in range(tokenized.input_ids.shape[0])
-                    ]
+                target_tok = self._tokenize_batch(
+                    target_batch, max_generate_length=0
                 ).to(self.device)
-                indexes = tokenized.input_ids[:, 1:]
-                # logger.info(f"probs.shape : {probs.shape}")
-                # # logger.info(f"probs : {probs}")
-                # logger.info(f"indexes.unsqueeze(-1).shape : {indexes.unsqueeze(-1).shape}")
-                # # logger.info(f"indexes.unsqueeze(-1).shape : {indexes.unsqueeze(-1).shape}")
-                # logger.info(f"probs[:,:,:100] : {probs[:,:,:100]}")
-                # logger.info(f"torch.sum(exp(probs), dim=2) : {torch.sum(np.exp(probs), dim=2)}")
 
-                # logger.info(f"torch.gather(probs, -1, indexes.unsqueeze(-1)).shape : {torch.gather(probs, -1, indexes.unsqueeze(-1))[:, 74:84]}")
-                # logger.info(f"tokenized.attention_mask[:, 1:] : {tokenized.attention_mask[:, 74:84]}")
-                # logger.info(f"input_tokens_mask[:, 1:] : {input_tokens_mask[:, 74:84]}")
-                # logger.info(f"torch.gather(probs, -1, indexes.unsqueeze(-1)) : {torch.gather(probs, -1, indexes.unsqueeze(-1))}")
+                expanded_kv = self._expand_kv_cache(kv_cache, cur_batch_size)
 
-                next_token_probs = (
-                    torch.gather(probs, -1, indexes.unsqueeze(-1)).squeeze(-1)
-                    * tokenized.attention_mask[:, 1:]
-                    * input_tokens_mask[:, 1:]
+                # Attention mask: all-1s for cached input + target attention mask
+                input_mask = torch.ones(
+                    cur_batch_size,
+                    input_len,
+                    device=self.device,
+                    dtype=target_tok.attention_mask.dtype,
+                )
+                full_mask = torch.cat([input_mask, target_tok.attention_mask], dim=1)
+
+                target_out = self.model(
+                    input_ids=target_tok.input_ids,
+                    attention_mask=full_mask,
+                    past_key_values=expanded_kv,
+                    use_cache=False,
                 )
 
-                next_token_probs = next_token_probs.cpu().numpy()
-                # targets_tokenized = self._tokenize_batch(targets[start_index:end_index])
-                targets_tokenized = self._tokenize_batch(target)
+                # Stitch logits: input's last logit + target's all-but-last
+                # input_last_logit predicts target[0]
+                # target_out.logits[:, i] predicts target[i+1]
+                combined_logits = torch.cat(
+                    [
+                        input_last_logit.expand(cur_batch_size, -1, -1),
+                        target_out.logits[:, :-1, :],
+                    ],
+                    dim=1,
+                )  # (batch, target_len, vocab)
 
-                (targets_tokenized.attention_mask.sum(-1).cpu().numpy())  ## length = 75
-                # logger.info(f"targets_seq_lens : {targets_seq_lens}")
-                log_likelihoods_batch = list(
-                    next_token_probs.sum(-1)
-                )  # / targets_seq_lens)
+                scores = combined_logits / self.temperature
+                log_probs = torch.nn.functional.log_softmax(scores, dim=-1)
 
-                # logger.info(f"start_index : {start_index}, end_index : {end_index}")
-                # logger.info(f"next_token_probs : {next_token_probs}")
+                # Gather log-prob of each actual target token
+                target_log_probs = torch.gather(
+                    log_probs, -1, target_tok.input_ids.unsqueeze(-1)
+                ).squeeze(-1)
 
-                # logger.info(f"next_token_probs.sum(-1) : {next_token_probs.sum(-1)}")
-                # logger.info(f"targets_seq_lens : {targets_seq_lens}")
-                # logger.info(f"sum log_likelihoods_batch      : {log_likelihoods_batch}")
-                # logger.info(f"likelihoods_batch      : {np.exp(log_likelihoods_batch)}")
+                # Zero out padding positions
+                target_log_probs = target_log_probs * target_tok.attention_mask
 
-                # logger.info("\n\n\n")
-                # logger.info(f"next_token_probs.shape : {next_token_probs.shape}")
-                # # logger.info(f"next_token_probs       : {next_token_probs}")
-                # logger.info(f"sum log_liks next token       : {np.sum(next_token_probs[:, 74:])}")
-                # logger.info(f"exp sum log_liks next token   : {np.exp(np.sum(next_token_probs[:, 74:]))}")
-                # logger.info(f"input_seq_lens : {input_seq_lens}")
-                # logger.info(f"prod next_token_probs       : {np.prod(next_token_probs[input_seq_lens:end_index])}")
+                # Sum log-probs per target sequence
+                log_liks = target_log_probs.sum(-1)  # (batch,)
 
-                log_likelihoods_target.extend(log_likelihoods_batch)
+                # Accumulate exp(log_lik) for averaging across inputs
+                all_likelihoods[t_start:t_end] += torch.exp(log_liks.cpu().double())
 
-                # seq_log_likelihoods = list(next_token_probs.prod(-1) / targets_seq_lens)
-                # all_log_likelihoods.extend(avg_log_likelihoods)
-            #     logger.info(f"likelihoods_target len : {len(log_likelihoods_target)}")
-            # log_likelihoods_target_scaled = np.array(log_likelihoods_target) #/ self.max_generate_length
-            # logger.info(f"likelihoods_target : {log_likelihoods_target}")
-            # logger.info(f"self.max_generate_length : {self.max_generate_length}")
-            # logger.info(f"log_likelihoods_target : {log_likelihoods_target}")
-            # likelihoods_target_scaled = np.exp(log_likelihoods_target) * float_constant  ## Scale up by constant to reduce float point issues
-            # logger.info(f"likelihoods_target : {np.exp(log_likelihoods_target)}")
-            # logger.info(f"likelihoods_target_scaled : {log_likelihoods_target_scaled}")
-            # logger.info(f"likelihoods_scaled_avg    : {max(np.exp(log_likelihoods_target_scaled).mean(), sys.float_info.min)}")
-            # all_likelihoods.append(max(np.exp(log_likelihoods_target_scaled).mean(), sys.float_info.min)) ## Clip likelihoods at minimum float value for now (if was generated, then actual likelihood is positive)
-            # logger.info(f"log_likelihoods_target : {log_likelihoods_target}")
-            # logger.info(f"exp(log_likelihoods_target)   : {torch.exp(torch.tensor(log_likelihoods_target, dtype=torch.float64))}")
-
-            # all_likelihoods.append(torch.exp(torch.tensor(log_likelihoods_target, dtype=torch.float64)).mean()) ## Clip likelihoods at minimum float value for now (if was generated, then actual likelihood is positive)
-            all_likelihoods_torch[t] = torch.exp(
-                torch.tensor(log_likelihoods_target, dtype=torch.float64)
-            ).mean()
-
-            # all_likelihoods.append(torch.mean(log_likelihoods_target))
-            # all_likelihoods.append(likelihoods_target.prod())
-
-            # logger.info(f"np.exp(log_likelihoods_target) : {np.exp(log_likelihoods_target)}")
-            # logger.info(f"liks prior to avg : {np.exp(log_likelihoods_target_scaled)}")
-            # logger.info(f"seq likelihood : {all_likelihoods[-1]}")
-            # logger.info(f"all_likelihoods : {all_likelihoods}")
-            # logger.info(f"len(all_likelihoods) : {len(all_likelihoods)}")
-
-            # if t == 2:
-            #     raise ValueError("Stopping for debugging")
-
-        return all_likelihoods_torch.tolist()
+        self.tokenizer.padding_side = orig_padding_side
+        all_likelihoods /= len(inputs)
+        return all_likelihoods.tolist()
 
     ### NOTE: Had attempted modifying this function for unconditional generation, wasn't working so reverted to
     ### original version below this commented-out block
