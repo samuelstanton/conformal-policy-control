@@ -149,6 +149,10 @@ def compute_likelihoods_inmemory(
         logger.info(f"target_likelihoods : {target_likelihoods}")
         all_timestep_likelihoods.append(target_likelihoods)
 
+        # Free model to reclaim GPU memory before loading the next one
+        del model_client
+        torch.cuda.empty_cache()
+
     ## Assemble result DataFrame
     if "score" in target_df.columns:
         if len(lik_col_names_new) > 0 and len(all_timestep_likelihoods) > 0:

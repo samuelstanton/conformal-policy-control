@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datasets
+import functools
 import numpy as np
 import pandas as pd
 import random
@@ -36,6 +37,12 @@ logger = logging.getLogger(__name__)
 
 def _is_direct_mode(cfg: DictConfig) -> bool:
     return getattr(cfg, "job_submission_system", "slurm") == "direct"
+
+
+@functools.lru_cache(maxsize=32)
+def _read_jsonl_cached(filepath: str) -> pd.DataFrame:
+    """Read a JSONL file, caching the result across AR iterations."""
+    return pd.read_json(filepath, orient="records", lines=True)
 
 
 def _load_test_fn(ga_data_dir: str) -> Ehrlich | RoughMtFuji:
@@ -166,7 +173,7 @@ def _generate_inmemory(
     Returns:
         DataFrame with columns: particle, score, loglikelihood, num_particles_generated.
     """
-    df = pd.read_json(seeds_fp, orient="records", lines=True)
+    df = _read_jsonl_cached(seeds_fp)
 
     if cfg.sanity_check:
         logger.info(
@@ -242,13 +249,15 @@ def _compute_liks_all_models_inmemory(
     model_indices: List[int],
 ) -> pd.DataFrame:
     """Compute likelihoods for all models in memory, without subprocesses."""
-    input_data_list = [
-        pd.read_json(fp, orient="records", lines=True) for fp in seeds_fp_list
-    ]
+    input_data_list = [_read_jsonl_cached(fp) for fp in seeds_fp_list]
 
+    # batch_size lives at the top level of the Hydra subprocess config
+    # (compute_liks_all_models_and_cal_data.yaml), not in the pipeline
+    # config's args sub-dict.  Default is 10.
+    lik_batch_size = getattr(cfg.compute_likelihooods_all_models.args, "batch_size", 10)
     lik_cfg = OmegaConf.create(
         {
-            "batch_size": cfg.compute_likelihooods_all_models.args.batch_size,
+            "batch_size": lik_batch_size,
             "generation_config": {
                 "temperature": cfg.temperature,
                 "max_new_tokens": cfg.compute_likelihooods_all_models.args.generation_config.max_new_tokens,
@@ -1268,6 +1277,11 @@ def accept_reject_sample_and_get_likelihoods(
 
     else:
         raise ValueError(f"Unknown proposal name : {proposal}")
+
+    # ---- Free pre-loaded generation model(s) to reclaim GPU memory ----
+    if gen_model_client is not None:
+        del gen_model_client
+        torch.cuda.empty_cache()
 
     # ## Save accepted with unconstrained likelihoods
     # t = len(model_dir_list)-1
