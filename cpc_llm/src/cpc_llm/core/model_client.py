@@ -851,12 +851,13 @@ class ModelClient:
         Returns:
             Tuple-of-tuples KV cache with batch dimension expanded.
         """
-        # Access key/value tensors per layer. DynamicCache stores them in
-        # .key_cache/.value_cache lists; tuple-of-tuples are indexed directly.
+        # Extract (key, value) pairs per layer. DynamicCache stores them in
+        # .key_cache/.value_cache lists; for tuples, each element may be a
+        # 2-tuple (key, value) or 3-tuple (key, value, sliding_window).
         if hasattr(past_key_values, "key_cache"):
-            layers = zip(past_key_values.key_cache, past_key_values.value_cache)
+            layers = list(zip(past_key_values.key_cache, past_key_values.value_cache))
         else:
-            layers = past_key_values
+            layers = [(layer[0], layer[1]) for layer in past_key_values]
 
         return tuple(
             (
