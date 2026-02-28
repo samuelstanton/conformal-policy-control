@@ -95,9 +95,9 @@ def main(cfg: DictConfig):
     # Model & Tokenizer
     ################
     torch_dtype = (
-        model_config.torch_dtype
-        if model_config.torch_dtype in ["auto", None]
-        else getattr(torch, model_config.torch_dtype)
+        model_config.dtype
+        if model_config.dtype in ["auto", None]
+        else getattr(torch, model_config.dtype)
     )
     quantization_config = get_quantization_config(model_config)
     device_map = get_kbit_device_map() if quantization_config is not None else None

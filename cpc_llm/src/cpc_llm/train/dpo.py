@@ -115,9 +115,9 @@ def main(cfg: DictConfig):
     ################
     set_seed(training_args.seed)
     torch_dtype = (
-        model_config.torch_dtype
-        if model_config.torch_dtype in ["auto", None]
-        else getattr(torch, model_config.torch_dtype)
+        model_config.dtype
+        if model_config.dtype in ["auto", None]
+        else getattr(torch, model_config.dtype)
     )
     quantization_config = get_quantization_config(model_config)
     model_kwargs = dict(
