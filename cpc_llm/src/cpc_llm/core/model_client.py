@@ -841,37 +841,33 @@ class ModelClient:
     ):
         """Expand a batch-1 KV cache to the target batch size.
 
-        Preserves the cache type (DynamicCache or tuple-of-tuples) so the
-        result is compatible with the model's forward pass.
+        Always returns a DynamicCache so the result is compatible with
+        modern transformers model forward passes.
 
         Args:
-            past_key_values: KV cache returned by a model forward pass.
+            past_key_values: KV cache returned by a model forward pass
+                (DynamicCache or tuple-of-tuples).
             batch_size: Target batch dimension for the expanded cache.
 
         Returns:
-            Expanded KV cache in the same format as the input.
+            DynamicCache with batch dimension expanded.
         """
+        from transformers.cache_utils import DynamicCache
+
+        # Extract (key, value) pairs per layer from either format
         if hasattr(past_key_values, "key_cache"):
-            # DynamicCache — rebuild with expanded tensors
-            from transformers.cache_utils import DynamicCache
+            kv_pairs = zip(past_key_values.key_cache, past_key_values.value_cache)
+        else:
+            kv_pairs = ((layer[0], layer[1]) for layer in past_key_values)
 
-            expanded = DynamicCache()
-            for k, v in zip(past_key_values.key_cache, past_key_values.value_cache):
-                expanded.update(
-                    k.expand(batch_size, -1, -1, -1).contiguous(),
-                    v.expand(batch_size, -1, -1, -1).contiguous(),
-                    len(expanded),
-                )
-            return expanded
-
-        # Tuple-of-tuples — expand key/value, drop any extra elements
-        return tuple(
-            (
-                layer[0].expand(batch_size, -1, -1, -1).contiguous(),
-                layer[1].expand(batch_size, -1, -1, -1).contiguous(),
+        expanded = DynamicCache()
+        for k, v in kv_pairs:
+            expanded.update(
+                k.expand(batch_size, -1, -1, -1).contiguous(),
+                v.expand(batch_size, -1, -1, -1).contiguous(),
+                len(expanded),
             )
-            for layer in past_key_values
-        )
+        return expanded
 
     @torch.no_grad()
     def compute_likelihoods_avg(
