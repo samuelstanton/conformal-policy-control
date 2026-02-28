@@ -322,14 +322,23 @@ class Seq2SeqSFTTrainer(SFTTrainer):
         self.gather_function = self.accelerator.gather
         self._gen_kwargs = gen_kwargs
 
-        # Wrap compute_metrics to inject stashed inputs (replaces the
-        # removed include_inputs_for_metrics from transformers 5.x).
+        # WORKAROUND: transformers 5.x removed include_inputs_for_metrics from
+        # TrainingArguments and no longer passes inputs to compute_metrics via
+        # EvalPrediction.  The Ehrlich evaluators (EvaluatorEditPairs /
+        # EvaluatorPlainPairs) need access to input_ids and labels to decode
+        # prompts and score generated sequences.
+        #
+        # We stash raw inputs during each prediction_step call (see below),
+        # then re-inject them into EvalPrediction here.
+        #
+        # The proper fix is to refactor the evaluators so they don't depend on
+        # raw inputs — e.g. by decoding within prediction_step and passing
+        # decoded strings through a different channel.  Tracked in issue #19.
         self._eval_inputs = []
         original_compute_metrics = self.compute_metrics
 
         def _compute_metrics_with_inputs(eval_pred, **kwargs):
             if self._eval_inputs:
-                # Reconstruct a batched inputs dict from the per-step stashes
                 batched = {}
                 for k in self._eval_inputs[0]:
                     vals = [inp[k] for inp in self._eval_inputs]
@@ -466,8 +475,7 @@ class Seq2SeqSFTTrainer(SFTTrainer):
                 ignore_keys=ignore_keys,
             )
 
-        # Stash inputs for compute_metrics (include_inputs_for_metrics was
-        # removed in transformers 5.x).
+        # Part of the include_inputs_for_metrics workaround (see evaluate()).
         if not hasattr(self, "_eval_inputs"):
             self._eval_inputs = []
         self._eval_inputs.append(
