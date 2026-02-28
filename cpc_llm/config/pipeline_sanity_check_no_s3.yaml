@@ -115,7 +115,7 @@ sft:
       per_device_eval_batch_size: 8
       eval_accumulation_steps: 2
       gradient_accumulation_steps: 32
-      max_seq_length: 1024
+      max_length: 1024
       log_level: "info"
 
     generation_config:  # use greedy decoding during evaluation

@@ -165,8 +165,7 @@ class Seq2SeqSFTTrainer(SFTTrainer):
         data_collator: Optional["DataCollator"] = None,
         train_dataset: Optional[Dataset] = None,
         eval_dataset: Optional[Union[Dataset, Dict[str, Dataset]]] = None,
-        tokenizer: Optional["PreTrainedTokenizerBase"] = None,
-        model_init: Optional[Callable[[], "PreTrainedModel"]] = None,
+        processing_class: Optional["PreTrainedTokenizerBase"] = None,
         compute_metrics: Optional[Callable[["EvalPrediction"], Dict]] = None,
         callbacks: Optional[List["TrainerCallback"]] = None,
         optimizers: Tuple[torch.optim.Optimizer, torch.optim.lr_scheduler.LambdaLR] = (
@@ -177,46 +176,28 @@ class Seq2SeqSFTTrainer(SFTTrainer):
             Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
         ] = None,
         peft_config: Optional["PeftConfig"] = None,
-        dataset_text_field: Optional[str] = None,
-        packing: Optional[bool] = False,
         formatting_func: Optional[Callable] = None,
-        max_seq_length: Optional[int] = None,
-        infinite: Optional[bool] = None,
-        num_of_sequences: Optional[int] = 1024,
-        chars_per_token: Optional[float] = 3.6,
-        dataset_num_proc: Optional[int] = None,
-        dataset_batch_size: int = 1000,
-        neftune_noise_alpha: Optional[float] = None,
-        model_init_kwargs: Optional[Dict] = None,
-        dataset_kwargs: Optional[Dict] = None,
-        eval_packing: Optional[bool] = None,
+        # Legacy aliases — accept but ignore for backwards compat with callers
+        max_length: Optional[int] = None,
+        tokenizer: Optional["PreTrainedTokenizerBase"] = None,
+        **kwargs,
     ):
+        # Support legacy 'tokenizer' kwarg
+        if tokenizer is not None and processing_class is None:
+            processing_class = tokenizer
         super().__init__(
             model=model,
             args=args,
             data_collator=data_collator,
             train_dataset=train_dataset,
             eval_dataset=eval_dataset,
-            tokenizer=tokenizer,
-            model_init=model_init,
+            processing_class=processing_class,
             compute_metrics=compute_metrics,
             callbacks=callbacks,
             optimizers=optimizers,
             preprocess_logits_for_metrics=preprocess_logits_for_metrics,
             peft_config=peft_config,
-            dataset_text_field=dataset_text_field,
-            packing=packing,
             formatting_func=formatting_func,
-            max_seq_length=max_seq_length,
-            infinite=infinite,
-            num_of_sequences=num_of_sequences,
-            chars_per_token=chars_per_token,
-            dataset_num_proc=dataset_num_proc,
-            dataset_batch_size=dataset_batch_size,
-            neftune_noise_alpha=neftune_noise_alpha,
-            model_init_kwargs=model_init_kwargs,
-            dataset_kwargs=dataset_kwargs,
-            eval_packing=eval_packing,
         )
 
         # Override self.model.generation_config if a GenerationConfig is specified in args.

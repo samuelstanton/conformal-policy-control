@@ -262,7 +262,6 @@ def main(cfg: DictConfig):
             formatting_func=formatting_fn,
             data_collator=collator,
             compute_metrics=compute_metrics,
-            max_seq_length=cfg.seq_length,
         )
 
     trainer.evaluate()

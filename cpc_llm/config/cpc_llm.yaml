@@ -256,7 +256,7 @@ initial_sft:
       per_device_eval_batch_size: 8
       eval_accumulation_steps: 2
       gradient_accumulation_steps: 1 #16 #32
-      max_seq_length: 512 #256 #512
+      max_length: 512 #256 #512
       log_level: "info"
       save_total_limit: 2
       #warmup_ratio: 0.0
@@ -311,7 +311,7 @@ sft:
       per_device_eval_batch_size: 8
       eval_accumulation_steps: 2
       gradient_accumulation_steps: 2 #16 #32
-      max_seq_length: 512 #256 #512
+      max_length: 512 #256 #512
       log_level: "info"
       save_total_limit: 2
       #warmup_ratio: 0.0
