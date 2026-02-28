@@ -23,7 +23,7 @@ from ..core.model_client import ModelClient
 from omegaconf import DictConfig, OmegaConf
 from ..train.seq2seq_sft_trainer import S3Callback, Seq2SeqSFTConfig, Seq2SeqSFTTrainer
 from tqdm.rich import tqdm
-from trl.commands.cli_utils import init_zero_verbose
+from trl import init_zero_verbose
 from transformers import (
     AutoConfig,
     AutoModelForCausalLM,
@@ -34,13 +34,13 @@ from transformers import (
 from transformers.utils import logging as transformers_logging
 
 from trl import (
-    DataCollatorForCompletionOnlyLM,
     ModelConfig,
     RichProgressCallback,
     get_peft_config,
     get_quantization_config,
     get_kbit_device_map,
 )
+from ..train.data_collators import DataCollatorForCompletionOnlyLM
 from typing import Any, List, Optional
 
 TRL_USE_RICH = os.environ.get("TRL_USE_RICH", False)

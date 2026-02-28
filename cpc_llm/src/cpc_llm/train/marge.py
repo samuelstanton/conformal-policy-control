@@ -30,7 +30,7 @@ from trl import (
     get_peft_config,
     get_quantization_config,
 )
-from trl.commands.cli_utils import DPOScriptArguments, init_zero_verbose
+from trl import init_zero_verbose
 
 TRL_USE_RICH = strtobool(os.getenv("TRL_USE_RICH", "0"))
 
@@ -59,7 +59,7 @@ def main(cfg: DictConfig):
     )
 
     cfg_dict = OmegaConf.to_container(cfg)
-    args = DPOScriptArguments(**cfg_dict["dpo_script_args"])
+    script_args = cfg_dict.get("dpo_script_args", {})
     training_args = MargeConfig(**cfg_dict["marge_config"])
     model_config = ModelConfig(**cfg_dict["model_config"])
 
@@ -146,7 +146,7 @@ def main(cfg: DictConfig):
     model.generation_config = GenerationConfig(
         **OmegaConf.to_container(cfg.generation_config)
     )
-    if args.ignore_bias_buffers:
+    if script_args.get("ignore_bias_buffers", False):
         # torch distributed hack
         model._ddp_params_and_buffers_to_ignore = [
             name for name, buffer in model.named_buffers() if buffer.dtype == torch.bool
@@ -221,7 +221,7 @@ def main(cfg: DictConfig):
             f"Finished loading eval dataset from {cfg.pretokenized_eval_fp}."
         )
 
-    if args.sanity_check:
+    if script_args.get("sanity_check", False):
         # in sanity check, train and eval on only a very small subset of the data
         train_data_size = min(1000, len(train_dataset))
         eval_data_size = min(50, len(eval_dataset))

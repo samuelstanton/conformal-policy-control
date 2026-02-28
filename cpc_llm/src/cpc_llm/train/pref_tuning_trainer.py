@@ -29,14 +29,13 @@ from transformers.trainer_utils import EvalLoopOutput, PREFIX_CHECKPOINT_DIR
 from transformers.utils import logging as transformers_logging
 from trl import DPOConfig, DPOTrainer
 from trl.models import create_reference_model
-from trl.trainer.utils import (
+from trl.experimental.utils import (
     DPODataCollatorWithPadding,
-    RunningMoments,
-    SyncRefModelCallback,
-    disable_dropout_in_model,
     peft_module_casting_to_bf16,
 )
-from trl.import_utils import is_peft_available, is_wandb_available
+from trl.experimental.bco.bco_trainer import RunningMoments
+from trl.trainer.callbacks import SyncRefModelCallback, is_wandb_available
+from trl.trainer.utils import disable_dropout_in_model, is_peft_available
 from typing import Callable, Dict, List, Literal, Optional, Tuple, Union
 
 logger = transformers_logging.get_logger(__name__)
