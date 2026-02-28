@@ -584,7 +584,7 @@ class EvaluatorPlainPairs:
                 continue
             self.num_values_in_range += 1
             particle = torch.FloatTensor(particle)
-            score = self.test_fn(particle).item()
+            score = self.test_fn(particle.unsqueeze(0)).item()
             if score == float("inf"):
                 maybe_log(
                     self.logger,
@@ -797,7 +797,7 @@ class EvaluatorEditPairs:
             input_str = input_str[: input_str.find("\n")]
             input_particle = torch.FloatTensor(json.loads(input_str))
             input_particles.append(input_particle)
-            input_score = self.test_fn(input_particle).item()
+            input_score = self.test_fn(input_particle.unsqueeze(0)).item()
             input_scores.append(input_score)
 
         # make new lists for predictions because not all
@@ -840,7 +840,7 @@ class EvaluatorEditPairs:
                 continue
             self.num_values_in_range += 1
             particle = torch.FloatTensor(particle)
-            score = self.test_fn(particle).item()
+            score = self.test_fn(particle.unsqueeze(0)).item()
             reward = self.get_reward(input_scores[i], score)
             self.rewards.append(reward)
             # score is in (-1.0, infinity)
