@@ -1,13 +1,38 @@
-import os
-import pandas as pd
-from typing import Any, Dict, List, Mapping, Optional
-from omegaconf import DictConfig, OmegaConf
-from .file_handler import LocalOrS3Client
-from ..data.combine_and_split import combine_datasets
-from .slurm_utils import submit_cmd_to_slurm, wait_for_slurm_jobs_to_complete
 import logging
+import os
+
+import pandas as pd
+from omegaconf import DictConfig, OmegaConf
+from typing import Any, Dict, List, Mapping, Optional
+
+from ..data.combine_and_split import combine_datasets
+from .file_handler import LocalOrS3Client
+from .slurm_utils import (
+    submit_cmd_direct,
+    submit_cmd_to_slurm,
+    wait_for_direct_jobs_to_complete,
+    wait_for_slurm_jobs_to_complete,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _submit_cmd(cfg, py_cmd, dump_dir, blocking=True, **kwargs):
+    """Dispatch command execution based on cfg.job_submission_system."""
+    system = getattr(cfg, "job_submission_system", "slurm")
+    if system == "direct":
+        return submit_cmd_direct(py_cmd, dump_dir, blocking=blocking, **kwargs)
+    else:
+        return submit_cmd_to_slurm(py_cmd, dump_dir, blocking=blocking, **kwargs)
+
+
+def _wait_for_jobs(cfg, jobs):
+    """Wait for jobs to complete based on cfg.job_submission_system."""
+    system = getattr(cfg, "job_submission_system", "slurm")
+    if system == "direct":
+        wait_for_direct_jobs_to_complete(jobs)
+    else:
+        wait_for_slurm_jobs_to_complete(jobs)
 
 
 def get_all_strs_from_nested_dict(nested_dict: Dict[str, Any]) -> List[str]:
@@ -80,7 +105,8 @@ def generate_ga_dataset(cfg: DictConfig, fs: LocalOrS3Client) -> str:
         slurm_kwargs = OmegaConf.to_container(cfg.evol_dataset_gen.slurm_args)
         slurm_kwargs["job_name"] = "ga_seeds"
 
-        submit_cmd_to_slurm(
+        _submit_cmd(
+            cfg,
             python_cmd_str,
             slurm_dump_dir,
             blocking=True,
@@ -157,7 +183,8 @@ def create_propen_sft_dataset(
                 cfg.propen_dataset_formatting_sft.slurm_args
             )
             slurm_kwargs["job_name"] = "propen_sft_formatting"
-        submit_cmd_to_slurm(
+        _submit_cmd(
+            cfg,
             python_cmd_str,
             slurm_dump_dir,
             blocking=True,
@@ -207,7 +234,8 @@ def create_propen_preference_dataset(
             cfg.propen_dataset_formatting_preference.slurm_args
         )
         slurm_kwargs["job_name"] = "propen_dpo_formatting"
-        submit_cmd_to_slurm(
+        _submit_cmd(
+            cfg,
             python_cmd_str,
             slurm_dump_dir,
             blocking=True,
@@ -330,7 +358,8 @@ def run_iterative_generation(
         slurm_kwargs = OmegaConf.to_container(cfg.iterative_generation.slurm_args)
         slurm_kwargs["job_name"] = "iter_gen"
         job_submissions = [
-            submit_cmd_to_slurm(
+            _submit_cmd(
+                cfg,
                 py_cmd,
                 slurm_dump_dir,
                 blocking=False,
@@ -339,7 +368,7 @@ def run_iterative_generation(
             )
             for py_cmd in all_python_commands
         ]
-        wait_for_slurm_jobs_to_complete(job_submissions)
+        _wait_for_jobs(cfg, job_submissions)
         hd = combine_datasets(cfg, fs, output_filepaths, combined_outputs_fp)
 
     if return_seeds:
@@ -517,7 +546,8 @@ def run_compute_liks_all_models_and_cal_data(
         )
         slurm_kwargs["job_name"] = "comp_lik_all_models"
         job_submissions = [
-            submit_cmd_to_slurm(
+            _submit_cmd(
+                cfg,
                 py_cmd,
                 slurm_dump_dir,
                 blocking=False,
@@ -526,7 +556,7 @@ def run_compute_liks_all_models_and_cal_data(
             )
             for py_cmd in all_python_commands
         ]
-        wait_for_slurm_jobs_to_complete(job_submissions)
+        _wait_for_jobs(cfg, job_submissions)
         # hd = combine_datasets(cfg, fs, output_filepaths, combined_outputs_fp)
     return output_filepaths, hd
 
@@ -615,7 +645,7 @@ def run_compute_liks_all_models_and_cal_data(
 
 #         slurm_kwargs = OmegaConf.to_container(cfg.gpt.slurm_args)
 #         slurm_kwargs["job_name"] = "gpt"
-#         submit_cmd_to_slurm(
+#         _submit_cmd(cfg,
 #             py_cmd,
 #             slurm_dump_dir,
 #             blocking=True,
@@ -706,7 +736,8 @@ def train_initial_sft(
 
         slurm_kwargs = OmegaConf.to_container(cfg.initial_sft.slurm_args)
         slurm_kwargs["job_name"] = "initial_sft"
-        submit_cmd_to_slurm(
+        _submit_cmd(
+            cfg,
             py_cmd,
             slurm_dump_dir,
             blocking=True,
@@ -797,7 +828,8 @@ def train_sft(
 
         slurm_kwargs = OmegaConf.to_container(cfg.sft.slurm_args)
         slurm_kwargs["job_name"] = "sft"
-        submit_cmd_to_slurm(
+        _submit_cmd(
+            cfg,
             py_cmd,
             slurm_dump_dir,
             blocking=True,
@@ -876,7 +908,8 @@ def train_dpo(
 
     slurm_kwargs = OmegaConf.to_container(cfg.dpo.slurm_args)
     slurm_kwargs["job_name"] = "dpo"
-    submit_cmd_to_slurm(
+    _submit_cmd(
+        cfg,
         py_cmd,
         slurm_dump_dir,
         blocking=True,
@@ -951,7 +984,8 @@ def train_marge(
 
     slurm_kwargs = OmegaConf.to_container(cfg.marge.slurm_args)
     slurm_kwargs["job_name"] = "marge"
-    submit_cmd_to_slurm(
+    _submit_cmd(
+        cfg,
         py_cmd,
         slurm_dump_dir,
         blocking=True,
