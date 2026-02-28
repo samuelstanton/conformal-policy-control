@@ -8,42 +8,42 @@ we vendor the original class here to avoid restructuring the data pipeline.
 See https://github.com/huggingface/trl/discussions/3826
 """
 
-from dataclasses import dataclass
 from typing import Any, List, Union
 
 import torch
 from transformers import DataCollatorForLanguageModeling
 
 
-@dataclass
 class DataCollatorForCompletionOnlyLM(DataCollatorForLanguageModeling):
     """Data collator that masks prompt tokens so loss is only on completions.
 
     Finds ``response_template`` token IDs in each input and sets labels to -100
-    for every token before (and including) the template.  Tokens after the
-    template keep their original IDs so the cross-entropy loss is computed only
-    on the completion.
+    for every token before the template. Tokens after the template keep their
+    original IDs so the cross-entropy loss is computed only on the completion.
 
-    Args:
-        response_template: Token IDs (list) or string marking the start of the
-            completion.  When a string is passed it is encoded with the
-            tokenizer.
-        tokenizer: The tokenizer used for encoding.
-        mlm: Must be ``False`` (causal LM only).
-        ignore_index: Label value for masked positions (default -100).
+    Usage::
+
+        collator = DataCollatorForCompletionOnlyLM(
+            response_template_ids, tokenizer=tokenizer
+        )
     """
 
-    response_template: Union[str, List[int]] = None
-    ignore_index: int = -100
-
-    def __post_init__(self):
-        super().__post_init__()
-        if isinstance(self.response_template, str):
+    def __init__(
+        self,
+        response_template: Union[str, List[int]],
+        tokenizer=None,
+        mlm: bool = False,
+        ignore_index: int = -100,
+        **kwargs,
+    ):
+        super().__init__(tokenizer=tokenizer, mlm=mlm, **kwargs)
+        self.ignore_index = ignore_index
+        if isinstance(response_template, str):
             self.response_template_ids: List[int] = self.tokenizer.encode(
-                self.response_template, add_special_tokens=False
+                response_template, add_special_tokens=False
             )
         else:
-            self.response_template_ids = list(self.response_template)
+            self.response_template_ids = list(response_template)
         if not self.response_template_ids:
             raise ValueError("response_template must encode to at least one token")
 
@@ -54,8 +54,6 @@ class DataCollatorForCompletionOnlyLM(DataCollatorForLanguageModeling):
             if response_start is not None:
                 batch["labels"][i, :response_start] = self.ignore_index
             else:
-                # Template not found — mask entire sequence so it contributes
-                # no loss rather than training on the prompt.
                 batch["labels"][i, :] = self.ignore_index
         return batch
 
