@@ -149,3 +149,49 @@ def wait_for_slurm_jobs_to_complete(jobs: List[Tuple[subprocess.Popen, str]]):
         if rc != 0:
             raise RuntimeError(f"Process {p.pid} (slurm job {job_id}) failed!")
         logging.info(f"Slurm job {job_id} succeeded!")
+
+
+def submit_cmd_direct(
+    py_cmd: str,
+    dump_dir: str,
+    blocking: bool = True,
+    **kwargs,
+) -> Tuple[subprocess.Popen, str]:
+    """Run a Python command directly as a subprocess (no SLURM).
+
+    Drop-in alternative to submit_cmd_to_slurm for environments without
+    a job scheduler (e.g., Modal, local development).
+    Extra kwargs (slurm_args, path_to_repo, etc.) are ignored.
+    """
+    os.makedirs(dump_dir, exist_ok=True)
+    log_path = os.path.join(dump_dir, f"direct_{uuid.uuid1()}.log")
+    logging.info(f"Running directly: {py_cmd}")
+
+    with open(log_path, "w") as log_file:
+        p = subprocess.Popen(
+            py_cmd,
+            shell=True,
+            executable="/bin/bash",
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+        )
+
+    job_id = f"direct-{p.pid}"
+    if blocking:
+        logging.info(f"Waiting for process {p.pid}...")
+        p.wait()
+        if p.returncode != 0:
+            logging.error(f"Command failed (rc={p.returncode}). See {log_path}")
+            raise RuntimeError(f"Direct execution failed: {py_cmd}")
+        logging.info(f"Process {p.pid} succeeded")
+
+    return p, job_id
+
+
+def wait_for_direct_jobs_to_complete(jobs: List[Tuple[subprocess.Popen, str]]):
+    """Wait for direct subprocess jobs to complete."""
+    for p, job_id in jobs:
+        rc = p.wait()
+        if rc != 0:
+            raise RuntimeError(f"Process {job_id} failed with return code {rc}")
+        logging.info(f"Process {job_id} succeeded")
