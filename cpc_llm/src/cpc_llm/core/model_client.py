@@ -698,6 +698,12 @@ class ModelClient:
         output_strs = []
         all_output_token_ids = []
         all_token_logps = []
+        # When returning likelihoods, output_scores stores full vocab logits
+        # for every generated token.  Scale down the prompt batch size so the
+        # effective batch (prompts * num_return_sequences) stays manageable.
+        num_return = kwargs.get("num_return_sequences", 1) or 1
+        if return_likelihoods and batch_size * num_return > 32:
+            batch_size = max(1, 32 // num_return)
         for batch_start_idx in tqdm(
             range(0, len(input_texts), batch_size), desc="Batched generation..."
         ):
@@ -725,18 +731,18 @@ class ModelClient:
             )
             output_token_ids = outputs.sequences if return_likelihoods else outputs
             # remove the input from each output
+            completion_ids = output_token_ids[:, input_ids.shape[-1] :]
             decoded_outputs = self.tokenizer.batch_decode(
-                output_token_ids[:, input_ids.shape[-1] :],
+                completion_ids,
                 skip_special_tokens=True,
                 clean_up_tokenization_spaces=True,
             )
-            # logger.info(f"")
             output_strs.extend(decoded_outputs)
             if return_likelihoods:
                 token_logps = self.model.compute_transition_scores(
                     outputs.sequences, outputs.scores, normalize_logits=True
                 )
-                for oti in output_token_ids[:, input_ids.shape[-1] :]:
+                for oti in completion_ids:
                     all_output_token_ids.append(oti)
                 for o_logps in token_logps:
                     all_token_logps.append(o_logps)
