@@ -875,7 +875,6 @@ class ModelClient:
         inputs: List[str],
         targets: List[str],
         batch_size: int = 10,
-        device: str = "cuda",
         logger: logging.Logger | None = None,
     ) -> List[float]:
         """Compute likelihoods of target sequences, averaged over all input seeds.
@@ -887,21 +886,14 @@ class ModelClient:
             inputs: List of input prompt strings (seeds).
             targets: List of target sequences to evaluate.
             batch_size: Number of targets to process per forward pass.
-            device: Device for computation ('cuda', 'cpu', or 'gpu').
             logger: Logger instance for status messages.
 
         Returns:
             List of average likelihoods, one per target. Each value is
             mean_i(exp(sum_t(log p(target_t | input_i, target_<t)))).
         """
-        logger.info(f"temperature : {self.temperature}")
-
-        if device is not None:
-            assert device in ["gpu", "cpu", "cuda"]
-            if device == "gpu":
-                device = "cuda"
-        else:
-            device = self.device
+        if logger is not None:
+            logger.info(f"temperature : {self.temperature}")
 
         all_likelihoods = torch.zeros(len(targets), dtype=torch.float64)
 
@@ -909,76 +901,80 @@ class ModelClient:
         orig_padding_side = self.tokenizer.padding_side
         self.tokenizer.padding_side = "right"
 
-        for input_text in tqdm(
-            inputs, desc="Computing log likelihoods averaged over inputs..."
-        ):
-            # --- encode input prefix once, cache KV states ---
-            input_tok = self._tokenize_batch([input_text], max_generate_length=0).to(
-                self.device
-            )
-            input_out = self.model(**input_tok, use_cache=True)
-            kv_cache = input_out.past_key_values
-            # Logit at last input position predicts the first target token
-            input_last_logit = input_out.logits[:, -1:, :]
-            input_len = input_tok.attention_mask.sum().item()
-
-            # --- process targets in batches using cached KV ---
-            for t_start in range(0, len(targets), batch_size):
-                t_end = min(t_start + batch_size, len(targets))
-                target_batch = targets[t_start:t_end]
-                cur_batch_size = len(target_batch)
-
-                target_tok = self._tokenize_batch(
-                    target_batch, max_generate_length=0
+        try:
+            for input_text in tqdm(
+                inputs, desc="Computing log likelihoods averaged over inputs..."
+            ):
+                # --- encode input prefix once, cache KV states ---
+                input_tok = self._tokenize_batch(
+                    [input_text], max_generate_length=0
                 ).to(self.device)
+                input_out = self.model(**input_tok, use_cache=True)
+                kv_cache = input_out.past_key_values
+                # Logit at last input position predicts the first target token
+                input_last_logit = input_out.logits[:, -1:, :]
+                input_len = input_tok.attention_mask.sum().item()
 
-                expanded_kv = self._expand_kv_cache(kv_cache, cur_batch_size)
+                # --- process targets in batches using cached KV ---
+                for t_start in range(0, len(targets), batch_size):
+                    t_end = min(t_start + batch_size, len(targets))
+                    target_batch = targets[t_start:t_end]
+                    cur_batch_size = len(target_batch)
 
-                # Attention mask: all-1s for cached input + target attention mask
-                input_mask = torch.ones(
-                    cur_batch_size,
-                    input_len,
-                    device=self.device,
-                    dtype=target_tok.attention_mask.dtype,
-                )
-                full_mask = torch.cat([input_mask, target_tok.attention_mask], dim=1)
+                    target_tok = self._tokenize_batch(
+                        target_batch, max_generate_length=0
+                    ).to(self.device)
 
-                target_out = self.model(
-                    input_ids=target_tok.input_ids,
-                    attention_mask=full_mask,
-                    past_key_values=expanded_kv,
-                    use_cache=False,
-                )
+                    expanded_kv = self._expand_kv_cache(kv_cache, cur_batch_size)
 
-                # Stitch logits: input's last logit + target's all-but-last
-                # input_last_logit predicts target[0]
-                # target_out.logits[:, i] predicts target[i+1]
-                combined_logits = torch.cat(
-                    [
-                        input_last_logit.expand(cur_batch_size, -1, -1),
-                        target_out.logits[:, :-1, :],
-                    ],
-                    dim=1,
-                )  # (batch, target_len, vocab)
+                    # Attention mask: all-1s for cached input + target attention mask
+                    input_mask = torch.ones(
+                        cur_batch_size,
+                        input_len,
+                        device=self.device,
+                        dtype=target_tok.attention_mask.dtype,
+                    )
+                    full_mask = torch.cat(
+                        [input_mask, target_tok.attention_mask], dim=1
+                    )
 
-                scores = combined_logits / self.temperature
-                log_probs = torch.nn.functional.log_softmax(scores, dim=-1)
+                    target_out = self.model(
+                        input_ids=target_tok.input_ids,
+                        attention_mask=full_mask,
+                        past_key_values=expanded_kv,
+                        use_cache=False,
+                    )
 
-                # Gather log-prob of each actual target token
-                target_log_probs = torch.gather(
-                    log_probs, -1, target_tok.input_ids.unsqueeze(-1)
-                ).squeeze(-1)
+                    # Stitch logits: input's last logit + target's all-but-last
+                    # input_last_logit predicts target[0]
+                    # target_out.logits[:, i] predicts target[i+1]
+                    combined_logits = torch.cat(
+                        [
+                            input_last_logit.expand(cur_batch_size, -1, -1),
+                            target_out.logits[:, :-1, :],
+                        ],
+                        dim=1,
+                    )  # (batch, target_len, vocab)
 
-                # Zero out padding positions
-                target_log_probs = target_log_probs * target_tok.attention_mask
+                    scores = combined_logits / self.temperature
+                    log_probs = torch.nn.functional.log_softmax(scores, dim=-1)
 
-                # Sum log-probs per target sequence
-                log_liks = target_log_probs.sum(-1)  # (batch,)
+                    # Gather log-prob of each actual target token
+                    target_log_probs = torch.gather(
+                        log_probs, -1, target_tok.input_ids.unsqueeze(-1)
+                    ).squeeze(-1)
 
-                # Accumulate exp(log_lik) for averaging across inputs
-                all_likelihoods[t_start:t_end] += torch.exp(log_liks.cpu().double())
+                    # Zero out padding positions
+                    target_log_probs = target_log_probs * target_tok.attention_mask
 
-        self.tokenizer.padding_side = orig_padding_side
+                    # Sum log-probs per target sequence
+                    log_liks = target_log_probs.sum(-1)  # (batch,)
+
+                    # Accumulate exp(log_lik) for averaging across inputs
+                    all_likelihoods[t_start:t_end] += torch.exp(log_liks.cpu().double())
+        finally:
+            self.tokenizer.padding_side = orig_padding_side
+
         all_likelihoods /= len(inputs)
         return all_likelihoods.tolist()
 

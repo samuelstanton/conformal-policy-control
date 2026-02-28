@@ -262,9 +262,9 @@ def run_smoke_test(cache: bool = False):
     # Always write to the persistent volume. --no-cache clears it first.
     output_dir = OUTPUTS_PATH
     if not cache:
-        outputs_dir = Path(OUTPUTS_PATH)
-        if outputs_dir.exists():
-            for child in outputs_dir.iterdir():
+        output_path = Path(output_dir)
+        if output_path.exists():
+            for child in output_path.iterdir():
                 if child.is_dir():
                     shutil.rmtree(child)
                 else:
