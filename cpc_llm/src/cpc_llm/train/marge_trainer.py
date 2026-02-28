@@ -29,16 +29,11 @@ from transformers.utils import logging as transformers_logging
 from transformers.trainer_callback import TrainerCallback
 from transformers.trainer_utils import EvalLoopOutput, PREFIX_CHECKPOINT_DIR
 
-from trl.import_utils import is_peft_available, is_wandb_available
-from trl.models import PreTrainedModelWrapper, create_reference_model
+from trl.trainer.utils import disable_dropout_in_model, is_peft_available
+from trl.trainer.callbacks import SyncRefModelCallback, is_wandb_available
+from trl.models import create_reference_model
 from trl.trainer.dpo_config import DPOConfig
-from trl.trainer.utils import (
-    SyncRefModelCallback,
-    disable_dropout_in_model,
-    pad_to_length,
-    peft_module_casting_to_bf16,
-    trl_sanitze_kwargs_for_tagging,
-)
+from trl.experimental.utils import pad_to_length, peft_module_casting_to_bf16
 
 logger = transformers_logging.get_logger(__name__)
 
@@ -610,7 +605,7 @@ class MargeTrainer(Trainer):
                 )
             )
 
-    def _prepare_deepspeed(self, model: PreTrainedModelWrapper):
+    def _prepare_deepspeed(self, model: PreTrainedModel):
         # Adapted from accelerate: https://github.com/huggingface/accelerate/blob/739b135f8367becb67ffaada12fe76e3aa60fefd/src/accelerate/accelerator.py#L1473
         deepspeed_plugin = self.accelerator.state.deepspeed_plugin
         config_kwargs = deepcopy(deepspeed_plugin.deepspeed_config)
@@ -1493,10 +1488,6 @@ class MargeTrainer(Trainer):
         Overwrite the `push_to_hub` method in order to force-add the tag "dpo" when pushing the
         model on the Hub. Please refer to `~transformers.Trainer.push_to_hub` for more details.
         """
-        kwargs = trl_sanitze_kwargs_for_tagging(
-            model=self.model, tag_names=self._tag_names, kwargs=kwargs
-        )
-
         return super().push_to_hub(
             commit_message=commit_message, blocking=blocking, **kwargs
         )

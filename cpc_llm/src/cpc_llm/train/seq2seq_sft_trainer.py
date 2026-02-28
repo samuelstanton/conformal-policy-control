@@ -165,8 +165,7 @@ class Seq2SeqSFTTrainer(SFTTrainer):
         data_collator: Optional["DataCollator"] = None,
         train_dataset: Optional[Dataset] = None,
         eval_dataset: Optional[Union[Dataset, Dict[str, Dataset]]] = None,
-        tokenizer: Optional["PreTrainedTokenizerBase"] = None,
-        model_init: Optional[Callable[[], "PreTrainedModel"]] = None,
+        processing_class: Optional["PreTrainedTokenizerBase"] = None,
         compute_metrics: Optional[Callable[["EvalPrediction"], Dict]] = None,
         callbacks: Optional[List["TrainerCallback"]] = None,
         optimizers: Tuple[torch.optim.Optimizer, torch.optim.lr_scheduler.LambdaLR] = (
@@ -177,46 +176,28 @@ class Seq2SeqSFTTrainer(SFTTrainer):
             Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
         ] = None,
         peft_config: Optional["PeftConfig"] = None,
-        dataset_text_field: Optional[str] = None,
-        packing: Optional[bool] = False,
         formatting_func: Optional[Callable] = None,
-        max_seq_length: Optional[int] = None,
-        infinite: Optional[bool] = None,
-        num_of_sequences: Optional[int] = 1024,
-        chars_per_token: Optional[float] = 3.6,
-        dataset_num_proc: Optional[int] = None,
-        dataset_batch_size: int = 1000,
-        neftune_noise_alpha: Optional[float] = None,
-        model_init_kwargs: Optional[Dict] = None,
-        dataset_kwargs: Optional[Dict] = None,
-        eval_packing: Optional[bool] = None,
+        # Legacy aliases — accept but ignore for backwards compat with callers
+        max_length: Optional[int] = None,
+        tokenizer: Optional["PreTrainedTokenizerBase"] = None,
+        **kwargs,
     ):
+        # Support legacy 'tokenizer' kwarg
+        if tokenizer is not None and processing_class is None:
+            processing_class = tokenizer
         super().__init__(
             model=model,
             args=args,
             data_collator=data_collator,
             train_dataset=train_dataset,
             eval_dataset=eval_dataset,
-            tokenizer=tokenizer,
-            model_init=model_init,
+            processing_class=processing_class,
             compute_metrics=compute_metrics,
             callbacks=callbacks,
             optimizers=optimizers,
             preprocess_logits_for_metrics=preprocess_logits_for_metrics,
             peft_config=peft_config,
-            dataset_text_field=dataset_text_field,
-            packing=packing,
             formatting_func=formatting_func,
-            max_seq_length=max_seq_length,
-            infinite=infinite,
-            num_of_sequences=num_of_sequences,
-            chars_per_token=chars_per_token,
-            dataset_num_proc=dataset_num_proc,
-            dataset_batch_size=dataset_batch_size,
-            neftune_noise_alpha=neftune_noise_alpha,
-            model_init_kwargs=model_init_kwargs,
-            dataset_kwargs=dataset_kwargs,
-            eval_packing=eval_packing,
         )
 
         # Override self.model.generation_config if a GenerationConfig is specified in args.
@@ -340,9 +321,48 @@ class Seq2SeqSFTTrainer(SFTTrainer):
         # We don't want to drop samples in general
         self.gather_function = self.accelerator.gather
         self._gen_kwargs = gen_kwargs
-        outputs = super().evaluate(
-            eval_dataset, ignore_keys=ignore_keys, metric_key_prefix=metric_key_prefix
-        )
+
+        # WORKAROUND: transformers 5.x removed include_inputs_for_metrics from
+        # TrainingArguments and no longer passes inputs to compute_metrics via
+        # EvalPrediction.  The Ehrlich evaluators (EvaluatorEditPairs /
+        # EvaluatorPlainPairs) need access to input_ids and labels to decode
+        # prompts and score generated sequences.
+        #
+        # We stash raw inputs during each prediction_step call (see below),
+        # then re-inject them into EvalPrediction here.
+        #
+        # The proper fix is to refactor the evaluators so they don't depend on
+        # raw inputs — e.g. by decoding within prediction_step and passing
+        # decoded strings through a different channel.  Tracked in issue #19.
+        self._eval_inputs = []
+        original_compute_metrics = self.compute_metrics
+
+        def _compute_metrics_with_inputs(eval_pred, **kwargs):
+            if self._eval_inputs:
+                batched = {}
+                for k in self._eval_inputs[0]:
+                    vals = [inp[k] for inp in self._eval_inputs]
+                    if hasattr(vals[0], "shape"):
+                        batched[k] = torch.cat(vals, dim=0)
+                    else:
+                        batched[k] = vals
+                eval_pred = EvalPrediction(
+                    predictions=eval_pred.predictions,
+                    label_ids=eval_pred.label_ids,
+                    inputs=batched,
+                )
+            return original_compute_metrics(eval_pred, **kwargs)
+
+        self.compute_metrics = _compute_metrics_with_inputs
+        try:
+            outputs = super().evaluate(
+                eval_dataset,
+                ignore_keys=ignore_keys,
+                metric_key_prefix=metric_key_prefix,
+            )
+        finally:
+            self.compute_metrics = original_compute_metrics
+            self._eval_inputs = []
         torch.cuda.empty_cache()
         return outputs
 
@@ -411,9 +431,38 @@ class Seq2SeqSFTTrainer(SFTTrainer):
         self.gather_function = self.accelerator.gather
         self._gen_kwargs = gen_kwargs
 
-        return super().predict(
-            test_dataset, ignore_keys=ignore_keys, metric_key_prefix=metric_key_prefix
-        )
+        # Same include_inputs_for_metrics workaround as evaluate() — see
+        # the comment there for full explanation.
+        self._eval_inputs = []
+        original_compute_metrics = self.compute_metrics
+
+        def _compute_metrics_with_inputs(eval_pred, **kwargs):
+            if self._eval_inputs:
+                batched = {}
+                for k in self._eval_inputs[0]:
+                    vals = [inp[k] for inp in self._eval_inputs]
+                    if hasattr(vals[0], "shape"):
+                        batched[k] = torch.cat(vals, dim=0)
+                    else:
+                        batched[k] = vals
+                eval_pred = EvalPrediction(
+                    predictions=eval_pred.predictions,
+                    label_ids=eval_pred.label_ids,
+                    inputs=batched,
+                )
+            return original_compute_metrics(eval_pred, **kwargs)
+
+        self.compute_metrics = _compute_metrics_with_inputs
+        try:
+            result = super().predict(
+                test_dataset,
+                ignore_keys=ignore_keys,
+                metric_key_prefix=metric_key_prefix,
+            )
+        finally:
+            self.compute_metrics = original_compute_metrics
+            self._eval_inputs = []
+        return result
 
     @torch.no_grad()
     def prediction_step(
@@ -454,8 +503,16 @@ class Seq2SeqSFTTrainer(SFTTrainer):
                 prediction_loss_only=prediction_loss_only,
                 ignore_keys=ignore_keys,
             )
-        # breakpoint()
-        print(f"inputs : {inputs}")
+
+        # Part of the include_inputs_for_metrics workaround (see evaluate()).
+        if not hasattr(self, "_eval_inputs"):
+            self._eval_inputs = []
+        self._eval_inputs.append(
+            {
+                k: v.detach().cpu() if hasattr(v, "detach") else v
+                for k, v in inputs.items()
+            }
+        )
         has_labels = "labels" in inputs
         inputs = self._prepare_inputs(inputs)
 
@@ -480,19 +537,19 @@ class Seq2SeqSFTTrainer(SFTTrainer):
         generation_inputs["input_ids"] = torch.where(
             inputs["labels"] == -100,
             inputs["input_ids"],
-            self.tokenizer.pad_token_id,
+            self.processing_class.pad_token_id,
         )
         generation_inputs["attention_mask"] = torch.where(
-            generation_inputs["input_ids"] != self.tokenizer.pad_token_id, 1, 0
+            generation_inputs["input_ids"] != self.processing_class.pad_token_id, 1, 0
         )
-        if self.tokenizer.padding_side == "right":
+        if self.processing_class.padding_side == "right":
             # Change padding side to left for generation
             padded_gen_inputs = []
             for i in range(generation_inputs["input_ids"].shape[0]):
                 gen_input_ids = generation_inputs["input_ids"][i]
                 # get length of non-pad-token IDs
                 len_input = sum(generation_inputs["attention_mask"][i]).item()
-                pad_tensor = self.tokenizer.pad_token_id * torch.ones(
+                pad_tensor = self.processing_class.pad_token_id * torch.ones(
                     generation_inputs["input_ids"].shape[-1] - len_input,
                     dtype=gen_input_ids.dtype,
                     device=gen_input_ids.device,
@@ -522,7 +579,7 @@ class Seq2SeqSFTTrainer(SFTTrainer):
                 padded_gen_tokens = torch.concat(
                     [
                         gen_tokens,
-                        self.tokenizer.pad_token_id
+                        self.processing_class.pad_token_id
                         * torch.ones(
                             max_gen_len - len(gen_tokens),
                             dtype=gen_tokens.dtype,
@@ -588,12 +645,14 @@ class Seq2SeqSFTTrainer(SFTTrainer):
         return loss, generated_tokens, labels
 
     def _pad_tensors_to_max_len(self, tensor, max_length):
-        if self.tokenizer is not None and hasattr(self.tokenizer, "pad_token_id"):
+        if self.processing_class is not None and hasattr(
+            self.processing_class, "pad_token_id"
+        ):
             # If PAD token is not defined at least EOS token has to be defined
             pad_token_id = (
-                self.tokenizer.pad_token_id
-                if self.tokenizer.pad_token_id is not None
-                else self.tokenizer.eos_token_id
+                self.processing_class.pad_token_id
+                if self.processing_class.pad_token_id is not None
+                else self.processing_class.eos_token_id
             )
         else:
             if self.model.config.pad_token_id is not None:
