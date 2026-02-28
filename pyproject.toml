@@ -3,6 +3,7 @@ name = "cdt-agents"
 version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = [
+    "cpc-llm",
     "matplotlib>=3.9",
     "scikit-learn>=1.5",
     "seaborn>=0.13",
@@ -12,6 +13,9 @@ dependencies = [
 dev = [
     "pytest>=8.2",
 ]
+
+[tool.uv.sources]
+cpc-llm = { workspace = true }
 
 [tool.uv.workspace]
 members = ["cpc_llm"]
