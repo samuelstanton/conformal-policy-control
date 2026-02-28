@@ -701,7 +701,11 @@ class ModelClient:
         # When returning likelihoods, output_scores stores full vocab logits
         # for every generated token.  Scale down the prompt batch size so the
         # effective batch (prompts * num_return_sequences) stays manageable.
-        num_return = kwargs.get("num_return_sequences", 1) or 1
+        gen_cfg = kwargs.get("generation_config", None)
+        num_return = kwargs.get("num_return_sequences", None)
+        if num_return is None and gen_cfg is not None:
+            num_return = getattr(gen_cfg, "num_return_sequences", 1) or 1
+        num_return = num_return or 1
         if return_likelihoods and batch_size * num_return > 32:
             batch_size = max(1, 32 // num_return)
         for batch_start_idx in tqdm(
