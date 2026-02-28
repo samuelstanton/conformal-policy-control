@@ -851,14 +851,19 @@ class ModelClient:
         Returns:
             Tuple-of-tuples KV cache with batch dimension expanded.
         """
-        # Iterate via __iter__ which yields (key, value) per layer.
-        # Works for both tuple-of-tuples and DynamicCache.
+        # Access key/value tensors per layer. DynamicCache stores them in
+        # .key_cache/.value_cache lists; tuple-of-tuples are indexed directly.
+        if hasattr(past_key_values, "key_cache"):
+            layers = zip(past_key_values.key_cache, past_key_values.value_cache)
+        else:
+            layers = past_key_values
+
         return tuple(
             (
                 k.expand(batch_size, -1, -1, -1).contiguous(),
                 v.expand(batch_size, -1, -1, -1).contiguous(),
             )
-            for k, v in past_key_values
+            for k, v in layers
         )
 
     @torch.no_grad()
