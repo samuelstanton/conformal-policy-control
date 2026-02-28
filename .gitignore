@@ -1,5 +1,17 @@
+# OS
 .DS_Store
-.venv
-__pycache__
-outputs
-slurm_outputs
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Project
+outputs/
+slurm_outputs/
