@@ -32,6 +32,7 @@ Pre-commit hooks enforce ruff linting/formatting and nbstripout on all commits.
 uv pip install modal                          # install modal client
 uv run modal run modal_runner.py --test       # env test (verifies GPU, imports)
 uv run modal run modal_runner.py --smoke      # smoke test (pythia-14m, 1 round)
+uv run modal run modal_runner.py --smoke --cache  # reuse outputs from previous smoke run
 uv run modal run modal_runner.py              # full run (default config)
 ```
 
