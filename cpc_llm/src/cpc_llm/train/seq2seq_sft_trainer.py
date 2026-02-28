@@ -431,9 +431,38 @@ class Seq2SeqSFTTrainer(SFTTrainer):
         self.gather_function = self.accelerator.gather
         self._gen_kwargs = gen_kwargs
 
-        return super().predict(
-            test_dataset, ignore_keys=ignore_keys, metric_key_prefix=metric_key_prefix
-        )
+        # Same include_inputs_for_metrics workaround as evaluate() — see
+        # the comment there for full explanation.
+        self._eval_inputs = []
+        original_compute_metrics = self.compute_metrics
+
+        def _compute_metrics_with_inputs(eval_pred, **kwargs):
+            if self._eval_inputs:
+                batched = {}
+                for k in self._eval_inputs[0]:
+                    vals = [inp[k] for inp in self._eval_inputs]
+                    if hasattr(vals[0], "shape"):
+                        batched[k] = torch.cat(vals, dim=0)
+                    else:
+                        batched[k] = vals
+                eval_pred = EvalPrediction(
+                    predictions=eval_pred.predictions,
+                    label_ids=eval_pred.label_ids,
+                    inputs=batched,
+                )
+            return original_compute_metrics(eval_pred, **kwargs)
+
+        self.compute_metrics = _compute_metrics_with_inputs
+        try:
+            result = super().predict(
+                test_dataset,
+                ignore_keys=ignore_keys,
+                metric_key_prefix=metric_key_prefix,
+            )
+        finally:
+            self.compute_metrics = original_compute_metrics
+            self._eval_inputs = []
+        return result
 
     @torch.no_grad()
     def prediction_step(
