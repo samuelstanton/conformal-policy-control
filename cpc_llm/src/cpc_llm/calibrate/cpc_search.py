@@ -839,7 +839,7 @@ def cpc_beta_search(
     )
     constrained_liks_df_beta_hat_fp = os.path.join(
         os.path.dirname(constrained_gen_liks_fp),
-        f"prop_alpha{cfg.conformal_policy_control.alpha}_uncontrolled_beta{betas_t:.3g}_{os.path.basename(constrained_gen_liks_fp)}",
+        f"prop_alpha{cfg.conformal_policy_control.alpha}_uncontrolled_beta{beta_t:.3g}_{os.path.basename(constrained_gen_liks_fp)}",
     )
     if cfg.overwrite_ig or not fs.exists(constrained_liks_df_beta_hat_fp):
         constrained_liks_df_beta_hat.to_json(

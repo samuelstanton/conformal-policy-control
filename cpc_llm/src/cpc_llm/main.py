@@ -1059,7 +1059,7 @@ def main(cfg: DictConfig):
                         ).to_numpy()
                         cal_constrained_t_curr = constrain_likelihoods(
                             cfg,
-                            cal_liks_df_tmin1_safe_and_t_unconstrained_mat,
+                            cal_liks_df_t0_safe_and_t_unconstrained_mat,
                             betas_list,
                             psis_list,
                         )

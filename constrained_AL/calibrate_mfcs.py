@@ -831,16 +831,9 @@ class SplitConformal(ABC):
                     )
 
                 else:
-                    ## Note: Have not finished developing the without replacement case
-                    #                 Z = pool_weights_totals_prev_steps[-1]
-                    #                 ## Note: For replacement case, easier to normalize ahead of time by dividing by Z
-                    ## Else sampling without replacement
-                    split_weights_vec = compute_w_ptest_split_active_no_replacement(
-                        cal_test_vals_mat=w_split_MAT_all_steps,
-                        depth_max=depth_max_curr,
-                        pool_weight_arr_curr=pool_weights_totals_prev_steps,
-                        n_pool_curr=len(Xpool_split),
-                    )  #
+                    raise NotImplementedError(
+                        "Sampling without replacement is not yet implemented"
+                    )
 
                 # print("Time elapsed for depth ", depth_max_curr, " (min) : ", (time.time() - time_begin_w) / 60)
 
