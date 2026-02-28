@@ -321,9 +321,39 @@ class Seq2SeqSFTTrainer(SFTTrainer):
         # We don't want to drop samples in general
         self.gather_function = self.accelerator.gather
         self._gen_kwargs = gen_kwargs
-        outputs = super().evaluate(
-            eval_dataset, ignore_keys=ignore_keys, metric_key_prefix=metric_key_prefix
-        )
+
+        # Wrap compute_metrics to inject stashed inputs (replaces the
+        # removed include_inputs_for_metrics from transformers 5.x).
+        self._eval_inputs = []
+        original_compute_metrics = self.compute_metrics
+
+        def _compute_metrics_with_inputs(eval_pred, **kwargs):
+            if self._eval_inputs:
+                # Reconstruct a batched inputs dict from the per-step stashes
+                batched = {}
+                for k in self._eval_inputs[0]:
+                    vals = [inp[k] for inp in self._eval_inputs]
+                    if hasattr(vals[0], "shape"):
+                        batched[k] = torch.cat(vals, dim=0)
+                    else:
+                        batched[k] = vals
+                eval_pred = EvalPrediction(
+                    predictions=eval_pred.predictions,
+                    label_ids=eval_pred.label_ids,
+                    inputs=batched,
+                )
+            return original_compute_metrics(eval_pred, **kwargs)
+
+        self.compute_metrics = _compute_metrics_with_inputs
+        try:
+            outputs = super().evaluate(
+                eval_dataset,
+                ignore_keys=ignore_keys,
+                metric_key_prefix=metric_key_prefix,
+            )
+        finally:
+            self.compute_metrics = original_compute_metrics
+            self._eval_inputs = []
         torch.cuda.empty_cache()
         return outputs
 
@@ -435,8 +465,17 @@ class Seq2SeqSFTTrainer(SFTTrainer):
                 prediction_loss_only=prediction_loss_only,
                 ignore_keys=ignore_keys,
             )
-        # breakpoint()
-        print(f"inputs : {inputs}")
+
+        # Stash inputs for compute_metrics (include_inputs_for_metrics was
+        # removed in transformers 5.x).
+        if not hasattr(self, "_eval_inputs"):
+            self._eval_inputs = []
+        self._eval_inputs.append(
+            {
+                k: v.detach().cpu() if hasattr(v, "detach") else v
+                for k, v in inputs.items()
+            }
+        )
         has_labels = "labels" in inputs
         inputs = self._prepare_inputs(inputs)
 
