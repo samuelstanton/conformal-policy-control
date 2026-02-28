@@ -19,6 +19,13 @@ uv run pytest tests/ -v # run tests (<5s, no GPU needed)
 
 Pre-commit hooks enforce ruff linting/formatting and nbstripout on all commits.
 
+## Code style
+
+- Type hints on all function signatures (parameters and return types)
+- Google-style docstrings on public functions and classes
+- Specific exception handling — no bare `except:` clauses
+- Use `X | None` instead of `Optional[X]`
+
 ## Modal (GPU execution)
 
 ```bash
