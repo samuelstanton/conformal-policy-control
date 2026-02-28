@@ -200,11 +200,17 @@ def main(cfg: DictConfig):
             )
 
         if cfg.format_type == "plain_pairs":
-            formatting_fn = formatting_texts_func_plain_pairs
+            formatting_fn_batched = formatting_texts_func_plain_pairs
         elif cfg.format_type == "edit_pairs":
-            formatting_fn = formatting_texts_func_edit_pairs
+            formatting_fn_batched = formatting_texts_func_edit_pairs
         else:
             raise ValueError(f"Unsupported format type: {cfg.format_type}")
+
+        # trl 0.29 calls formatting_func per-example (not batched).
+        # Wrap the batched function to handle single-example dicts.
+        def formatting_fn(example):
+            batch = {k: [v] for k, v in example.items()}
+            return formatting_fn_batched(batch)[0]
 
         if cfg.train_from_scratch:
             # train new tokenizer
@@ -212,9 +218,11 @@ def main(cfg: DictConfig):
                 f"Training new tokenizer with vocab size {cfg.init_model_config.vocab_size}"
             )
             if cfg.format_type == "plain_pairs":
-                formatted_inputs = formatting_fn(train_dataset)
+                formatted_inputs = formatting_fn_batched(train_dataset)
             else:
-                formatted_inputs = formatting_fn(train_dataset, include_target=True)
+                formatted_inputs = formatting_fn_batched(
+                    train_dataset, include_target=True
+                )
             logging.info(
                 f"Example of first 5 examples used for training custom tokenizer: {formatted_inputs[:5]}"
             )
