@@ -1,8 +1,5 @@
-import sys
-
 import pytest
 
-sys.path.insert(0, "constrained_AL")
 from calibrate_mfcs import sort_both_by_first, weighted_quantile
 
 

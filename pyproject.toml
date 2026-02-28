@@ -20,6 +20,9 @@ cpc-llm = { workspace = true }
 [tool.uv.workspace]
 members = ["cpc_llm"]
 
+[tool.pytest.ini_options]
+pythonpath = ["QA_expts", "constrained_AL"]
+
 [tool.ruff.lint.per-file-ignores]
 "*.ipynb" = [
     "E402",  # import order in notebooks is often intentional

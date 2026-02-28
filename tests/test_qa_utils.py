@@ -1,8 +1,5 @@
-import sys
-
 import numpy as np
 
-sys.path.insert(0, "QA_expts")
 from utils import (
     get_taus_grid_from_data,
     hb_p_value,
