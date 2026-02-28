@@ -1,46 +1,87 @@
-# LLOME
+# Conformal Policy Control
 
-This is the repository for the paper ["Generalists vs. Specialists: Evaluating LLMs on Highly-Constrained Biophysical Sequence Optimization Tasks,"](https://arxiv.org/abs/2410.22296) by Angelica Chen<sup>\*</sup>, Samuel D. Stanton<sup>\*</sup>, Frances Ding, Robert G. Alberstein, Andrew M. Watkins, Richard Bonneau, Vladimir Gligorijević, Kyunghyun Cho, Nathan C. Frey
+Code for "Conformal Decision Theory for AI Agents" — a framework for enabling AI agents to automatically determine their zone of competence using conformal risk-control guarantees.
 
-## Set-Up
-1. Clone this repo to your home directory! (Some of the scripts in this repo assume that your code is stored in `~/llome`. If the path to your repo is different, change the `path_to_repo` option in the hydra config.)
-1. Install the requirements in a virtual environment: 
-```
-uv venv --python 3.10
-source .venv/bin/activate
-uv pip install -r requirements.txt
-```
-1. Run `aws configure` to ensure you are configured for access to S3 (if using S3 storage).
+By Drew Prinster, Kyunghyun Cho, Clara Fannjiang, Ji Won Park, and Samuel Stanton.
 
-## To test your setup
-```
-python -m run_pipeline --config-name=pipeline_sanity_check_marge local_output_dir=<PATH_TO_LOCAL_OUTPUT_DIR> parent_output_dir=<S3_OUTPUT_DIR>
-```
+## Overview
 
-## Important things to know about the LLOME pipeline
-- **Storage**: This pipeline makes use of both local storage (`local_output_dir` in the YAML config) and S3 storage (`parent_output_dir` in the YAML config). All model checkpoints are automatically copied to S3 and deleted from local storage after the end of a training job. By default, all generated seeds, generations, and training data are stored in `<config.parent_output_dir>/<config.run_name>`, where `config` is the Hydra config. 
-    - **To disable S3 storage and use only local storage**, simply set `parent_output_dir: "null"` in the config.
-- **Slurm Configurations**: All training, dataset generation/formatting, and generation jobs are launched as separate SLURM jobs. These SLURM jobs are easily configured with the respective `slurm_args` subsections in the config.
-- **Resuming jobs**: This pipeline is designed to automatically resume previous runs, assuming that the pipeline is run with the same arguments as a prior run. To disable this behavior, use `--overwrite=True`.
-- **Training large models**: We currently use DDP (without accompanying model parallelism) to train our models (FSDP is a TODO though!), which means that you likely need GPU RAM that is ~4x the size of the model to train in full precision. Our code is currently only tested on single-node multi-GPU setups.
-- **Analyzing results**: To assess the performance of the LLM at iteration $i$, analyze the *training data* generated for iteration $i+1$ -- this accounts for both the likelihood-based ranking and filtering of the LLM at iteration $i$.
+This project develops **Conformal Policy Control (CPC)**: a method for iteratively improving a language model policy while maintaining formal guarantees on the risk (e.g., rate of infeasible outputs) over time. The key idea is to constrain the policy's likelihood ratios relative to a safe baseline, with the constraint level calibrated via conformal prediction so that risk stays below a user-specified level alpha.
 
-## To reproduce experiments
-**Note**: Update the `slurm_args` section in each config before running your experiment!
+The repository contains three sets of experiments:
 
-### For function $f_2$:
+- **`cpc_llm/`** — The main CPC pipeline for LLMs, applied to the Ehrlich protein motif discovery task. Iteratively generates sequences, scores them, calibrates policy bounds, and trains improved policies (SFT, DPO, or MARGE).
+- **`constrained_AL/`** — Conformal prediction for constrained active learning with Gaussian process surrogates, applied to tabular regression benchmarks.
+- **`QA_expts/`** — Generalized conformal risk control for LLM fact-checking, controlling false discovery rate on medical QA subclaim factuality.
 
-LLOME-SFT:
-```
-python -m run_pipeline --config-name=pipeline_sft_f2 local_output_dir=<PATH_TO_LOCAL_OUTPUT_DIR> parent_output_dir=<S3_OUTPUT_DIR>
+## Setup
+
+Requires Python >= 3.10 and [uv](https://docs.astral.sh/uv/).
+
+```bash
+uv sync --group dev
 ```
 
-LLOME-MargE:
-```
-python -m run_pipeline --config-name=pipeline_marge_f2 local_output_dir=<PATH_TO_LOCAL_OUTPUT_DIR> parent_output_dir=<S3_OUTPUT_DIR>
+This installs all dependencies (including the `cpc-llm` package in editable mode) and dev tools (pytest).
+
+## Running the CPC-LLM pipeline
+
+The pipeline is configured via [Hydra](https://hydra.cc/). Configs live in `cpc_llm/config/`.
+
+```bash
+# Sanity check (MARGE variant, local storage only)
+cpc-llm --config-name=pipeline_sanity_check_no_s3 local_output_dir=/path/to/output
+
+# Full run with S3 storage
+cpc-llm --config-name=pipeline_marge_f2 \
+  local_output_dir=/path/to/local \
+  parent_output_dir=s3://bucket/path
 ```
 
-LLOME-DPO:
+### Key config parameters
+
+| Parameter | Description |
+|-----------|-------------|
+| `conformal_policy_control.alpha` | Risk level (e.g., 0.1 for 10% constraint violation rate) |
+| `num_sft_rounds` / `num_dpo_rounds` / `num_marge_rounds` | Number of training iterations per method |
+| `parent_output_dir` | S3 path for outputs (set to `null` for local-only) |
+| `local_output_dir` | Local path for outputs and model checkpoints |
+
+### Important notes
+
+- **Storage**: The pipeline supports both local and S3 storage. Model checkpoints are copied to S3 and deleted locally after training. Set `parent_output_dir: "null"` to disable S3.
+- **SLURM**: Training, generation, and scoring jobs are launched as SLURM jobs. Configure via `slurm_args` sections in the config.
+- **Resuming**: The pipeline automatically resumes prior runs if launched with the same config. Use `--overwrite=True` to start fresh.
+- **GPU requirements**: Training uses DDP (single-node multi-GPU). You need ~4x the model size in GPU RAM for full-precision training.
+
+## Running tests
+
+```bash
+uv run pytest tests/ -v
 ```
-python -m run_pipeline --config-name=pipeline_dpo_f2 local_output_dir=<PATH_TO_LOCAL_OUTPUT_DIR> parent_output_dir=<S3_OUTPUT_DIR>
+
+42 unit tests covering the core computational functions. Runs in <5s with no GPU required.
+
+## Project structure
+
 ```
+cpc_llm/                  # Main CPC-LLM package (installable)
+  config/                 # Hydra configs for pipeline variants
+  src/cpc_llm/
+    main.py               # Entry point
+    calibrate/            # CPC algorithm (beta search, likelihood constraining)
+    core/                 # Model inference, likelihood computation
+    data/                 # Dataset generation, formatting, splitting
+    infer/                # Sequence generation, acceptance-rejection sampling
+    infrastructure/       # File handling (local/S3), orchestration, SLURM
+    train/                # SFT, DPO, MARGE training
+    test_functions/       # Ehrlich benchmark utilities
+constrained_AL/           # Active learning experiments
+QA_expts/                 # Medical QA experiments
+notebooks/                # Visualization notebooks
+tests/                    # Unit tests
+```
+
+## License
+
+See [LICENSE](LICENSE).
