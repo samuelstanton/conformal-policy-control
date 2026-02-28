@@ -2,8 +2,16 @@
 name = "cdt-agents"
 version = "0.1.0"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "matplotlib>=3.9",
+    "scikit-learn>=1.5",
+    "seaborn>=0.13",
+]
 
+[dependency-groups]
+dev = [
+    "pytest>=8.2",
+]
 
 [tool.uv.workspace]
 members = ["cpc_llm"]
