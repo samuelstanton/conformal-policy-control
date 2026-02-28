@@ -24,5 +24,4 @@ members = ["cpc_llm"]
     "F821",  # undefined names — often defined in earlier cells
 ]
 "constrained_AL/run_SplitCP_MFCS_ALexpts.py" = ["E402"]  # sys.path manipulation before imports
-"cpc_llm/src/cpc_llm/infer/rejection_sampling.py" = ["F821"]  # target_lik/prop_lik — false positive, set in previous loop iteration
 "cpc_llm/src/cpc_llm/test_functions/finetune_ehrlich.py" = ["E402"]  # conditional import after try/except
