@@ -5,12 +5,10 @@ local_output_dir: /homefs/home/prinstea/llome/local_output
 # overwrite: False  # If False, will only run job when output file does not already exist.
 
 overwrite_ga: False ## If False, will only run genetic algorithm when output file does not already exist.
-overwrite_gpt: False ## If False, will only run GPT pretraining when output file does not already exist.
 overwrite_initial_sft: False ## If False, will only run SFT when output file does not already exist.
 overwrite_sft: False ## If False, will only run SFT when output file does not already exist.
 overwrite_ig: False ## If False, will only run iterative generation when output file does not already exist.
 overwrite: False  # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
-run_gpt: False
 
 run_evol_dataset_gen: True
 run_propen_sft_dataset_formatting: True

@@ -3,7 +3,6 @@ run_name: smaller_pythia #smaller_pythia_0.25dist_0.1maxinf_50gen
 parent_output_dir: /cv/data/ai4dd/data/prinstea/cdt-agents/cpc_llm/parent_output_20260223 #s3://prescient-pcluster-data/prinstea/llome/parent_output_20261225 #parent_output_20251225 #parent_output_20251123 #028 #parent_output_20251013_CAinit # #parent_output_20250918_noCPC  #parent_output_20250923 #_20250901_evol0.5 #/data/bucket/prinstea/llome/parent_output
 local_output_dir: /cv/home/prinstea/cdt-agents/cpc_llm/local_output_20260223 #/homefs/home/prinstea/llome/local_output_20251225 #local_output_20251225 #local_output_20251123 #028 #local_output_20251013_CAinit # #local_output_20250918_noCPC  #local_output_20250923 #_20250901_evol0.5
 overwrite_ga: False ## If False, will only run genetic algorithm when output file does not already exist.
-overwrite_gpt: False ## If False, will only run GPT pretraining when output file does not already exist.
 overwrite_initial_sft: False ## If False, will only run SFT when output file does not already exist.
 overwrite_init_sft_formatter: False
 
@@ -53,7 +52,6 @@ run_evol_dataset_gen: True
 run_propen_sft_dataset_formatting: True
 run_initial_sft: True
 run_sft: True
-run_gpt: False
 run_init_gen: True ## Whether to run initial generation
 run_iter_gen: True
 run_compute_liks_all_models_and_cal_data: True ## Whether to run likelihood computation for all models (for policy control)
@@ -245,62 +243,6 @@ propen_dataset_formatting_preference:
     account: "ai4dd_preempt"
     qos: "preempt"
     gres: "gpu:b200:1"
-
-## Config params for GPT pretraining on unpaired sequences. Similar to SFT params, except importantly w/ format_type: "plain_pairs"
-gpt:
-  args:
-    training_args:
-      num_train_epochs: 3 #3 #5
-      seed: 0
-      eval_steps: 0.1
-      save_steps: 0.2
-      learning_rate: 1e-6
-      per_device_train_batch_size: 2
-      per_device_eval_batch_size: 8
-      eval_accumulation_steps: 2
-      gradient_accumulation_steps: 16 #32
-      max_seq_length: 512
-      log_level: "info"
-      save_total_limit: 2
-      #warmup_ratio: 0.0
-
-    generation_config:  # use greedy decoding during evaluation
-      max_new_tokens: 512 #256
-      num_beams: 1
-      do_sample: False
-      num_return_sequences: 1
-
-    model_config:
-      model_name_or_path: "EleutherAI/pythia-14m" # "EleutherAI/pythia-2.8b"
-      attn_implementation: "eager"
-
-    train_size: 0.95
-    max_eval_size: 100 # evaluation takes a long time, so we set a max. size on the eval dataset
-    seq_length: 512
-    format_type: "plain_pairs"
-    # test function
-    test_fn_type: "ehrlich"  # [ehrlich, mt_fuji]
-
-    # instrumentation
-    log_level: "info"
-    # wandb_mode: "online" ### 20250808 Tried commenting this out
-    wandb_mode: "offline"
-    project_name: "finetune_ehrlich"
-    exp_name: "gpt_smaller_pythia"
-  slurm_args:
-    nodes: 1
-    cpus_per_task: 1
-    ntasks_per_node: 1
-    #gpus_per_node: 1
-    partition: "preempt-priority"
-    open_mode: "append"
-    export: "ALL"
-    time: "24:00:00"
-    mem: "100GB"
-    account: "ai4dd_preempt"
-    qos: "preempt"
-    gres: "gpu:b200:1"
-
 
 initial_sft:
   args:

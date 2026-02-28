@@ -1,0 +1,11 @@
+# Genentech SLURM cluster environment
+# Usage: cpc-llm --config-name=cpc_llm +env=genentech
+
+parent_output_dir: /cv/data/ai4dd/data/prinstea/cdt-agents/cpc_llm/parent_output_20260223
+local_output_dir: /cv/home/prinstea/cdt-agents/cpc_llm/local_output_20260223
+job_submission_system: slurm
+
+# Historical S3 paths (pcluster):
+#   s3://prescient-pcluster-data/prinstea/llome/parent_output
+# Historical local paths (homefs):
+#   /homefs/home/prinstea/llome/local_output

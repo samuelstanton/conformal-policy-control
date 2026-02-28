@@ -1,0 +1,8 @@
+# Modal GPU environment (no SLURM, no S3)
+# Applied automatically by modal_runner.py; can also be used manually:
+#   cpc-llm --config-name=cpc_llm +env=modal
+
+parent_output_dir: null
+local_output_dir: /app/cpc/outputs
+path_to_repo: /app/cpc
+job_submission_system: direct
