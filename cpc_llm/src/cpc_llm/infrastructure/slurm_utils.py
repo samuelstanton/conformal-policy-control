@@ -178,24 +178,28 @@ def submit_cmd_direct(
         )
 
     job_id = f"direct-{p.pid}"
+    # Attach log path so wait_for_direct_jobs_to_complete can read it on failure
+    p._direct_log_path = log_path
     if blocking:
         logging.info(f"Waiting for process {p.pid}...")
         p.wait()
         if p.returncode != 0:
-            # Log the tail of the output for debugging
-            try:
-                with open(log_path) as f:
-                    lines = f.readlines()
-                    tail = "".join(lines[-30:])
-                    logging.error(
-                        f"Command failed (rc={p.returncode}). Output tail:\n{tail}"
-                    )
-            except Exception:
-                logging.error(f"Command failed (rc={p.returncode}). See {log_path}")
+            _log_direct_failure(p.returncode, log_path, py_cmd)
             raise RuntimeError(f"Direct execution failed: {py_cmd}")
         logging.info(f"Process {p.pid} succeeded")
 
     return p, job_id
+
+
+def _log_direct_failure(rc: int, log_path: str, cmd: str = ""):
+    """Log the tail of a failed direct subprocess for debugging."""
+    try:
+        with open(log_path) as f:
+            lines = f.readlines()
+            tail = "".join(lines[-30:])
+            logging.error(f"Command failed (rc={rc}). Output tail:\n{tail}")
+    except Exception:
+        logging.error(f"Command failed (rc={rc}). See {log_path}")
 
 
 def wait_for_direct_jobs_to_complete(jobs: List[Tuple[subprocess.Popen, str]]):
@@ -203,5 +207,8 @@ def wait_for_direct_jobs_to_complete(jobs: List[Tuple[subprocess.Popen, str]]):
     for p, job_id in jobs:
         rc = p.wait()
         if rc != 0:
+            log_path = getattr(p, "_direct_log_path", None)
+            if log_path:
+                _log_direct_failure(rc, log_path)
             raise RuntimeError(f"Process {job_id} failed with return code {rc}")
         logging.info(f"Process {job_id} succeeded")

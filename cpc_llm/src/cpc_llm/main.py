@@ -202,6 +202,13 @@ def run_pipeline(cfg: DictConfig):
         init_gen_outputs_df = pd.read_json(
             iter_gen_outputs_list[0], orient="records", lines=True
         )
+        if "score" not in init_gen_outputs_df.columns or init_gen_outputs_df.empty:
+            logger.warning(
+                "No parsable outputs from initial generation — the model may be "
+                "too small or untrained to produce valid particles. Skipping "
+                "remaining pipeline stages for this seed."
+            )
+            continue
         init_gen_scores = init_gen_outputs_df["score"].to_numpy()
         np.isnan(init_gen_scores) | np.isinf(init_gen_scores)
 
