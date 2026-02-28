@@ -438,26 +438,21 @@ def accept_reject_sample_and_get_likelihoods(
             ar_random_seed = call_idx if not post_policy_control else 1000 + call_idx
             np.random.seed(ar_random_seed)
 
+            ## Initialize MH state from first proposal
+            target_lik = min(unconstrained_liks[0], betas_list[-1] * safe_liks[0])
+            prop_lik = unconstrained_liks[0]
+
             for i in range(n_prop):
                 u = np.random.uniform()
 
                 ## Initial state for MH sampling
                 if n_accepted == 0:
-                    if i == 0:
-                        prev_target_lik = min(
-                            unconstrained_liks[i], betas_list[-1] * safe_liks[i]
-                        )  # / psis_list[-1]
-                        prev_prop_lik = unconstrained_liks[i]
-
-                    else:
-                        ## Can keep updating the initial state until first acceptance
-                        prev_target_lik = target_lik
-                        prev_prop_lik = prop_lik
+                    ## Keep updating the initial state until first acceptance
+                    prev_target_lik = target_lik
+                    prev_prop_lik = prop_lik
 
                 ## Current target and proposal likelihoods (up to normalizing constant)
-                target_lik = min(
-                    unconstrained_liks[i], betas_list[-1] * safe_liks[i]
-                )  # / psis_list[-1]
+                target_lik = min(unconstrained_liks[i], betas_list[-1] * safe_liks[i])
                 prop_lik = unconstrained_liks[i]
 
                 if post_policy_control and (
