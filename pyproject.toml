@@ -8,12 +8,6 @@ dependencies = []
 [tool.uv.workspace]
 members = ["cpc_llm"]
 
-[tool.ruff.lint]
-ignore = [
-    "F403",  # star imports — deeply embedded, defer to a dedicated refactor
-    "F405",  # names possibly undefined from star imports (consequence of F403)
-]
-
 [tool.ruff.lint.per-file-ignores]
 "*.ipynb" = [
     "E402",  # import order in notebooks is often intentional
@@ -24,5 +18,6 @@ ignore = [
 "constrained_AL/run_SplitCP_MFCS_ALexpts.py" = ["E402"]  # sys.path manipulation before imports
 "constrained_AL/calibrate_mfcs.py" = ["F821"]  # references to names in dead code path
 "cpc_llm/src/cpc_llm/calibrate/cpc_search.py" = ["F821"]  # likely typo (betas_t), needs investigation
+"cpc_llm/src/cpc_llm/main.py" = ["F821"]  # likely typo (cal_liks_df_tmin1 vs t0), needs investigation
 "cpc_llm/src/cpc_llm/infer/rejection_sampling.py" = ["F821"]  # undefined target_lik/prop_lik, needs investigation
 "cpc_llm/src/cpc_llm/test_functions/finetune_ehrlich.py" = ["E402"]  # conditional import after try/except

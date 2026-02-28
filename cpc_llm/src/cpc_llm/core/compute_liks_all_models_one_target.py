@@ -12,8 +12,7 @@ import torch
 
 from ..test_functions.finetune_utils import formatting_texts_func_single_seq
 
-# from ..core.model_client import ModelClient
-from ..core.model_client import *
+from ..core.model_client import ModelClient
 from omegaconf import DictConfig, OmegaConf
 
 
