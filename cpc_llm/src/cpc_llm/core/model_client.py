@@ -822,8 +822,9 @@ class ModelClient:
 
             next_token_probs = next_token_probs.cpu().numpy()
 
-            targets_tokenized = self._tokenize_batch(targets[start_index:end_index])
-            targets_seq_lens = targets_tokenized.attention_mask.sum(-1).cpu().numpy()
+            targets_seq_lens = (
+                (tokenized.attention_mask.sum(-1) - input_seq_lens).cpu().numpy()
+            )
             avg_likelihoods = list(next_token_probs.sum(-1) / targets_seq_lens)
             # logger.info(f"avg_likelihoods shape : {np.shape(avg_likelihoods)}")
             # logger.info(f"seq likelihood : {list(next_token_probs.prod(-1) / targets_seq_lens)}")
