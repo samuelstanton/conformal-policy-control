@@ -19,6 +19,17 @@ uv run pytest tests/ -v # run tests (<5s, no GPU needed)
 
 Pre-commit hooks enforce ruff linting/formatting and nbstripout on all commits.
 
+## Modal (GPU execution)
+
+```bash
+uv pip install modal                          # install modal client
+uv run modal run modal_runner.py --test       # env test (verifies GPU, imports)
+uv run modal run modal_runner.py --smoke      # smoke test (pythia-14m, 1 round)
+uv run modal run modal_runner.py              # full run (default config)
+```
+
+Modal automatically forces `job_submission_system=direct` and `parent_output_dir=null`.
+
 ## Project layout
 
 ```

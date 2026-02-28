@@ -103,9 +103,10 @@ def submit_cmd_to_slurm(
     py_cmd: str,
     dump_dir: str,
     blocking: bool = False,
-    # setup_str: str = 'wandb login --relogin --host https://genentech.wandb.io \n\n 23fa6435c59b0dcf64957cd8fe26e0aa64fc40c2',  # setup  that goes between sbatch args and running the py_cmd
-    # setup_str: str = 'export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \n\n export WANDB_INSECURE_DISABLE_SSL=true \n\n export WANDB_API_KEY="23fa6435c59b0dcf64957cd8fe26e0aa64fc40c2" \n\n export WANDB_BASE_URL="https://genentech.wandb.io" \n\n wandb login --relogin --host https://genentech.wandb.io \n\n export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID \n\n export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY',
-    setup_str: str = 'export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \n\n export WANDB_INSECURE_DISABLE_SSL=true \n\n export WANDB_API_KEY="local-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" \n\n export WANDB_BASE_URL="https://genentech.wandb.io" \n\n wandb login --relogin --host https://genentech.wandb.io \n\n export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID \n\n export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY',
+    setup_str: str = (
+        "export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True\n"
+        '[ -f "$HOME/.env.slurm" ] && source "$HOME/.env.slurm"'
+    ),
     path_to_repo: Optional[str] = None,
     nodes_to_exclude_str: str = None,  ## Example: 'b200-st-b200-2-4,b200-st-b200-2-1'
     **slurm_kwargs,

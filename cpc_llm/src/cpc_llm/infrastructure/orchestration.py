@@ -58,18 +58,24 @@ def model_already_trained(
     return None
 
 
-def gpt_model_already_trained(
-    cfg: DictConfig, fs: LocalOrS3Client, s3_output_dir: str, local_output_dir: str
-) -> Optional[str]:
-    # if cfg.overwrite_gpt:
-    #     return None
-    model_fp_names = ["model.safetensors.index.json", "model.safetensors"]
-    model_dir = s3_output_dir if cfg.parent_output_dir is not None else local_output_dir
-    for model_fn in model_fp_names:
-        fp = f"{model_dir}/{model_fn}"
-        if fs.exists(fp):
-            return model_dir
-    return None
+def _get_launch_prefix(cfg, slurm_cfg) -> str:
+    """Build the command prefix for training jobs.
+
+    Uses ``python -m`` for single-GPU direct execution (e.g. Modal, local dev),
+    ``torchrun`` otherwise (multi-GPU or SLURM).
+    """
+    gpus_per_node = (
+        slurm_cfg.gpus_per_node
+        if hasattr(slurm_cfg, "gpus_per_node")
+        else int(slurm_cfg.gres.split(":")[-1])
+    )
+    system = getattr(cfg, "job_submission_system", "slurm")
+    if system == "direct" and gpus_per_node <= 1 and slurm_cfg.nodes == 1:
+        return "python -m "
+    return (
+        f"torchrun --standalone --nnodes={slurm_cfg.nodes} "
+        f"--nproc-per-node={gpus_per_node} -m "
+    )
 
 
 def generate_ga_dataset(cfg: DictConfig, fs: LocalOrS3Client) -> str:
@@ -561,101 +567,6 @@ def run_compute_liks_all_models_and_cal_data(
     return output_filepaths, hd
 
 
-# def train_gpt(
-#     cfg: DictConfig,
-#     fs: LocalOrS3Client,
-#     #data_fp: str,
-#     ga_data_dir: str, ## For GPT pretraining, will use ga_data_dir as main data directory
-#     gpt_run_name: str,
-#     model_dir: str = "EleutherAI/pythia-14m",
-#     train_from_scratch: bool = False,
-# ) -> str:
-
-
-#     ## Creating/Getting Output Directories
-#     test_fn_fp = f"{ga_data_dir}/ehrlich.jsonl" ## Path to Ehrlich function parameters
-#     os.makedirs(f"{cfg.local_output_dir}/{cfg.run_name}", exist_ok=True)
-#     output_dir = f"{cfg.local_output_dir}/{cfg.run_name}/{gpt_run_name}"
-#     s3_output_dir = (
-#         f"{cfg.parent_output_dir}/{cfg.run_name}/{gpt_run_name}"
-#         if cfg.parent_output_dir is not None
-#         else "null"
-#     )
-
-
-#     ## Loading args
-#     args = f"--config-name=pythia-2.8b_edit_pairs data_fp={ga_data_dir}/plain_pairs.jsonl " ## Modified relative to train_sft
-#     args += " ".join(get_all_strs_from_nested_dict(cfg["gpt"]["args"])) + " "
-#     args += f"test_fn_type=ehrlich test_fn_fp={test_fn_fp} "
-#     args += f"job_name={gpt_run_name} s3_output_dir={s3_output_dir} "
-#     args += f"model_config.model_name_or_path={model_dir} "
-#     args += f"sanity_check={cfg.sanity_check} "
-
-#     # train from scratch
-#     if train_from_scratch and hasattr(cfg, "initial_model_config"):
-#         args += f"train_from_scratch=True "
-#         for k, v in cfg.initial_model_config.items():
-#             args += f"+init_model_config.{k}={v} "
-
-#     slurm_dump_dir = f"{cfg.local_output_dir}/slurm_logs"
-
-#     ## Check if there's already a directory with a pretrained GPT model
-#     trained_model_dir = gpt_model_already_trained(cfg, fs, s3_output_dir, output_dir)
-#     if trained_model_dir is not None and not cfg.overwrite_gpt:
-#         logger.info(f"Trained model already exists in {trained_model_dir}. Skipping...")
-#         return trained_model_dir
-#     else:
-#         if trained_model_dir is None:
-#             logger.info(f"Did not find trained model, Continuing to train...")
-#         else:
-#             trained_model_dir = None
-#             logger.info(f"Config says to overwrite model (cfg.overwrite_gpt={cfg.overwrite_gpt}), Continuing to train...")
-#     os.makedirs(slurm_dump_dir, exist_ok=True)
-
-#     if cfg.run_gpt:
-#         ## Submit commands for GPT pretraining
-
-#         slurm_cfg = cfg.gpt.slurm_args
-#         # run with ddp (TODO: switch to fsdp)
-#         gpus_per_node = (
-#             slurm_cfg.gpus_per_node
-#             if hasattr(slurm_cfg, "gpus_per_node")
-#             else int(slurm_cfg.gres.split(":")[-1])
-#         )
-#         ## If overwriting GPT, then delete previous checkpoints
-#         py_cmd = ""
-#         if cfg.overwrite_gpt:
-#             py_cmd += f"rm -rf {output_dir}/checkpoint-*\n"
-
-#         py_cmd += f"torchrun --standalone --nnodes={slurm_cfg.nodes} --nproc-per-node={gpus_per_node} "
-#         py_cmd += f"-m cpc_llm.test_functions.finetune_ehrlich {args} training_args.output_dir={output_dir}\n"
-
-#         # store return code for the finetuning job so that we can return it later
-#         py_cmd += f"RETURN_CODE=$?\n"
-
-#         # add extra commands for deleting local checkpoints after the job finishes
-#         # if S3 was used
-#         if cfg.parent_output_dir is not None:
-#             py_cmd += f"rm -rf {output_dir}/checkpoint-*/model-*.safetensors\n"
-#             py_cmd += f"rm -rf {output_dir}/model-*.safetensors\n"
-#             py_cmd += f"rm -rf {output_dir}/checkpoint-*/optimizer.pt\n"
-
-#         # return the exit code of the finetuning job
-#         py_cmd += "exit ${RETURN_CODE}\n"
-
-#         slurm_kwargs = OmegaConf.to_container(cfg.gpt.slurm_args)
-#         slurm_kwargs["job_name"] = "gpt"
-#         _submit_cmd(cfg,
-#             py_cmd,
-#             slurm_dump_dir,
-#             blocking=True,
-#             path_to_repo=cfg.path_to_repo,
-#             **slurm_kwargs,
-#         )
-#     return_path = s3_output_dir if cfg.parent_output_dir is not None else output_dir
-#     return return_path
-
-
 def train_initial_sft(
     cfg: DictConfig,
     fs: LocalOrS3Client,
@@ -707,32 +618,21 @@ def train_initial_sft(
     os.makedirs(slurm_dump_dir, exist_ok=True)
     if cfg.run_initial_sft:
         slurm_cfg = cfg.initial_sft.slurm_args
-        # run with ddp (TODO: switch to fsdp)
-        gpus_per_node = (
-            slurm_cfg.gpus_per_node
-            if hasattr(slurm_cfg, "gpus_per_node")
-            else int(slurm_cfg.gres.split(":")[-1])
-        )
         ## If overwriting Initial SFT, then delete previous checkpoints
         py_cmd = ""
         if cfg.overwrite_initial_sft:
             py_cmd += f"rm -rf {output_dir}/checkpoint-*\n"
 
-        py_cmd += f"torchrun --standalone --nnodes={slurm_cfg.nodes} --nproc-per-node={gpus_per_node} "
-        py_cmd += f"-m cpc_llm.test_functions.finetune_ehrlich {args} training_args.output_dir={output_dir}\n"
+        py_cmd += _get_launch_prefix(cfg, slurm_cfg)
+        py_cmd += f"cpc_llm.test_functions.finetune_ehrlich {args} training_args.output_dir={output_dir}\n"
 
-        # store return code for the finetuning job so that we can return it later
-        py_cmd += "RETURN_CODE=$?\n"
-
-        # add extra commands for deleting local checkpoints after the job finishes
-        # if S3 was used
+        # if S3 was used, capture exit code, clean up local checkpoints, then exit
         if cfg.parent_output_dir is not None:
+            py_cmd += "RETURN_CODE=$?\n"
             py_cmd += f"rm -rf {output_dir}/checkpoint-*/model-*.safetensors\n"
             py_cmd += f"rm -rf {output_dir}/model-*.safetensors\n"
             py_cmd += f"rm -rf {output_dir}/checkpoint-*/optimizer.pt\n"
-
-        # return the exit code of the finetuning job
-        py_cmd += "exit ${RETURN_CODE}\n"
+            py_cmd += "exit ${RETURN_CODE}\n"
 
         slurm_kwargs = OmegaConf.to_container(cfg.initial_sft.slurm_args)
         slurm_kwargs["job_name"] = "initial_sft"
@@ -799,32 +699,21 @@ def train_sft(
     os.makedirs(slurm_dump_dir, exist_ok=True)
     if cfg.run_sft:
         slurm_cfg = cfg.sft.slurm_args
-        # run with ddp (TODO: switch to fsdp)
-        gpus_per_node = (
-            slurm_cfg.gpus_per_node
-            if hasattr(slurm_cfg, "gpus_per_node")
-            else int(slurm_cfg.gres.split(":")[-1])
-        )
         ## If overwriting SFT, then delete previous checkpoints
         py_cmd = ""
         if cfg.overwrite_sft:
             py_cmd += f"rm -rf {output_dir}/checkpoint-*\n"
 
-        py_cmd += f"torchrun --standalone --nnodes={slurm_cfg.nodes} --nproc-per-node={gpus_per_node} "
-        py_cmd += f"-m cpc_llm.test_functions.finetune_ehrlich {args} training_args.output_dir={output_dir}\n"
+        py_cmd += _get_launch_prefix(cfg, slurm_cfg)
+        py_cmd += f"cpc_llm.test_functions.finetune_ehrlich {args} training_args.output_dir={output_dir}\n"
 
-        # store return code for the finetuning job so that we can return it later
-        py_cmd += "RETURN_CODE=$?\n"
-
-        # add extra commands for deleting local checkpoints after the job finishes
-        # if S3 was used
+        # if S3 was used, capture exit code, clean up local checkpoints, then exit
         if cfg.parent_output_dir is not None:
+            py_cmd += "RETURN_CODE=$?\n"
             py_cmd += f"rm -rf {output_dir}/checkpoint-*/model-*.safetensors\n"
             py_cmd += f"rm -rf {output_dir}/model-*.safetensors\n"
             py_cmd += f"rm -rf {output_dir}/checkpoint-*/optimizer.pt\n"
-
-        # return the exit code of the finetuning job
-        py_cmd += "exit ${RETURN_CODE}\n"
+            py_cmd += "exit ${RETURN_CODE}\n"
 
         slurm_kwargs = OmegaConf.to_container(cfg.sft.slurm_args)
         slurm_kwargs["job_name"] = "sft"
@@ -884,27 +773,16 @@ def train_dpo(
     slurm_dump_dir = f"{cfg.local_output_dir}/slurm_logs"
     os.makedirs(slurm_dump_dir, exist_ok=True)
     slurm_cfg = cfg.dpo.slurm_args
-    # run with ddp (TODO: switch to fsdp)
-    gpus_per_node = (
-        slurm_cfg.gpus_per_node
-        if hasattr(slurm_cfg, "gpus_per_node")
-        else int(slurm_cfg.gres.split(":")[-1])
-    )
-    py_cmd = f"torchrun --standalone --nnodes={slurm_cfg.nodes} --nproc-per-node={gpus_per_node} "
-    py_cmd += f"-m cpc_llm.train.dpo {args} dpo_config.output_dir={output_dir}\n"
+    py_cmd = _get_launch_prefix(cfg, slurm_cfg)
+    py_cmd += f"cpc_llm.train.dpo {args} dpo_config.output_dir={output_dir}\n"
 
-    # store return code for the training job so that we can return it later
-    py_cmd += "RETURN_CODE=$?\n"
-
-    # add extra commands for deleting local checkpoints after the job finishes
-    # since they will have already been transferred to S3
+    # if S3 was used, capture exit code, clean up local checkpoints, then exit
     if cfg.parent_output_dir is not None:
+        py_cmd += "RETURN_CODE=$?\n"
         py_cmd += f"rm -rf {output_dir}/checkpoint-*/model-*.safetensors\n"
         py_cmd += f"rm -rf {output_dir}/model-*.safetensors\n"
         py_cmd += f"rm -rf {output_dir}/checkpoint-*/optimizer.pt\n"
-
-    # return the exit code of the training job
-    py_cmd += "exit ${RETURN_CODE}\n"
+        py_cmd += "exit ${RETURN_CODE}\n"
 
     slurm_kwargs = OmegaConf.to_container(cfg.dpo.slurm_args)
     slurm_kwargs["job_name"] = "dpo"
@@ -960,27 +838,16 @@ def train_marge(
     slurm_dump_dir = f"{cfg.local_output_dir}/slurm_logs"
     os.makedirs(slurm_dump_dir, exist_ok=True)
     slurm_cfg = cfg.marge.slurm_args
-    # run with ddp (TODO: switch to fsdp)
-    gpus_per_node = (
-        slurm_cfg.gpus_per_node
-        if hasattr(slurm_cfg, "gpus_per_node")
-        else int(slurm_cfg.gres.split(":")[-1])
-    )
-    py_cmd = f"torchrun --standalone --nnodes={slurm_cfg.nodes} --nproc-per-node={gpus_per_node} "
-    py_cmd += f"-m cpc_llm.train.marge {args} marge_config.output_dir={output_dir}\n"
+    py_cmd = _get_launch_prefix(cfg, slurm_cfg)
+    py_cmd += f"cpc_llm.train.marge {args} marge_config.output_dir={output_dir}\n"
 
-    # store return code for the training job so that we can return it later
-    py_cmd += "RETURN_CODE=$?\n"
-
-    # add extra commands for deleting local checkpoints after the job finishes
-    # since they will have already been transferred to S3
+    # if S3 was used, capture exit code, clean up local checkpoints, then exit
     if cfg.parent_output_dir is not None:
+        py_cmd += "RETURN_CODE=$?\n"
         py_cmd += f"rm -rf {output_dir}/checkpoint-*/model-*.safetensors\n"
         py_cmd += f"rm -rf {output_dir}/model-*.safetensors\n"
         py_cmd += f"rm -rf {output_dir}/checkpoint-*/optimizer.pt\n"
-
-    # return the exit code of the training job
-    py_cmd += "exit ${RETURN_CODE}\n"
+        py_cmd += "exit ${RETURN_CODE}\n"
 
     slurm_kwargs = OmegaConf.to_container(cfg.marge.slurm_args)
     slurm_kwargs["job_name"] = "marge"
