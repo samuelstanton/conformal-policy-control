@@ -1,33 +1,52 @@
-name: Claude Code
+name: Claude Code Review
 
 on:
-  issue_comment:
-    types: [created]
-  pull_request_review_comment:
-    types: [created]
   pull_request:
-    types: [opened, synchronize]
+    types: [opened, ready_for_review, reopened]
 
 jobs:
-  claude:
+  review:
     if: |
-      (github.event_name == 'pull_request') ||
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude'))
+      !github.event.pull_request.draft &&
+      github.actor != 'dependabot[bot]' &&
+      github.actor != 'renovate[bot]'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: write
-      issues: write
       id-token: write
+      actions: read
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
 
-      - uses: anthropics/claude-code-action@v1
+      - name: Review PR
+        uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          show_full_output: true
+          track_progress: true
           prompt: |
-            ${{ github.event_name == 'pull_request' && '/review' || '' }}
+            Review this pull request. Focus exclusively on the changed code —
+            do not flag pre-existing issues.
+
+            Review criteria (in priority order):
+            1. Bugs and logic errors introduced by this PR
+            2. CLAUDE.md compliance: type hints on all signatures, Google-style
+               docstrings, specific exception handling (no bare except),
+               use of `X | None` not `Optional[X]`
+            3. Correctness of numerical/statistical computations — this is a
+               research codebase for conformal prediction and risk control
+            4. Patterns: check that new code follows existing patterns as
+               prescribed by CLAUDE.md
+
+            Do NOT flag:
+            - Formatting or lint issues (pre-commit hooks handle these)
+            - Minor style preferences not in CLAUDE.md
+            - Issues in unchanged code
+
+            Use inline comments for specific issues. Use a top-level summary
+            comment only if there are cross-cutting concerns or general praise.
+          claude_args: |
+            --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*)"
