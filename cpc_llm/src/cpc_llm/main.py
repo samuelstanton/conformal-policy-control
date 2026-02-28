@@ -23,7 +23,6 @@ from .infrastructure.orchestration import (
     generate_ga_dataset,
     run_compute_liks_all_models_and_cal_data,
     train_dpo,
-    train_gpt,
     train_initial_sft,
     train_marge,
     train_sft,
@@ -38,8 +37,8 @@ from .infer.generation_utils import get_temperatures
 logger = logging.getLogger(__name__)
 
 
-@hydra.main(config_path="../../config", config_name="pipeline")
-def main(cfg: DictConfig):
+def run_pipeline(cfg: DictConfig):
+    """Run the CPC-LLM pipeline. Can be called directly with a DictConfig."""
 
     for random_seed in range(cfg.initial_seed, cfg.last_seed + 1):
         logging.basicConfig(
@@ -93,22 +92,8 @@ def main(cfg: DictConfig):
         ## Running list of all model paths
         all_model_paths = []
 
-        """If run_gpt: Pretrain model on unpaired sequences from genetic algorithm"""
-        train_from_scratch = hasattr(cfg, "initial_model_config")
-        if cfg.run_gpt:
-            gpt_dir = train_gpt(
-                cfg,
-                file_client,
-                ga_data_dir,
-                gpt_run_name=f"{cfg.run_name}_alpha{cfg.conformal_policy_control.alpha}_gpt",
-                model_dir=cfg.initial_model,
-                train_from_scratch=train_from_scratch,
-            )
-            all_model_paths.append(gpt_dir)
-            logger.info(f"GPT model dir: {all_model_paths[-1]}")
-        else:
-            all_model_paths.append(cfg.initial_model)
-            logger.info(f"Initial model dir: {all_model_paths[-1]}")
+        all_model_paths.append(cfg.initial_model)
+        logger.info(f"Initial model dir: {all_model_paths[-1]}")
 
         ## (Abandoned this step, due to issues with unconditional sampling)
         ## Sample conformal calibration sequences unconditionally from GPT model
@@ -1163,6 +1148,11 @@ def main(cfg: DictConfig):
 
             ## Keep track of calibration data with *constrained* liklihoods
             cal_data_constrained_fp_list.append(cal_constrained_output_path)
+
+
+@hydra.main(config_path="../../config", config_name="pipeline")
+def main(cfg: DictConfig):
+    run_pipeline(cfg)
 
 
 if __name__ == "__main__":

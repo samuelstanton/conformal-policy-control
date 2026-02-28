@@ -181,7 +181,16 @@ def submit_cmd_direct(
         logging.info(f"Waiting for process {p.pid}...")
         p.wait()
         if p.returncode != 0:
-            logging.error(f"Command failed (rc={p.returncode}). See {log_path}")
+            # Log the tail of the output for debugging
+            try:
+                with open(log_path) as f:
+                    lines = f.readlines()
+                    tail = "".join(lines[-30:])
+                    logging.error(
+                        f"Command failed (rc={p.returncode}). Output tail:\n{tail}"
+                    )
+            except Exception:
+                logging.error(f"Command failed (rc={p.returncode}). See {log_path}")
             raise RuntimeError(f"Direct execution failed: {py_cmd}")
         logging.info(f"Process {p.pid} succeeded")
 
