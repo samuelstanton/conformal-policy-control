@@ -269,6 +269,8 @@ def run_smoke_test():
             "evol_dataset_gen.args.num_opt_steps=3",
             "evol_dataset_gen.args.optimizer.num_particles=100",
             "iterative_generation.num_jobs=1",
+            "iterative_generation.init_args.sample_size=10",
+            "iterative_generation.init_args.max_iterations=2",
             "iterative_generation.args.sample_size=10",
             "iterative_generation.args.max_iterations=2",
             # Fast training
