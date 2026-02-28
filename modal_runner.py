@@ -8,6 +8,9 @@ Usage:
     # Smoke test (tiny model, 1 round, ~5 min)
     modal run modal_runner.py --smoke
 
+    # Smoke test with cached outputs (skips completed stages on re-run)
+    modal run modal_runner.py --smoke --cache
+
     # Sanity check (MARGE, local storage, ~30 min)
     modal run modal_runner.py --config-name pipeline_sanity_check_no_s3
 
@@ -42,6 +45,10 @@ LOCAL_DIR_IGNORE = [
 # Persistent volume for HuggingFace model cache
 hf_cache_volume = modal.Volume.from_name("cpc-llm-hf-cache", create_if_missing=True)
 HF_CACHE_PATH = "/vol/hf-cache"
+
+# Persistent volume for pipeline outputs (training checkpoints, generated data)
+outputs_volume = modal.Volume.from_name("cpc-llm-outputs", create_if_missing=True)
+OUTPUTS_PATH = "/vol/outputs"
 
 # Base dependencies (cached across code changes)
 # Use uv for fast dependency resolution (pip backtracking on s3fs/aiobotocore is brutal)
@@ -225,11 +232,19 @@ def test_environment():
     memory=32768,
     timeout=1800,  # 30 min
     secrets=[modal.Secret.from_name("wandb")],
-    volumes={HF_CACHE_PATH: hf_cache_volume},
+    volumes={HF_CACHE_PATH: hf_cache_volume, OUTPUTS_PATH: outputs_volume},
 )
-def run_smoke_test():
-    """Quick smoke test: tiny model, 1 MARGE round, minimal data."""
+def run_smoke_test(cache: bool = False):
+    """Quick smoke test: tiny model, 1 MARGE round, minimal data.
+
+    Args:
+        cache: If True, reuse pipeline outputs (checkpoints, generated data)
+            from previous runs, skipping completed stages. If False (default),
+            clear the outputs volume first and run fresh. Either way, outputs
+            are persisted to the volume for future --cache runs.
+    """
     import logging
+    import shutil
 
     app_path = _setup_env()
 
@@ -244,6 +259,21 @@ def run_smoke_test():
 
     logger.info(f"CUDA: {torch.cuda.is_available()}")
 
+    # Always write to the persistent volume. --no-cache clears it first.
+    output_dir = OUTPUTS_PATH
+    if not cache:
+        output_path = Path(output_dir)
+        if output_path.exists():
+            for child in output_path.iterdir():
+                if child.is_dir():
+                    shutil.rmtree(child)
+                else:
+                    child.unlink()
+            outputs_volume.commit()
+            logger.info("Cleared cached outputs volume")
+    else:
+        logger.info(f"Using cached outputs volume at {output_dir}")
+
     try:
         import hydra
         from omegaconf import OmegaConf
@@ -252,7 +282,7 @@ def run_smoke_test():
             # Direct execution, local storage
             "job_submission_system=direct",
             "parent_output_dir=null",
-            f"local_output_dir={app_path}/outputs",
+            f"local_output_dir={output_dir}",
             f"path_to_repo={app_path}",
             # Single seed
             "initial_seed=0",
@@ -290,6 +320,7 @@ def run_smoke_test():
             run_pipeline(cfg)
 
         hf_cache_volume.commit()
+        outputs_volume.commit()
         logger.info("Smoke test passed!")
         return "Smoke test passed!"
 
@@ -306,6 +337,7 @@ def main_entrypoint(
     config_name: str = "pipeline_sanity_check_no_s3",
     test: bool = False,
     smoke: bool = False,
+    cache: bool = False,
     overrides: str = None,
 ):
     """
@@ -317,6 +349,9 @@ def main_entrypoint(
 
         # Smoke test (tiny model, ~5 min)
         modal run modal_runner.py --smoke
+
+        # Smoke test with cached outputs (skips completed stages)
+        modal run modal_runner.py --smoke --cache
 
         # Sanity check run
         modal run modal_runner.py --config-name pipeline_sanity_check_no_s3
@@ -331,7 +366,9 @@ def main_entrypoint(
         print(f"Result: {result}")
     elif smoke:
         print("Running smoke test (pythia-14m, 1 round)...")
-        result = run_smoke_test.remote()
+        if cache:
+            print("Using cached outputs volume")
+        result = run_smoke_test.remote(cache=cache)
         print(f"Result: {result}")
     else:
         print(f"Running CPC-LLM with config: {config_name}")
