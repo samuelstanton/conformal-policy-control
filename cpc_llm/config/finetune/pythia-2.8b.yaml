@@ -1,6 +1,6 @@
 # training arguments - SFTConfig or TrainingArguments
 training_args:
-  dataset_text_field: null
+  dataset_text_field: "text"
   learning_rate: 1e-6
   per_device_train_batch_size: 2
   per_device_eval_batch_size: 2
