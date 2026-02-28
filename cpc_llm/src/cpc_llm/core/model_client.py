@@ -834,31 +834,35 @@ class ModelClient:
 
         return all_likelihoods
 
+    @staticmethod
     def _expand_kv_cache(
-        self,
         past_key_values: tuple,
         batch_size: int,
     ) -> tuple:
-        """Expand a batch-1 KV cache to the target batch size (zero-copy)."""
-        try:
-            from transformers.cache_utils import DynamicCache
-        except ImportError:
-            DynamicCache = None
+        """Expand a batch-1 KV cache to the target batch size.
 
-        if DynamicCache is not None and isinstance(past_key_values, DynamicCache):
-            expanded = DynamicCache()
-            for layer_idx in range(len(past_key_values)):
-                expanded.update(
-                    past_key_values.key_cache[layer_idx].expand(batch_size, -1, -1, -1),
-                    past_key_values.value_cache[layer_idx].expand(
-                        batch_size, -1, -1, -1
-                    ),
-                    layer_idx,
-                )
-            return expanded
+        Normalizes any cache type (DynamicCache, etc.) to a tuple-of-tuples
+        before expanding, so the result works with all attention backends.
+
+        Args:
+            past_key_values: KV cache returned by a model forward pass.
+            batch_size: Target batch dimension for the expanded cache.
+
+        Returns:
+            Tuple-of-tuples KV cache with batch dimension expanded.
+        """
+        # Normalize DynamicCache (or similar) to tuple-of-tuples
+        if not isinstance(past_key_values, tuple):
+            past_key_values = tuple(
+                (past_key_values[i][0], past_key_values[i][1])
+                for i in range(len(past_key_values))
+            )
 
         return tuple(
-            (k.expand(batch_size, -1, -1, -1), v.expand(batch_size, -1, -1, -1))
+            (
+                k.expand(batch_size, -1, -1, -1).contiguous(),
+                v.expand(batch_size, -1, -1, -1).contiguous(),
+            )
             for k, v in past_key_values
         )
 
@@ -869,13 +873,23 @@ class ModelClient:
         targets: List[str],
         batch_size: int = 10,
         device: str = "cuda",
-        float_constant: int = 10**10,
-        logger: logging.Logger = None,
+        logger: logging.Logger | None = None,
     ) -> List[float]:
-        """Compute likelihoods of target sequences, averaged over all provided input seeds.
+        """Compute likelihoods of target sequences, averaged over all input seeds.
 
         Uses KV caching: each input prefix is encoded once and the cached
         key/value states are reused across all target batches.
+
+        Args:
+            inputs: List of input prompt strings (seeds).
+            targets: List of target sequences to evaluate.
+            batch_size: Number of targets to process per forward pass.
+            device: Device for computation ('cuda', 'cpu', or 'gpu').
+            logger: Logger instance for status messages.
+
+        Returns:
+            List of average likelihoods, one per target. Each value is
+            mean_i(exp(sum_t(log p(target_t | input_i, target_<t)))).
         """
         logger.info(f"temperature : {self.temperature}")
 
