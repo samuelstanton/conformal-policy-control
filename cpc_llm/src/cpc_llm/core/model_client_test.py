@@ -1,10 +1,8 @@
 import logging
-import numpy as np
 import torch
 import unittest
 
 from .model_client import ModelClient
-from unittest.mock import MagicMock
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

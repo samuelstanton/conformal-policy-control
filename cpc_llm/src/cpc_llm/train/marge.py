@@ -1,17 +1,14 @@
 import hydra
 import json
 import logging
-import multiprocessing
 import os
 import pandas as pd
-import s3fs
 import sys
 import torch
 from contextlib import nullcontext
-from datasets import load_dataset, Dataset
+from datasets import Dataset
 from ..infrastructure.file_handler import LocalOrS3Client
 from ..test_functions.finetune_utils import (
-    find_and_log_checkpoints,
     formatting_texts_func_edit_pairs,
     get_ehrlich_metrics_for_outputs,
     get_ehrlich_rewards,
@@ -33,7 +30,7 @@ from trl import (
     get_peft_config,
     get_quantization_config,
 )
-from trl.commands.cli_utils import DPOScriptArguments, init_zero_verbose, TrlParser
+from trl.commands.cli_utils import DPOScriptArguments, init_zero_verbose
 
 TRL_USE_RICH = strtobool(os.getenv("TRL_USE_RICH", "0"))
 
@@ -207,7 +204,7 @@ def main(cfg: DictConfig):
         )
         train_dataset = ds["train"]
         eval_dataset = ds["test"]
-        transformers_logger.info(f"Printing first 2 examples of formatted dataset:")
+        transformers_logger.info("Printing first 2 examples of formatted dataset:")
         for ex in train_dataset.select(range(2)):
             transformers_logger.info(ex)
     else:
@@ -253,17 +250,22 @@ def main(cfg: DictConfig):
         if cfg.s3_output_dir is not None:
             s3_callback = S3Callback(cfg.s3_output_dir, logger=transformers_logger)
             callbacks.append(s3_callback)
-        metrics_fn = lambda ds, outputs: get_ehrlich_metrics_for_outputs(
-            ds,
-            test_fn,
-            outputs,
-            training_args.input_field_name,
-            training_args.input_score_field_name,
-        )
-        rewards_fn = lambda batch: get_ehrlich_rewards(
-            batch[training_args.input_score_field_name],
-            batch[training_args.target_score_field_name],
-        )
+
+        def metrics_fn(ds, outputs):
+            return get_ehrlich_metrics_for_outputs(
+                ds,
+                test_fn,
+                outputs,
+                training_args.input_field_name,
+                training_args.input_score_field_name,
+            )
+
+        def rewards_fn(batch):
+            return get_ehrlich_rewards(
+                batch[training_args.input_score_field_name],
+                batch[training_args.target_score_field_name],
+            )
+
         trainer = MargeTrainer(
             metrics_fn=metrics_fn,
             rewards_fn=rewards_fn,

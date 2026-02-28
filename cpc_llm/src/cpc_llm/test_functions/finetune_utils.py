@@ -3,7 +3,6 @@ import logging
 import numpy as np
 import os
 import pandas as pd
-import pprint
 import s3fs
 import torch
 import torch.utils
@@ -11,7 +10,6 @@ import torch.utils.data
 import wandb
 
 from botorch.test_functions import SyntheticTestFunction
-from datasets import Dataset
 from holo.test_functions.closed_form import Ehrlich, RoughMtFuji
 from omegaconf import DictConfig, OmegaConf
 from transformers import (
@@ -328,14 +326,14 @@ def parse_particle_and_score(
     """
     try:
         particle = json.loads(input_str)
-    except:
+    except (ValueError, TypeError):
         return None
     if not isinstance(particle, list):
         return None
     try:
         if any([int(x) != x for x in particle]):
             return None
-    except:
+    except (ValueError, TypeError):
         return None
     particle = [int(x) for x in particle]
     if len(particle) != test_fn.dim:
@@ -345,7 +343,6 @@ def parse_particle_and_score(
             return None
     score = test_fn(torch.LongTensor([particle])).item()
     return particle, score
-
 
 
 def parse_particle_and_score_permissive(
@@ -359,39 +356,49 @@ def parse_particle_and_score_permissive(
     """
     try:
         particle = json.loads(input_str)
-    except:
+    except (ValueError, TypeError):
         return None
     if not isinstance(particle, list):
         return None
     try:
         if any([int(x) != x for x in particle]):
             return None
-    except:
+    except (ValueError, TypeError):
         return None
-    particle = [int(x) for x in particle] ## Will return this one (only modifying length if needed)
-    particle_for_scoring = particle.copy() ## Will use this one for scoring (permissive score function)
-    
+    particle = [
+        int(x) for x in particle
+    ]  ## Will return this one (only modifying length if needed)
+    particle_for_scoring = (
+        particle.copy()
+    )  ## Will use this one for scoring (permissive score function)
+
     if len(particle) != test_fn.dim:
         # print(f"particle_for_scoring : {particle_for_scoring}")
-        particle_for_scoring = np.pad(particle_for_scoring, (0, max(0, test_fn.dim - len(particle_for_scoring))), mode="wrap")[: test_fn.dim].tolist()
+        particle_for_scoring = np.pad(
+            particle_for_scoring,
+            (0, max(0, test_fn.dim - len(particle_for_scoring))),
+            mode="wrap",
+        )[: test_fn.dim].tolist()
         # score = test_fn(torch.LongTensor([particle_for_scoring])).item()
         if len(particle) < test_fn.dim:
-            particle.extend([-1 for i in range(test_fn.dim-len(particle))])
+            particle.extend([-1 for i in range(test_fn.dim - len(particle))])
         else:
-            particle = particle[:test_fn.dim]
+            particle = particle[: test_fn.dim]
         # return particle, score
 
     if hasattr(test_fn, "num_states"):
         if any([x >= test_fn.num_states or x < 0 for x in particle_for_scoring]):
-            particle_for_scoring = np.pad(particle_for_scoring, (0, max(0, test_fn.dim - len(particle_for_scoring))), mode="wrap")[: test_fn.dim].tolist()
+            particle_for_scoring = np.pad(
+                particle_for_scoring,
+                (0, max(0, test_fn.dim - len(particle_for_scoring))),
+                mode="wrap",
+            )[: test_fn.dim].tolist()
             # score = test_fn(torch.LongTensor([particle_for_scoring])).item()
             # return particle, score
     # print(f"particle_for_scoring: {particle_for_scoring}")
-    particle_for_scoring = np.clip(particle_for_scoring, a_min=0, a_max=test_fn.dim-1)
+    particle_for_scoring = np.clip(particle_for_scoring, a_min=0, a_max=test_fn.dim - 1)
     score = test_fn(torch.LongTensor([particle_for_scoring])).item()
     return particle, score
-
-
 
 
 def preprocess_generations(
@@ -427,7 +434,7 @@ def preprocess_generations(
                     [f"{t}" for t in generated_token_ids]
                 )
                 raise ValueError(
-                    f"Could not find an input with IDs that the current generation starts with.\n"
+                    "Could not find an input with IDs that the current generation starts with.\n"
                     + f"Original input:{input_ids[i]}\n{input_ids[i].shape}\n"
                     + f"Sliced input:\n{ex_input_ids}\n{ex_input_ids.shape}\n"
                     + f"Labels:\n{inputs['labels'][i]}\n{inputs['labels'][i].shape}\n"
@@ -641,7 +648,7 @@ def get_response_template_plain_pairs(tokenizer: PreTrainedTokenizer):
 
 
 def formatting_texts_func_plain_pairs(
-    examples: Mapping[str, Iterable[Any]]
+    examples: Mapping[str, Iterable[Any]],
 ) -> List[str]:
     output_texts = []
     for i in range(len(examples["score"])):
@@ -654,33 +661,33 @@ def formatting_texts_func_plain_pairs(
 
 ## Same as 'formatting_texts_func_plain_pairs', except calling for "higher_score_particle"
 def formatting_texts_func_single_seq(
-    examples: Mapping[str, Iterable[Any]]
+    examples: Mapping[str, Iterable[Any]],
 ) -> List[str]:
 
     ## Get particle_field and score_field
-    if 'higher_score_particle' in examples:
-        particle_field = 'higher_score_particle'
-    elif 'lower_score_particle' in examples:
-        particle_field = 'lower_score_particle'
-    elif 'chosen' in examples:
-        particle_field = 'chosen'
-    elif 'prompt' in examples:
-        particle_field = 'prompt'
-    elif 'particle' in examples:
-        particle_field = 'particle'
+    if "higher_score_particle" in examples:
+        particle_field = "higher_score_particle"
+    elif "lower_score_particle" in examples:
+        particle_field = "lower_score_particle"
+    elif "chosen" in examples:
+        particle_field = "chosen"
+    elif "prompt" in examples:
+        particle_field = "prompt"
+    elif "particle" in examples:
+        particle_field = "particle"
     else:
         raise ValueError("No recognized particle field")
-    
-    if 'higher_score_particle_score' in examples:
-        score_field = 'higher_score_particle_score'
-    elif 'lower_score_particle_score' in examples:
-        score_field = 'lower_score_particle_score'
-    elif 'cg_lik_ratio_opt_over_mix' in examples:
-        score_field = 'cg_lik_ratio_opt_over_mix'
-    else:
-        score_field = 'score'
 
-    ## 
+    if "higher_score_particle_score" in examples:
+        score_field = "higher_score_particle_score"
+    elif "lower_score_particle_score" in examples:
+        score_field = "lower_score_particle_score"
+    elif "cg_lik_ratio_opt_over_mix" in examples:
+        score_field = "cg_lik_ratio_opt_over_mix"
+    else:
+        score_field = "score"
+
+    ##
     output_texts = []
     for i in range(len(examples[score_field])):
         score = examples[score_field][i]
@@ -688,7 +695,6 @@ def formatting_texts_func_single_seq(
         particles_str = json.dumps(particles)
         output_texts.append(f"Score: {score:.2f}\nParticle: {particles_str}")
     return output_texts
-
 
 
 def get_response_template_edit_pairs(tokenizer: PreTrainedTokenizer):

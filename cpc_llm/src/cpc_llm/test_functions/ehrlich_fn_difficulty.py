@@ -206,7 +206,7 @@ def main():
         total_seqs = int(test_fn.transition_matrix.shape[0]) ** int(row["dim"])
         pc = num_sols / total_seqs
         print(
-            f"Proportion of 0-regret solutions: {num_sols} / {total_seqs} ({pc*100}%)"
+            f"Proportion of 0-regret solutions: {num_sols} / {total_seqs} ({pc * 100}%)"
         )
         output_dict = {
             "num_optimal_solutions": int(num_sols),

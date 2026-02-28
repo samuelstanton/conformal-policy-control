@@ -6,15 +6,13 @@ import random
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import wandb
 import warnings
 
 from accelerate import PartialState
-from accelerate.utils import is_deepspeed_available, tqdm
+from accelerate.utils import is_deepspeed_available
 from botorch.test_functions import SyntheticTestFunction
 from collections import defaultdict
-from contextlib import contextmanager, nullcontext
-from dataclasses import dataclass
+from contextlib import nullcontext
 from datasets import Dataset
 from ..test_functions.finetune_utils import truncate_after_right_bracket
 from holo.test_functions.closed_form import Ehrlich
@@ -36,7 +34,6 @@ from trl.trainer.utils import (
     RunningMoments,
     SyncRefModelCallback,
     disable_dropout_in_model,
-    pad_to_length,
     peft_module_casting_to_bf16,
 )
 from trl.import_utils import is_peft_available, is_wandb_available
@@ -49,10 +46,10 @@ if is_peft_available():
 
 
 if is_wandb_available():
-    import wandb
+    pass
 
 if is_deepspeed_available():
-    import deepspeed
+    pass
 
 
 class DPOTrainerWithLogging(DPOTrainer):
@@ -837,7 +834,9 @@ class DPOTrainerWithLogging(DPOTrainer):
         num_total = len(outputs)
         scores_wo_nulls = [s for s in all_scores_including_nulls if s is not None]
         output_metrics = {
-            "%_parsable": num_parsable / num_total if num_total > 0 else -1, ## -1 stand in for undefined
+            "%_parsable": num_parsable / num_total
+            if num_total > 0
+            else -1,  ## -1 stand in for undefined
             "%_correct_length": (
                 num_correct_length / num_parsable if num_parsable > 0 else np.nan
             ),
@@ -859,7 +858,9 @@ class DPOTrainerWithLogging(DPOTrainer):
             "avg_score": (
                 np.mean(scores_wo_nulls) if len(scores_wo_nulls) > 0 else np.nan
             ),
-            "avg_num_chars_truncated": total_chars_truncated / num_total if num_total > 0 else -1, ## -1 stand in for undefined
+            "avg_num_chars_truncated": total_chars_truncated / num_total
+            if num_total > 0
+            else -1,  ## -1 stand in for undefined
         }
         if isinstance(self.test_fn, Ehrlich):
             output_metrics["%_values_in_range"] = (
@@ -893,7 +894,8 @@ class DPOTrainerWithLogging(DPOTrainer):
                 random_indices = random.sample(
                     range(num_samples),
                     k=min(
-                        num_samples, self.args.eval_batch_size * self.num_generate_batches
+                        num_samples,
+                        self.args.eval_batch_size * self.num_generate_batches,
                     ),
                 )
                 # Use dataloader.dataset.select to get the random batch without iterating over the DataLoader

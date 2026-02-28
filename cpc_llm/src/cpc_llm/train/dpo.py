@@ -1,16 +1,14 @@
 import hydra
 import json
 import logging
-import multiprocessing
 import os
 import pandas as pd
 import random
-import s3fs
 import sys
 import time
 import torch
 from contextlib import nullcontext
-from datasets import load_dataset, Dataset
+from datasets import Dataset
 from ..infrastructure.file_handler import LocalOrS3Client
 from ..test_functions.finetune_utils import (
     formatting_texts_func_edit_pairs,
@@ -22,7 +20,7 @@ from ..core.model_client import ModelClient
 from omegaconf import DictConfig, OmegaConf
 from .pref_tuning_trainer import DPOTrainerWithLogging
 from .seq2seq_sft_trainer import S3Callback
-from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig, set_seed
+from transformers import GenerationConfig, set_seed
 from transformers.trainer_utils import PREFIX_CHECKPOINT_DIR
 from transformers.utils import logging as transformers_logging
 from trl import (
@@ -34,7 +32,7 @@ from trl import (
     get_peft_config,
     get_quantization_config,
 )
-from trl.commands.cli_utils import DPOScriptArguments, init_zero_verbose, TrlParser
+from trl.commands.cli_utils import DPOScriptArguments, init_zero_verbose
 
 TRL_USE_RICH = strtobool(os.getenv("TRL_USE_RICH", "0"))
 
@@ -64,13 +62,13 @@ def main(cfg: DictConfig):
 
     cfg_dict = OmegaConf.to_container(cfg)
     args = DPOScriptArguments(**cfg_dict["dpo_script_args"])
-    
+
     # Add a small random delay to stagger CUDA initialization across distributed processes
     # This helps avoid race conditions when multiple processes try to set CUDA devices simultaneously
     if torch.cuda.is_available():
         delay = random.uniform(0.1, 0.5)  # Random delay between 0.1-0.5 seconds
         time.sleep(delay)
-    
+
     # Retry DPOConfig initialization with exponential backoff to handle CUDA busy errors
     # This addresses race conditions when multiple distributed processes initialize CUDA simultaneously
     max_retries = 5
@@ -84,26 +82,28 @@ def main(cfg: DictConfig):
             # Check if it's a CUDA-related error (could be RuntimeError, AcceleratorError, etc.)
             error_str = str(e)
             is_cuda_error = (
-                "CUDA" in error_str 
-                or "busy" in error_str.lower() 
+                "CUDA" in error_str
+                or "busy" in error_str.lower()
                 or "unavailable" in error_str.lower()
                 or "AcceleratorError" in type(e).__name__
             )
-            
+
             if is_cuda_error and attempt < max_retries - 1:
-                wait_time = retry_delay * (2 ** attempt)  # Exponential backoff
+                wait_time = retry_delay * (2**attempt)  # Exponential backoff
                 logging.warning(
                     f"CUDA initialization failed (attempt {attempt + 1}/{max_retries}): {e}. "
                     f"Retrying in {wait_time:.1f} seconds..."
                 )
                 time.sleep(wait_time)
             elif is_cuda_error:
-                logging.error(f"CUDA initialization failed after {max_retries} attempts: {e}")
+                logging.error(
+                    f"CUDA initialization failed after {max_retries} attempts: {e}"
+                )
                 raise
             else:
                 # Re-raise if it's not a CUDA-related error
                 raise
-    
+
     model_config = ModelConfig(**cfg_dict["model_config"])
 
     if TRL_USE_RICH:
@@ -144,7 +144,10 @@ def main(cfg: DictConfig):
     # use the ModelClient class since it has utilities for loading models from S3
     # Always try CUDA first, ModelClient will handle fallback to CPU if needed
     model_client = ModelClient(
-        model_config.model_name_or_path, logger=transformers_logger, device="cuda", **model_kwargs
+        model_config.model_name_or_path,
+        logger=transformers_logger,
+        device="cuda",
+        **model_kwargs,
     )
     model = model_client.model
     model.generation_config = GenerationConfig(
@@ -155,7 +158,10 @@ def main(cfg: DictConfig):
     if peft_config is None:
         # Always try CUDA first, ModelClient will handle fallback to CPU if needed
         ref_model_client = ModelClient(
-            model_config.model_name_or_path, logger=transformers_logger, device="cuda", **model_kwargs
+            model_config.model_name_or_path,
+            logger=transformers_logger,
+            device="cuda",
+            **model_kwargs,
         )
         ref_model = ref_model_client.model
         ref_model.generation_config = GenerationConfig(
@@ -214,7 +220,7 @@ def main(cfg: DictConfig):
         )
         train_dataset = ds["train"]
         eval_dataset = ds["test"]
-        transformers_logger.info(f"Printing first 2 examples of formatted dataset:")
+        transformers_logger.info("Printing first 2 examples of formatted dataset:")
         for ex in train_dataset.select(range(2)):
             transformers_logger.info(ex)
     else:

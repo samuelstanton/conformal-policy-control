@@ -1,5 +1,4 @@
 import inspect
-import json
 import os
 import random
 import warnings
@@ -13,11 +12,9 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Union
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from accelerate import PartialState
 from accelerate.utils import is_deepspeed_available, tqdm
 from datasets import Dataset
-from huggingface_hub.utils._deprecation import _deprecate_arguments
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader
 from transformers import (
@@ -36,7 +33,6 @@ from trl.import_utils import is_peft_available, is_wandb_available
 from trl.models import PreTrainedModelWrapper, create_reference_model
 from trl.trainer.dpo_config import DPOConfig
 from trl.trainer.utils import (
-    RunningMoments,
     SyncRefModelCallback,
     disable_dropout_in_model,
     pad_to_length,
@@ -51,7 +47,7 @@ if is_peft_available():
 
 
 if is_wandb_available():
-    import wandb
+    pass
 
 if is_deepspeed_available():
     import deepspeed
@@ -688,7 +684,7 @@ class MargeTrainer(Trainer):
             )
 
             self.train_dataset = self.train_dataset.add_column(
-                name=f"reference_target_logps", column=all_reference_target_logps
+                name="reference_target_logps", column=all_reference_target_logps
             )
 
             self._precomputed_train_ref_log_probs = True
@@ -1422,12 +1418,8 @@ class MargeTrainer(Trainer):
                     np.arange(0, len(dataloader.dataset), self.args.eval_batch_size)
                 )
                 random_batches_dataset = dataloader.dataset
-            input_particles = [
-                d[self.args.input_field_name] for d in random_batches_dataset
-            ]
-            input_scores = [
-                d[self.args.input_score_field_name] for d in random_batches_dataset
-            ]
+            [d[self.args.input_field_name] for d in random_batches_dataset]
+            [d[self.args.input_score_field_name] for d in random_batches_dataset]
             policy_output_decoded = []
             ref_output_decoded = []
             for i in range(0, len(random_indices), self.args.eval_batch_size):
@@ -1598,4 +1590,3 @@ class MargeTrainer(Trainer):
             # Use numerical checkpoint id for rotation (reliable on all filesystems)
             # Checkpoint numbers are now monotonically increasing across epochs
             self._rotate_checkpoints(use_mtime=False, output_dir=run_dir)
-
