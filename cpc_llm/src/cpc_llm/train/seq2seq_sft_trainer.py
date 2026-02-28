@@ -461,19 +461,19 @@ class Seq2SeqSFTTrainer(SFTTrainer):
         generation_inputs["input_ids"] = torch.where(
             inputs["labels"] == -100,
             inputs["input_ids"],
-            self.tokenizer.pad_token_id,
+            self.processing_class.pad_token_id,
         )
         generation_inputs["attention_mask"] = torch.where(
-            generation_inputs["input_ids"] != self.tokenizer.pad_token_id, 1, 0
+            generation_inputs["input_ids"] != self.processing_class.pad_token_id, 1, 0
         )
-        if self.tokenizer.padding_side == "right":
+        if self.processing_class.padding_side == "right":
             # Change padding side to left for generation
             padded_gen_inputs = []
             for i in range(generation_inputs["input_ids"].shape[0]):
                 gen_input_ids = generation_inputs["input_ids"][i]
                 # get length of non-pad-token IDs
                 len_input = sum(generation_inputs["attention_mask"][i]).item()
-                pad_tensor = self.tokenizer.pad_token_id * torch.ones(
+                pad_tensor = self.processing_class.pad_token_id * torch.ones(
                     generation_inputs["input_ids"].shape[-1] - len_input,
                     dtype=gen_input_ids.dtype,
                     device=gen_input_ids.device,
@@ -503,7 +503,7 @@ class Seq2SeqSFTTrainer(SFTTrainer):
                 padded_gen_tokens = torch.concat(
                     [
                         gen_tokens,
-                        self.tokenizer.pad_token_id
+                        self.processing_class.pad_token_id
                         * torch.ones(
                             max_gen_len - len(gen_tokens),
                             dtype=gen_tokens.dtype,
@@ -569,12 +569,14 @@ class Seq2SeqSFTTrainer(SFTTrainer):
         return loss, generated_tokens, labels
 
     def _pad_tensors_to_max_len(self, tensor, max_length):
-        if self.tokenizer is not None and hasattr(self.tokenizer, "pad_token_id"):
+        if self.processing_class is not None and hasattr(
+            self.processing_class, "pad_token_id"
+        ):
             # If PAD token is not defined at least EOS token has to be defined
             pad_token_id = (
-                self.tokenizer.pad_token_id
-                if self.tokenizer.pad_token_id is not None
-                else self.tokenizer.eos_token_id
+                self.processing_class.pad_token_id
+                if self.processing_class.pad_token_id is not None
+                else self.processing_class.eos_token_id
             )
         else:
             if self.model.config.pad_token_id is not None:
