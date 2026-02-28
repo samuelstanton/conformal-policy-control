@@ -211,7 +211,9 @@ def ranked_fft(
         return torch.tensor(selected)
 
     if distance_fn is None:
-        distance_fn = lambda x, y: torch.norm(x - y, p=2).item()
+
+        def distance_fn(x, y):
+            return torch.norm(x - y, p=2).item()
 
     pq = []
     # First pass through library

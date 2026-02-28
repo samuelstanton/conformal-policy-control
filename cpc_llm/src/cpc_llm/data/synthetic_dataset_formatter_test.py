@@ -1,11 +1,9 @@
 import pandas as pd
-import torch
 import unittest
 
 from omegaconf import OmegaConf
 from .synthetic_dataset_formatter import (
     find_dense_pairs,
-    find_minimal_edit_pairs,
     find_preference_pairs,
     filter_infeasible_examples,
 )
@@ -262,7 +260,6 @@ class TestDatasetSelection(unittest.TestCase):
                 "rejected": [5, 5, 5, 5, 5, 5, 5],
                 "rejected_score": "0.400",
             },
-
         ]
         self.assertEqual(len(outputs), len(expected_outputs))
         for o in expected_outputs:

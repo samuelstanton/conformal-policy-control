@@ -10,8 +10,6 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-
-
 def get_all_strs_from_nested_dict(nested_dict: Dict[str, Any]) -> List[str]:
     outputs = []
     for k, v in nested_dict.items():
@@ -21,7 +19,6 @@ def get_all_strs_from_nested_dict(nested_dict: Dict[str, Any]) -> List[str]:
             for o in get_all_strs_from_nested_dict(v):
                 outputs.append(f"{k}.{o}")
     return outputs
-
 
 
 def model_already_trained(
@@ -36,7 +33,6 @@ def model_already_trained(
     return None
 
 
-
 def gpt_model_already_trained(
     cfg: DictConfig, fs: LocalOrS3Client, s3_output_dir: str, local_output_dir: str
 ) -> Optional[str]:
@@ -49,9 +45,6 @@ def gpt_model_already_trained(
         if fs.exists(fp):
             return model_dir
     return None
-
-
-
 
 
 def generate_ga_dataset(cfg: DictConfig, fs: LocalOrS3Client) -> str:
@@ -86,7 +79,7 @@ def generate_ga_dataset(cfg: DictConfig, fs: LocalOrS3Client) -> str:
     if cfg.run_evol_dataset_gen:
         slurm_kwargs = OmegaConf.to_container(cfg.evol_dataset_gen.slurm_args)
         slurm_kwargs["job_name"] = "ga_seeds"
-                
+
         submit_cmd_to_slurm(
             python_cmd_str,
             slurm_dump_dir,
@@ -104,14 +97,18 @@ def create_propen_sft_dataset(
     source_dataset_fp: str,
     filename_prefix: str = "",
     n: int = None,
-    initial_sft: bool = False, ## Whether is initialization (False : means policy improvement or extrapolation)
+    initial_sft: bool = False,  ## Whether is initialization (False : means policy improvement or extrapolation)
     **extra_kwargs,
 ) -> str:
     python_cmd_str = "python -m cpc_llm.data.synthetic_dataset_formatter "
     if initial_sft:
-        opts = get_all_strs_from_nested_dict(cfg["propen_dataset_formatting_initial_sft"]["args"])
+        opts = get_all_strs_from_nested_dict(
+            cfg["propen_dataset_formatting_initial_sft"]["args"]
+        )
     else:
-        opts = get_all_strs_from_nested_dict(cfg["propen_dataset_formatting_sft"]["args"])
+        opts = get_all_strs_from_nested_dict(
+            cfg["propen_dataset_formatting_sft"]["args"]
+        )
     opts_str = " ".join(opts)
     opts_str += (
         f" source_dataset_path={source_dataset_fp} format=dense_neighborhood_pairs "
@@ -141,7 +138,9 @@ def create_propen_sft_dataset(
     if n is not None:
         opts_str += f"n={n} "
     python_cmd_str += f"{opts_str} "
-    overwrite_sft_flag = cfg.overwrite_init_sft_formatter if initial_sft else cfg.overwrite_sft_formatter
+    overwrite_sft_flag = (
+        cfg.overwrite_init_sft_formatter if initial_sft else cfg.overwrite_sft_formatter
+    )
     if not overwrite_sft_flag and fs.exists(output_fp):
         logger.info(f"{output_fp} already exists. Skipping...")
         return output_fp
@@ -221,7 +220,7 @@ def create_propen_preference_dataset(
 def run_iterative_generation(
     cfg: DictConfig,
     fs: LocalOrS3Client,
-    data_fp: str, ## Either path to paired training data (to select seeds from) or path to pre-selected seeds (unpaired)
+    data_fp: str,  ## Either path to paired training data (to select seeds from) or path to pre-selected seeds (unpaired)
     data_dir: str,
     model_dir: str,
     output_dir: str = None,
@@ -232,23 +231,24 @@ def run_iterative_generation(
     temps: List[float] = [0.6, 0.8, 1.0, 1.2, 1.4, 1.6],
     return_seeds: bool = False,
     first_iter: bool = False,
-    model_idx: int = 0, ## Time index of model using for (unconstrained) generation
-    call_idx: int = 0, ## Index for this generation has been called, including current, for same model directory
-    proportion_of_target_n_accepted: float = None, ## If being run as submodule of AR-sampling, the proportion of target samples accepted
+    model_idx: int = 0,  ## Time index of model using for (unconstrained) generation
+    call_idx: int = 0,  ## Index for this generation has been called, including current, for same model directory
+    proportion_of_target_n_accepted: float = None,  ## If being run as submodule of AR-sampling, the proportion of target samples accepted
     post_policy_control: bool = False,
-    setting: str = '',
-    global_random_seed: int = 0
+    setting: str = "",
+    global_random_seed: int = 0,
     # proposal: str = 'unconstrained',
 ):
     """
     Runs iterative generation jobs, combines the outputs, and returns the combined output filepath.
     """
 
-
     ## Arbitrary way of standardizing seeds for checkpointing, while ensuring they're different across calls within an experiment (assuming no more than 1000 calls of same model at a step)
-    random_seed_curr = global_random_seed * 10000 + post_policy_control * 1000 + call_idx
+    random_seed_curr = (
+        global_random_seed * 10000 + post_policy_control * 1000 + call_idx
+    )
 
-    if output_dir == None:
+    if output_dir is None:
         output_dir = model_dir
 
     opt_str = " ".join(
@@ -282,7 +282,7 @@ def run_iterative_generation(
 
     greedy_decoding_gen_args = f"generation_config.do_sample=False generation_config.num_beams=1 batch_size={cfg.greedy_gen_batch_size}"
     temp_sampling_gen_args = [
-        f"generation_config.do_sample=True generation_config.num_beams=1 "
+        "generation_config.do_sample=True generation_config.num_beams=1 "
         + f"+generation_config.temperature={temp} "
         + f"generation_config.num_return_sequences={cfg.generation_sampling_num_return_sequences} "
         + f"batch_size={cfg.sampling_gen_batch_size} "
@@ -300,11 +300,16 @@ def run_iterative_generation(
     else:
         all_gen_args = temp_sampling_gen_args
 
-        output_filenames = [f"{output_filename_prefix}_temp{temp}_{cfg.generation_sampling_num_return_sequences}seqs.jsonl" for temp in temps]
+        output_filenames = [
+            f"{output_filename_prefix}_temp{temp}_{cfg.generation_sampling_num_return_sequences}seqs.jsonl"
+            for temp in temps
+        ]
 
-    seeds_filenames = [f'seeds_{output_filename}' for output_filename in output_filenames]
+    seeds_filenames = [
+        f"seeds_{output_filename}" for output_filename in output_filenames
+    ]
     seeds_filepaths = [f"{output_dir}/{seeds_fn}" for seeds_fn in seeds_filenames]
-    
+
     output_filepaths = [f"{output_dir}/{output_fn}" for output_fn in output_filenames]
     combined_outputs_fp = f"{output_dir}/{output_filename_prefix}.jsonl"
     slurm_dump_dir = f"{cfg.local_output_dir}/slurm_logs"
@@ -319,7 +324,9 @@ def run_iterative_generation(
                 logger.info(f"{output_dir}/{output_fn} already exists. Skipping...")
             else:
                 all_args.append(f"{args} {gen_args} output_filename={output_fn}")
-        all_python_commands = [f"python -m cpc_llm.infer.iterative_generation2 {a}" for a in all_args]
+        all_python_commands = [
+            f"python -m cpc_llm.infer.iterative_generation2 {a}" for a in all_args
+        ]
         slurm_kwargs = OmegaConf.to_container(cfg.iterative_generation.slurm_args)
         slurm_kwargs["job_name"] = "iter_gen"
         job_submissions = [
@@ -341,10 +348,6 @@ def run_iterative_generation(
         return combined_outputs_fp, output_filepaths, hd
 
 
-
-
-
-
 def run_compute_liks_all_models_and_cal_data(
     cfg: DictConfig,
     fs: LocalOrS3Client,
@@ -364,7 +367,6 @@ def run_compute_liks_all_models_and_cal_data(
     opt_str = " ".join(
         get_all_strs_from_nested_dict(cfg["compute_likelihooods_all_models"]["args"])
     )
-
 
     ## Format lists of strings into a long string that python and hydra can interpret
     seeds_fp_list_str = f"\\['{seeds_fp_list[0]}'"
@@ -392,15 +394,13 @@ def run_compute_liks_all_models_and_cal_data(
         model_indices_str = "\\[\\]"
         model_indices = [i for i in range(len(model_dir_list))]
 
-
     output_dir = os.path.dirname(target_fp)
-
 
     args = f"{opt_str} input_data_path_list={seeds_fp_list_str} target_data_path={target_fp} prev_target_data_path_list={prev_cal_data_fp_list_str} model_name_or_path_list={model_dir_list_str} output_dir={output_dir} "
     # args += f"model_indices={model_indices_str}"
 
     args += f"model_indices={model_indices_str} overwrite_cmp_lik_all={cfg.overwrite_cmp_lik_all} "
-    
+
     # args += f"test_fn_fp={data_dir}/ehrlich.jsonl "
     # args += f"particle_field={particle_field} "
     # args += f"score_field={score_field} "
@@ -409,7 +409,9 @@ def run_compute_liks_all_models_and_cal_data(
 
     # output_filename_prefix = f"cal_gens_all_likelihoods"
     # greedy_decoding_gen_args = f"generation_config.do_sample=False generation_config.num_beams=1 batch_size={cfg.greedy_gen_batch_size}"
-    temp_sampling_gen_args = [f"generation_config.temperature={temp} " for temp in temps]
+    temp_sampling_gen_args = [
+        f"generation_config.temperature={temp} " for temp in temps
+    ]
 
     all_gen_args = temp_sampling_gen_args
     # output_filenames = [f"{output_filename_prefix}_temp{temp}.jsonl" for temp in temps]
@@ -422,15 +424,13 @@ def run_compute_liks_all_models_and_cal_data(
     os.makedirs(slurm_dump_dir, exist_ok=True)
     hd = None
     if cfg.run_compute_liks_all_models_and_cal_data:
-
         all_python_commands = []
 
         for gen_args, output_fn in zip(all_gen_args, output_filenames):
-        # for gen_args in all_gen_args:
+            # for gen_args in all_gen_args:
             if len(target_fp) > 0:
                 ## In this condition, run compute_liks_all_models_one_target
                 all_args_one_target = []
-
 
                 # file_exists = fs.exists(f"{model_dir_list[-1]}/{output_fn}")
                 file_exists = fs.exists(target_fp)
@@ -440,49 +440,81 @@ def run_compute_liks_all_models_and_cal_data(
                     ## If file exists, check if already has all likelihoods computed for models trying to compute for
                     all_liks_computed = True
                     for m in model_indices:
-                        all_liks_computed = all_liks_computed and f"lik_r{m}" in target_df.columns
+                        all_liks_computed = (
+                            all_liks_computed and f"lik_r{m}" in target_df.columns
+                        )
 
                 ## If not overwriting, file exists, and contains updated likelihoods (for most recent model), then don't overwrite
                 if not cfg.overwrite_cmp_lik_all and file_exists and all_liks_computed:
-                    logger.info(f"target_fp {target_fp} already exists with likelihoods computed. Skipping likelihoods computation...")
+                    logger.info(
+                        f"target_fp {target_fp} already exists with likelihoods computed. Skipping likelihoods computation..."
+                    )
                 else:
-                    logger.info(f"Running compute_likelihoods all models...")
-                    all_args_one_target.append(f"{args} {gen_args} output_filename={output_fn} ")
+                    logger.info("Running compute_likelihoods all models...")
+                    all_args_one_target.append(
+                        f"{args} {gen_args} output_filename={output_fn} "
+                    )
                 ## Can only run script for updating curr data if provided non-empty filepath
                 ## (so, providing empty `target_fp` allows skipping this)
-                all_python_commands.extend([f"export CUDA_LAUNCH_BLOCKING=1 \n python -m cpc_llm.core.compute_liks_all_models_one_target {a}" for a in all_args_one_target])
-
+                all_python_commands.extend(
+                    [
+                        f"export CUDA_LAUNCH_BLOCKING=1 \n python -m cpc_llm.core.compute_liks_all_models_one_target {a}"
+                        for a in all_args_one_target
+                    ]
+                )
 
             if len(prev_cal_data_fp_list) > 0:
                 all_args_prev_cal = []
 
                 ## In this condition, run compute_likelihoods_one_model_all_data
 
-                            # file_exists = fs.exists(f"{model_dir_list[-1]}/{output_fn}")
+                # file_exists = fs.exists(f"{model_dir_list[-1]}/{output_fn}")
                 all_prev_cal_files_exist = True
                 all_prev_cal_has_lik_col = True
                 for prev_cal_data_fp in prev_cal_data_fp_list:
-                    all_prev_cal_files_exist = all_prev_cal_files_exist and fs.exists(prev_cal_data_fp)
+                    all_prev_cal_files_exist = all_prev_cal_files_exist and fs.exists(
+                        prev_cal_data_fp
+                    )
                     if not all_prev_cal_files_exist:
                         break
-                    cal_curr_df = pd.read_json(prev_cal_data_fp, orient="records", lines=True)
+                    cal_curr_df = pd.read_json(
+                        prev_cal_data_fp, orient="records", lines=True
+                    )
 
                     ## Check if cal file already has all of the likelihood columns trying to add now
                     for m in model_indices:
-                        all_prev_cal_has_lik_col = all_prev_cal_has_lik_col and f"lik_r{m}" in cal_curr_df.columns
+                        all_prev_cal_has_lik_col = (
+                            all_prev_cal_has_lik_col
+                            and f"lik_r{m}" in cal_curr_df.columns
+                        )
 
                 ## If not overwriting, all prev cal files exist, and all contain updated likelihoods (for most recent model), then don't overwrite
-                if not cfg.overwrite_cmp_lik_all and all_prev_cal_files_exist and all_prev_cal_has_lik_col:
-                    logger.info(f"target_fp {target_fp} already exists with likelihoods computed. Skipping likelihoods computation...")
+                if (
+                    not cfg.overwrite_cmp_lik_all
+                    and all_prev_cal_files_exist
+                    and all_prev_cal_has_lik_col
+                ):
+                    logger.info(
+                        f"target_fp {target_fp} already exists with likelihoods computed. Skipping likelihoods computation..."
+                    )
                 else:
-                    logger.info(f"Running compute_likelihoods all models...")
-                    all_args_prev_cal.append(f"{args} {gen_args} output_filename={output_fn}")
+                    logger.info("Running compute_likelihoods all models...")
+                    all_args_prev_cal.append(
+                        f"{args} {gen_args} output_filename={output_fn}"
+                    )
 
                 ## Can only run script for updating prev data with curr model likelihoods if provided paths to prev data
                 ## (so, providing empty `prev_cal_data_fp_list` allows skipping this)
-                all_python_commands.extend([f"export CUDA_LAUNCH_BLOCKING=1 \n python -m cpc_llm.core.compute_likelihoods_one_model_all_data {a}" for a in all_args_prev_cal])
+                all_python_commands.extend(
+                    [
+                        f"export CUDA_LAUNCH_BLOCKING=1 \n python -m cpc_llm.core.compute_likelihoods_one_model_all_data {a}"
+                        for a in all_args_prev_cal
+                    ]
+                )
 
-        slurm_kwargs = OmegaConf.to_container(cfg.compute_likelihooods_all_models.slurm_args)
+        slurm_kwargs = OmegaConf.to_container(
+            cfg.compute_likelihooods_all_models.slurm_args
+        )
         slurm_kwargs["job_name"] = "comp_lik_all_models"
         job_submissions = [
             submit_cmd_to_slurm(
@@ -499,9 +531,6 @@ def run_compute_liks_all_models_and_cal_data(
     return output_filepaths, hd
 
 
-
-
-
 # def train_gpt(
 #     cfg: DictConfig,
 #     fs: LocalOrS3Client,
@@ -511,7 +540,7 @@ def run_compute_liks_all_models_and_cal_data(
 #     model_dir: str = "EleutherAI/pythia-14m",
 #     train_from_scratch: bool = False,
 # ) -> str:
-    
+
 
 #     ## Creating/Getting Output Directories
 #     test_fn_fp = f"{ga_data_dir}/ehrlich.jsonl" ## Path to Ehrlich function parameters
@@ -531,7 +560,7 @@ def run_compute_liks_all_models_and_cal_data(
 #     args += f"job_name={gpt_run_name} s3_output_dir={s3_output_dir} "
 #     args += f"model_config.model_name_or_path={model_dir} "
 #     args += f"sanity_check={cfg.sanity_check} "
-    
+
 #     # train from scratch
 #     if train_from_scratch and hasattr(cfg, "initial_model_config"):
 #         args += f"train_from_scratch=True "
@@ -552,7 +581,7 @@ def run_compute_liks_all_models_and_cal_data(
 #             trained_model_dir = None
 #             logger.info(f"Config says to overwrite model (cfg.overwrite_gpt={cfg.overwrite_gpt}), Continuing to train...")
 #     os.makedirs(slurm_dump_dir, exist_ok=True)
-    
+
 #     if cfg.run_gpt:
 #         ## Submit commands for GPT pretraining
 
@@ -597,7 +626,6 @@ def run_compute_liks_all_models_and_cal_data(
 #     return return_path
 
 
-
 def train_initial_sft(
     cfg: DictConfig,
     fs: LocalOrS3Client,
@@ -609,7 +637,7 @@ def train_initial_sft(
 ) -> str:
 
     ## Creating/Getting Output Directories
-    test_fn_fp = f"{ga_data_dir}/ehrlich.jsonl" ## Path to Ehrlich function parameters
+    test_fn_fp = f"{ga_data_dir}/ehrlich.jsonl"  ## Path to Ehrlich function parameters
     os.makedirs(f"{cfg.local_output_dir}/{cfg.run_name}", exist_ok=True)
     output_dir = f"{cfg.local_output_dir}/{cfg.run_name}/{initial_sft_run_name}"
     s3_output_dir = (
@@ -625,11 +653,10 @@ def train_initial_sft(
     args += f"job_name={initial_sft_run_name} s3_output_dir={s3_output_dir} "
     args += f"model_config.model_name_or_path={model_dir} "
     args += f"sanity_check={cfg.sanity_check} "
-    
 
     # train from scratch
     if train_from_scratch and hasattr(cfg, "initial_model_config"):
-        args += f"train_from_scratch=True "
+        args += "train_from_scratch=True "
         for k, v in cfg.initial_model_config.items():
             args += f"+init_model_config.{k}={v} "
 
@@ -641,10 +668,12 @@ def train_initial_sft(
         return trained_model_dir
     else:
         if trained_model_dir is None:
-            logger.info(f"Did not find trained model, Continuing to train...")
+            logger.info("Did not find trained model, Continuing to train...")
         else:
             trained_model_dir = None
-            logger.info(f"Config says to overwrite model (cfg.overwrite_initial_sft={cfg.overwrite_initial_sft}), Continuing to train...")
+            logger.info(
+                f"Config says to overwrite model (cfg.overwrite_initial_sft={cfg.overwrite_initial_sft}), Continuing to train..."
+            )
     os.makedirs(slurm_dump_dir, exist_ok=True)
     if cfg.run_initial_sft:
         slurm_cfg = cfg.initial_sft.slurm_args
@@ -663,7 +692,7 @@ def train_initial_sft(
         py_cmd += f"-m cpc_llm.test_functions.finetune_ehrlich {args} training_args.output_dir={output_dir}\n"
 
         # store return code for the finetuning job so that we can return it later
-        py_cmd += f"RETURN_CODE=$?\n"
+        py_cmd += "RETURN_CODE=$?\n"
 
         # add extra commands for deleting local checkpoints after the job finishes
         # if S3 was used
@@ -688,8 +717,6 @@ def train_initial_sft(
     return return_path
 
 
-
-
 def train_sft(
     cfg: DictConfig,
     fs: LocalOrS3Client,
@@ -701,7 +728,7 @@ def train_sft(
 ) -> str:
 
     ## Creating/Getting Output Directories
-    test_fn_fp = f"{ga_data_dir}/ehrlich.jsonl" ## Path to Ehrlich function parameters
+    test_fn_fp = f"{ga_data_dir}/ehrlich.jsonl"  ## Path to Ehrlich function parameters
     os.makedirs(f"{cfg.local_output_dir}/{cfg.run_name}", exist_ok=True)
     output_dir = f"{cfg.local_output_dir}/{cfg.run_name}/{sft_run_name}"
     s3_output_dir = (
@@ -717,11 +744,10 @@ def train_sft(
     args += f"job_name={sft_run_name} s3_output_dir={s3_output_dir} "
     args += f"model_config.model_name_or_path={model_dir} "
     args += f"sanity_check={cfg.sanity_check} "
-    
 
     # train from scratch
     if train_from_scratch and hasattr(cfg, "initial_model_config"):
-        args += f"train_from_scratch=True "
+        args += "train_from_scratch=True "
         for k, v in cfg.initial_model_config.items():
             args += f"+init_model_config.{k}={v} "
 
@@ -733,10 +759,12 @@ def train_sft(
         return trained_model_dir
     else:
         if trained_model_dir is None:
-            logger.info(f"Did not find trained model, Continuing to train...")
+            logger.info("Did not find trained model, Continuing to train...")
         else:
             trained_model_dir = None
-            logger.info(f"Config says to overwrite model (cfg.overwrite_sft={cfg.overwrite_sft}), Continuing to train...")
+            logger.info(
+                f"Config says to overwrite model (cfg.overwrite_sft={cfg.overwrite_sft}), Continuing to train..."
+            )
     os.makedirs(slurm_dump_dir, exist_ok=True)
     if cfg.run_sft:
         slurm_cfg = cfg.sft.slurm_args
@@ -755,7 +783,7 @@ def train_sft(
         py_cmd += f"-m cpc_llm.test_functions.finetune_ehrlich {args} training_args.output_dir={output_dir}\n"
 
         # store return code for the finetuning job so that we can return it later
-        py_cmd += f"RETURN_CODE=$?\n"
+        py_cmd += "RETURN_CODE=$?\n"
 
         # add extra commands for deleting local checkpoints after the job finishes
         # if S3 was used
@@ -780,8 +808,6 @@ def train_sft(
     return return_path
 
 
-
-
 def train_dpo(
     cfg: DictConfig,
     fs: LocalOrS3Client,
@@ -803,15 +829,17 @@ def train_dpo(
         return trained_model_dir
     else:
         if trained_model_dir is None:
-            logger.info(f"Did not find trained model, Continuing to train...")
+            logger.info("Did not find trained model, Continuing to train...")
         else:
             trained_model_dir = None
-            logger.info(f"Config says to overwrite model (cfg.overwrite_dpo={cfg.overwrite_dpo}), Continuing to train...")
-    
+            logger.info(
+                f"Config says to overwrite model (cfg.overwrite_dpo={cfg.overwrite_dpo}), Continuing to train..."
+            )
+
     slurm_dump_dir = f"{cfg.local_output_dir}/slurm_logs"
 
     os.makedirs(slurm_dump_dir, exist_ok=True)
-    args = f"--config-name=pythia-2.8b-dpo "
+    args = "--config-name=pythia-2.8b-dpo "
     args += " ".join(get_all_strs_from_nested_dict(cfg["dpo"]["args"])) + " "
     args += f"data_fp={data_fp} "
     args += f"dpo_config.run_name={run_name} "
@@ -834,7 +862,7 @@ def train_dpo(
     py_cmd += f"-m cpc_llm.train.dpo {args} dpo_config.output_dir={output_dir}\n"
 
     # store return code for the training job so that we can return it later
-    py_cmd += f"RETURN_CODE=$?\n"
+    py_cmd += "RETURN_CODE=$?\n"
 
     # add extra commands for deleting local checkpoints after the job finishes
     # since they will have already been transferred to S3
@@ -880,11 +908,13 @@ def train_marge(
         return trained_model_dir
     else:
         if trained_model_dir is None:
-            logger.info(f"Did not find trained model, Continuing to train...")
+            logger.info("Did not find trained model, Continuing to train...")
         else:
             trained_model_dir = None
-            logger.info(f"Config says to overwrite model (cfg.overwrite_marge={cfg.overwrite_marge}), Continuing to train...")
-    args = f"--config-name=pythia-2.8b-marge "
+            logger.info(
+                f"Config says to overwrite model (cfg.overwrite_marge={cfg.overwrite_marge}), Continuing to train..."
+            )
+    args = "--config-name=pythia-2.8b-marge "
     args += " ".join(get_all_strs_from_nested_dict(cfg["marge"]["args"])) + " "
     args += f"data_fp={data_fp} "
     args += f"marge_config.run_name={run_name} "
@@ -907,7 +937,7 @@ def train_marge(
     py_cmd += f"-m cpc_llm.train.marge {args} marge_config.output_dir={output_dir}\n"
 
     # store return code for the training job so that we can return it later
-    py_cmd += f"RETURN_CODE=$?\n"
+    py_cmd += "RETURN_CODE=$?\n"
 
     # add extra commands for deleting local checkpoints after the job finishes
     # since they will have already been transferred to S3

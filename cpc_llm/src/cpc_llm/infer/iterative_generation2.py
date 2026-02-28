@@ -8,7 +8,6 @@ import random
 import time
 import torch
 
-from botorch.test_functions import SyntheticTestFunction
 from ..test_functions.finetune_utils import (
     formatting_texts_func_edit_pairs,
     parse_particle_and_score,
@@ -18,12 +17,7 @@ from ..test_functions.finetune_utils import (
 from holo.test_functions.closed_form import Ehrlich, RoughMtFuji
 from ..core.model_client import ModelClient
 from omegaconf import DictConfig, OmegaConf
-from scipy.spatial import distance
 from tqdm import tqdm
-from transformers import GenerationConfig
-
-
-
 
 
 def run_iterative_generation(cfg: DictConfig, logger: logging.Logger = None):
@@ -51,13 +45,13 @@ def run_iterative_generation(cfg: DictConfig, logger: logging.Logger = None):
             random_seed=test_fn_params["random_seed"],
         )
     gen_config = hydra.utils.instantiate(cfg.generation_config)
-    
+
     # Add a small random delay to stagger CUDA initialization across processes
     # This helps avoid race conditions when multiple processes try to set CUDA devices simultaneously
     if torch.cuda.is_available():
         delay = random.uniform(0.1, 0.5)  # Random delay between 0.1-0.5 seconds
         time.sleep(delay)
-    
+
     # Retry ModelClient initialization with exponential backoff to handle CUDA busy errors
     # This addresses race conditions when multiple processes initialize CUDA simultaneously
     # Always try CUDA first, only fall back to CPU after all retries are exhausted
@@ -78,14 +72,14 @@ def run_iterative_generation(cfg: DictConfig, logger: logging.Logger = None):
             # Check if it's a CUDA-related error (could be RuntimeError, AcceleratorError, etc.)
             error_str = str(e)
             is_cuda_error = (
-                "CUDA" in error_str 
-                or "busy" in error_str.lower() 
+                "CUDA" in error_str
+                or "busy" in error_str.lower()
                 or "unavailable" in error_str.lower()
                 or "AcceleratorError" in type(e).__name__
             )
-            
+
             if is_cuda_error and attempt < max_retries - 1:
-                wait_time = retry_delay * (2 ** attempt)  # Exponential backoff
+                wait_time = retry_delay * (2**attempt)  # Exponential backoff
                 logger.warning(
                     f"CUDA initialization failed (attempt {attempt + 1}/{max_retries}): {e}. "
                     f"Retrying in {wait_time:.1f} seconds..."
@@ -101,7 +95,7 @@ def run_iterative_generation(cfg: DictConfig, logger: logging.Logger = None):
             else:
                 # Re-raise if it's not a CUDA-related error
                 raise
-    
+
     # Only fall back to CPU if all CUDA attempts failed
     if model_client is None and fallback_to_cpu:
         logger.info("Attempting to initialize ModelClient on CPU as fallback...")
@@ -116,30 +110,31 @@ def run_iterative_generation(cfg: DictConfig, logger: logging.Logger = None):
     df = pd.read_json(cfg.data_path, orient="records", lines=True)
     if cfg.sanity_check:
         logger.info(
-            f"Running in sanity check mode... reducing data down to 10 examples."
+            "Running in sanity check mode... reducing data down to 10 examples."
         )
         df = df.sample(n=min(10, len(df)))
 
     if cfg.higher_score_field in df.columns and cfg.lower_score_field in df.columns:
-
         # Before sampling, save all the particles as tuples in a set so that we can check whether
         # generations are regurgitations from the training data
-        dataset_particles = set(
+        set(
             [tuple(ex[cfg.higher_score_particle_field]) for _, ex in df.iterrows()]
-        ).union(set([tuple(ex[cfg.lower_score_particle_field]) for _, ex in df.iterrows()]))
+        ).union(
+            set([tuple(ex[cfg.lower_score_particle_field]) for _, ex in df.iterrows()])
+        )
         # Now dedupe the lower_score_particles and sample the lowest scoring examples from the data
         # to use as seeds for generation
         # df = df.drop_duplicates(subset=[cfg.lower_score_particle_field])
         logger.info(f"sample_size : {cfg.sample_size}")
         if cfg.sampling_method == "best_scoring" and not cfg.first_iter:
             ## Only use best_scoring if is not first iteration
-            logger.info(f"sampling_method : best_scoring")
+            logger.info("sampling_method : best_scoring")
             df = df.sort_values(by=[cfg.lower_score_field], ascending=True)[
                 : cfg.sample_size
             ]
         elif cfg.sampling_method == "uniform" or cfg.first_iter:
             ## Always use "uniform" for first iteration, for a safe initial policy
-            logger.info(f"sampling_method : uniform")
+            logger.info("sampling_method : uniform")
             df = df.sample(n=min(len(df), cfg.sample_size), random_state=cfg.seed)
         elif cfg.sampling_method == "combination":
             half_sample_size = int(cfg.sample_size / 2)
@@ -172,27 +167,23 @@ def run_iterative_generation(cfg: DictConfig, logger: logging.Logger = None):
         ## If selected seeds here, then write them to disk (needed for computing seed-marginalized likelihoods used in policy control)
         input_df = input_ds.to_pandas()
         input_df.to_json(
-            os.path.join(cfg.output_dir, f'seeds_{cfg.output_filename}'), orient="records", lines=True
+            os.path.join(cfg.output_dir, f"seeds_{cfg.output_filename}"),
+            orient="records",
+            lines=True,
         )
 
     else:
         ## Else, assume that seeds are pre-selected, don't need to select
-        dataset_particles = set(
-            [tuple(ex[cfg.higher_score_particle_field]) for _, ex in df.iterrows()]
-        )
-    
+        set([tuple(ex[cfg.higher_score_particle_field]) for _, ex in df.iterrows()])
+
         # Start by using the lower score particle from each pair as the seed
         ## ds: Dataset of *pairs*, by the best (lowest) sample_size num scoring particles
         input_ds = datasets.Dataset.from_pandas(df)
-
-
-    
 
     num_particles_generated = 0
     all_outputs = []
     logger.info(f"cfg.max_iterations : {cfg.max_iterations}")
     for iter in tqdm(range(1, cfg.max_iterations + 1), desc="Generation iterations..."):
-
         ## Formatting text inputs
         input_texts = formatting_texts_func_edit_pairs(
             input_ds,
@@ -210,7 +201,7 @@ def run_iterative_generation(cfg: DictConfig, logger: logging.Logger = None):
             batch_size=cfg.batch_size,
             generation_config=gen_config,
             return_likelihoods=True,
-            subsample_seeds=cfg.subsample_seeds
+            subsample_seeds=cfg.subsample_seeds,
         )
 
         ## Truncated outputs
@@ -220,7 +211,10 @@ def run_iterative_generation(cfg: DictConfig, logger: logging.Logger = None):
             zip(output_token_ids, output_token_logps), desc="Truncating outputs.."
         ):
             trunc_output, logps = truncate_after_right_bracket_w_logps(
-                token_ids, token_logps, model_client.tokenizer, length_normalized=False #True
+                token_ids,
+                token_logps,
+                model_client.tokenizer,
+                length_normalized=False,  # True
             )
             trunc_outputs.append(trunc_output)
             trunc_output_logps.append(logps)
@@ -230,9 +224,7 @@ def run_iterative_generation(cfg: DictConfig, logger: logging.Logger = None):
         #     \nLen of all_trajectories before loop : {len(all_trajectories)}"
         # )
 
-
         # store outputs and create inputs for the next iteration
-        prev_input_ds = input_ds
         # input_ds = []
         # for trajectory_idx in range(len(all_trajectories)):
         for output_idx in range(gen_config.num_return_sequences):
@@ -243,12 +235,14 @@ def run_iterative_generation(cfg: DictConfig, logger: logging.Logger = None):
             # logger.info(f'cfg.permissive_parsing : {cfg.permissive_parsing}')
 
             if cfg.permissive_parsing:
-                output_particle_and_score = parse_particle_and_score_permissive(output, test_fn)
+                output_particle_and_score = parse_particle_and_score_permissive(
+                    output, test_fn
+                )
             else:
                 output_particle_and_score = parse_particle_and_score(output, test_fn)
 
             # logger.info(f'output_particle_and_score : {output_particle_and_score}')
-            
+
             num_particles_generated += 1
             if output_particle_and_score is None:
                 continue

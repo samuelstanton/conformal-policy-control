@@ -1,27 +1,25 @@
-"""Compute the likelihood scores that an LLM assigns to particular sequences, averaged over a set of input seeds, for all models in a list.
-"""
-import datasets
+"""Compute the likelihood scores that an LLM assigns to particular sequences, averaged over a set of input seeds, for all models in a list."""
+
 import hydra
-import json
 import logging
 import os
 import numpy as np
 import pandas as pd
 import pprint
 import random
-import s3fs
 import time
 import torch
 
-from ..test_functions.finetune_utils import formatting_texts_func_edit_pairs, formatting_texts_func_single_seq
+from ..test_functions.finetune_utils import formatting_texts_func_single_seq
+
 # from ..core.model_client import ModelClient
 from ..core.model_client import *
 from omegaconf import DictConfig, OmegaConf
-from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
 
 
-
-def compute_likelihoods_all_models_one_target(cfg: DictConfig, logger: logging.Logger = None):
+def compute_likelihoods_all_models_one_target(
+    cfg: DictConfig, logger: logging.Logger = None
+):
     """
     Loops through all models (and their corresponding input seed prompts) and computes the likelihoods
     output by those models for a single target calibration dataset (the most recently sampled cal dataset)
@@ -29,43 +27,46 @@ def compute_likelihoods_all_models_one_target(cfg: DictConfig, logger: logging.L
     logger.info("Here in compute_likelihoods_all_models_one_target")
 
     n_models = len(cfg.model_name_or_path_list)
-    if (n_models != len(cfg.input_data_path_list)):
-        ValueError(f"Num models ({n_models}) != Num input seed files ({cfg.input_data_path_list})")
-
+    if n_models != len(cfg.input_data_path_list):
+        ValueError(
+            f"Num models ({n_models}) != Num input seed files ({cfg.input_data_path_list})"
+        )
 
     ## Load target data
     target_df = pd.read_json(cfg.target_data_path, orient="records", lines=True)
 
     logger.info(f"target_df : {target_df}")
 
-    model_indices = cfg.model_indices if len(cfg.model_indices) > 0 else [i for i in range(n_models)]
+    model_indices = (
+        cfg.model_indices
+        if len(cfg.model_indices) > 0
+        else [i for i in range(n_models)]
+    )
     model_name_or_path_list = cfg.model_name_or_path_list
     input_data_path_list = cfg.input_data_path_list
 
     lik_col_names_old = []
     for col in target_df.columns:
-        if 'lik_r' in col:
+        if "lik_r" in col:
             lik_col_names_old.append(col)
 
     logger.info(f"pre selection lik_col_names_old : {lik_col_names_old}")
 
-
     ## Names of new likelihoods computing here
     # lik_col_names_new = [f'lik_r{model_indices[i]}' for i in range(n_models)]
-    lik_col_names_new = [f'lik_r{m}' for m in model_indices]
+    lik_col_names_new = [f"lik_r{m}" for m in model_indices]
 
     logger.info(f"pre selection lik_col_names_new : {lik_col_names_new}")
-
 
     if cfg.overwrite_cmp_lik_all:
         logger.info("Overwrite")
         ## If want to overwrite computation, then subset target_df to only keep columns not trying to compute now
         old_not_in_new = [c not in lik_col_names_new for c in lik_col_names_old]
         lik_col_names_old = list(np.array(lik_col_names_old)[old_not_in_new])
-        if 'score' in target_df.columns:
-            target_df = target_df[['particle', 'score'] + lik_col_names_old]
+        if "score" in target_df.columns:
+            target_df = target_df[["particle", "score"] + lik_col_names_old]
         else:
-           ## Handles case where want to compute likelihoods for contrastive-generation particle
+            ## Handles case where want to compute likelihoods for contrastive-generation particle
             target_df = target_df[target_df.columns[0:2] + lik_col_names_old]
 
     else:
@@ -74,9 +75,10 @@ def compute_likelihoods_all_models_one_target(cfg: DictConfig, logger: logging.L
         new_not_in_old = [c not in lik_col_names_old for c in lik_col_names_new]
         lik_col_names_new = list(np.array(lik_col_names_new)[new_not_in_old])
         model_indices = list(np.array(model_indices)[new_not_in_old])
-        model_name_or_path_list = list(np.array(model_name_or_path_list)[new_not_in_old])
+        model_name_or_path_list = list(
+            np.array(model_name_or_path_list)[new_not_in_old]
+        )
         input_data_path_list = list(np.array(input_data_path_list)[new_not_in_old])
-
 
     logger.info(f"post selection lik_col_names_old : {lik_col_names_old}")
     logger.info(f"post selection lik_col_names_new : {lik_col_names_new}")
@@ -84,22 +86,19 @@ def compute_likelihoods_all_models_one_target(cfg: DictConfig, logger: logging.L
     logger.info(f"post selection model_name_or_path_list : {model_name_or_path_list}")
     logger.info(f"post selection input_data_path_list : {input_data_path_list}")
 
-
     ## Format target
     target_data = target_df.to_dict("list")
-    
+
     formatted_targets = formatting_texts_func_single_seq(target_data)
 
-        # lik_col_names_old_in_new = []
-        # for c in lik_col_names_old:
-        #     if c in lik_col_names_new:
-        #         lik_col_names_old_in_new.append(c)
-
+    # lik_col_names_old_in_new = []
+    # for c in lik_col_names_old:
+    #     if c in lik_col_names_new:
+    #         lik_col_names_old_in_new.append(c)
 
     ## For each model, compute likelihoods of each target sequence, averaged over seeds
-    all_timestep_likelihoods = [] 
+    all_timestep_likelihoods = []
     for i, model_name_or_path in enumerate(model_name_or_path_list):
-        
         # GPU memory management
         torch.cuda.empty_cache()
         # if torch.cuda.is_available():
@@ -143,7 +142,7 @@ def compute_likelihoods_all_models_one_target(cfg: DictConfig, logger: logging.L
                     or "AcceleratorError" in type(e).__name__
                 )
                 if is_cuda_error and attempt < max_retries - 1:
-                    wait_time = retry_delay * (2 ** attempt)
+                    wait_time = retry_delay * (2**attempt)
                     logger.warning(
                         f"CUDA initialization failed (attempt {attempt + 1}/{max_retries}): {e}. "
                         f"Retrying in {wait_time:.1f} seconds..."
@@ -175,7 +174,6 @@ def compute_likelihoods_all_models_one_target(cfg: DictConfig, logger: logging.L
         #     self.device = "cpu"
         #     self.model = self.model.to(self.device)
 
-
         ## Load input_text
         input_fp = cfg.input_data_path_list[i]
         input_df = pd.read_json(input_fp, orient="records", lines=True)
@@ -198,40 +196,54 @@ def compute_likelihoods_all_models_one_target(cfg: DictConfig, logger: logging.L
 
     output_fp = os.path.join(cfg.output_dir, cfg.output_filename)
 
+    if "score" in target_df.columns:
+        logger.info(
+            f"target_df[['particle', 'score'] + lik_col_names_old] : {target_df[['particle', 'score'] + lik_col_names_old]}"
+        )
+        logger.info(
+            f"np.array(all_timestep_likelihoods).T : {np.array(all_timestep_likelihoods).T}"
+        )
 
-
-    if 'score' in target_df.columns:
-        logger.info(f"target_df[['particle', 'score'] + lik_col_names_old] : {target_df[['particle', 'score'] + lik_col_names_old]}")
-        logger.info(f"np.array(all_timestep_likelihoods).T : {np.array(all_timestep_likelihoods).T}")
-        
         # Check if there are new likelihoods to add
         if len(lik_col_names_new) > 0 and len(all_timestep_likelihoods) > 0:
             target_all_likelihoods_df = pd.DataFrame(
-                np.c_[target_df[['particle', 'score'] + lik_col_names_old], np.array(all_timestep_likelihoods).T], 
-                columns=['particle', 'score'] + lik_col_names_old + lik_col_names_new
+                np.c_[
+                    target_df[["particle", "score"] + lik_col_names_old],
+                    np.array(all_timestep_likelihoods).T,
+                ],
+                columns=["particle", "score"] + lik_col_names_old + lik_col_names_new,
             )
         else:
             # No new likelihoods to compute, just use existing data
             logger.info("No new likelihoods to compute, using existing data")
-            target_all_likelihoods_df = target_df[['particle', 'score'] + lik_col_names_old].copy()
+            target_all_likelihoods_df = target_df[
+                ["particle", "score"] + lik_col_names_old
+            ].copy()
     else:
         ## Handles case where want to compute likelihoods for contrastive-generation particle
         if len(lik_col_names_new) > 0 and len(all_timestep_likelihoods) > 0:
             target_all_likelihoods_df = pd.DataFrame(
-                np.c_[target_df[target_df.columns[0:2] + lik_col_names_old], np.array(all_timestep_likelihoods).T], 
-                columns=target_df.columns[0:2] + lik_col_names_old + lik_col_names_new
+                np.c_[
+                    target_df[target_df.columns[0:2] + lik_col_names_old],
+                    np.array(all_timestep_likelihoods).T,
+                ],
+                columns=target_df.columns[0:2] + lik_col_names_old + lik_col_names_new,
             )
         else:
             # No new likelihoods to compute, just use existing data
             logger.info("No new likelihoods to compute, using existing data")
-            target_all_likelihoods_df = target_df[target_df.columns[0:2] + lik_col_names_old].copy()
-    logger.info(f"target_all_likelihoods_df.columns : {target_all_likelihoods_df.columns}")
+            target_all_likelihoods_df = target_df[
+                target_df.columns[0:2] + lik_col_names_old
+            ].copy()
+    logger.info(
+        f"target_all_likelihoods_df.columns : {target_all_likelihoods_df.columns}"
+    )
     target_all_likelihoods_df.to_json(output_fp, orient="records", lines=True)
 
 
-
-
-@hydra.main(config_path="../../../config", config_name="compute_liks_all_models_and_cal_data")
+@hydra.main(
+    config_path="../../../config", config_name="compute_liks_all_models_and_cal_data"
+)
 def main(cfg: DictConfig):
     logging.basicConfig(level=cfg.log_level.upper(), force=True)
     logging.info(

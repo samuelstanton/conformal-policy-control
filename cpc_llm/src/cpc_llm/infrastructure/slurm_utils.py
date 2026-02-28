@@ -56,7 +56,7 @@ def submit_sbatch_job(
             executable="/bin/bash",
         )
         # now wait for the sbatch_output file to appear
-        logging.info(f"Waiting for job submission...")
+        logging.info("Waiting for job submission...")
         while not os.path.exists(sbatch_output) or os.path.getsize(sbatch_output) == 0:
             time.sleep(1)
         # get job ID
@@ -107,19 +107,17 @@ def submit_cmd_to_slurm(
     # setup_str: str = 'export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \n\n export WANDB_INSECURE_DISABLE_SSL=true \n\n export WANDB_API_KEY="23fa6435c59b0dcf64957cd8fe26e0aa64fc40c2" \n\n export WANDB_BASE_URL="https://genentech.wandb.io" \n\n wandb login --relogin --host https://genentech.wandb.io \n\n export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID \n\n export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY',
     setup_str: str = 'export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \n\n export WANDB_INSECURE_DISABLE_SSL=true \n\n export WANDB_API_KEY="local-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" \n\n export WANDB_BASE_URL="https://genentech.wandb.io" \n\n wandb login --relogin --host https://genentech.wandb.io \n\n export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID \n\n export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY',
     path_to_repo: Optional[str] = None,
-    nodes_to_exclude_str: str = None, ## Example: 'b200-st-b200-2-4,b200-st-b200-2-1'
+    nodes_to_exclude_str: str = None,  ## Example: 'b200-st-b200-2-4,b200-st-b200-2-1'
     **slurm_kwargs,
 ) -> Tuple[subprocess.Popen, str]:
     if path_to_repo is None:
         path_to_repo = "~/cdt-agents"
-    
+
     # Add GPU check if GPUs are requested
     num_gpus_required = slurm_kwargs.get("gpus_per_node", 0)
     gpu_check_script = _get_gpu_check_script(num_gpus_required)
-    
-    sbatch_str = (
-        f"source ~/.bashrc\ncd {path_to_repo}\nsource .venv/bin/activate\n{gpu_check_script}{py_cmd}"
-    )
+
+    sbatch_str = f"source ~/.bashrc\ncd {path_to_repo}\nsource .venv/bin/activate\n{gpu_check_script}{py_cmd}"
     # add #SBATCH commands on top
     if "output" not in slurm_kwargs:
         slurm_kwargs["output"] = f"{dump_dir}/%x_%j.logs"

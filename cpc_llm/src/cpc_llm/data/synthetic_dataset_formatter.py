@@ -13,8 +13,6 @@ import torch
 
 from omegaconf import DictConfig, OmegaConf
 from pynndescent import PyNNDescentTransformer
-from scipy.spatial import distance
-from .synthetic_dataset_lib import ranked_fft
 from tqdm import tqdm
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -58,7 +56,7 @@ def find_minimal_edit_pairs(cfg: DictConfig, df: pd.DataFrame) -> List[Dict[str,
         # now find the intersection
         eligible_elem_idxs = nearest_neighbor_idxs & diff_score_idxs
         if len(eligible_elem_idxs) == 0:
-            logging.warning(f"No eligible neighbors found.")
+            logging.warning("No eligible neighbors found.")
             continue
         eligible_elem_idxs = list(eligible_elem_idxs)
         closest_eligible_nbor_idx = eligible_elem_idxs[
@@ -107,7 +105,7 @@ def filter_by_likelihood_range(
     orig_size = len(df)
     if "likelihood" not in df.columns and "loglikelihood" not in df.columns:
         logging.error(
-            f"Neither 'likelihood' nor 'loglikelihood' are in DF columns. Not filtering by likelihood range."
+            "Neither 'likelihood' nor 'loglikelihood' are in DF columns. Not filtering by likelihood range."
         )
         return df
     elif "likelihood" not in df.columns:
@@ -127,7 +125,7 @@ def filter_by_likelihood_lower_threshold(
     orig_size = len(df)
     if "likelihood" not in df.columns and "loglikelihood" not in df.columns:
         logging.error(
-            f"Neither 'likelihood' nor 'loglikelihood' are in DF columns. Not filtering by likelihood range."
+            "Neither 'likelihood' nor 'loglikelihood' are in DF columns. Not filtering by likelihood range."
         )
         return df
     elif "likelihood" not in df.columns:

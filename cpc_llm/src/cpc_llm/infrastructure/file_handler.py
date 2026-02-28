@@ -1,4 +1,3 @@
-
 import shutil
 import s3fs
 import os
@@ -25,7 +24,7 @@ class LocalOrS3Client:
     def get(self, rpath, lpath, **kwargs):
         """Get file(s) from remote to local. Supports both S3 and local paths."""
         if rpath.startswith("s3://"):
-            assert lpath and not lpath.startswith("s3://"), f"lpath cannot be a S3 path."
+            assert lpath and not lpath.startswith("s3://"), "lpath cannot be a S3 path."
             return self.fs.get(rpath, lpath, **kwargs)
         else:
             # Local to local copy
@@ -45,11 +44,13 @@ class LocalOrS3Client:
     def put(self, lpath, rpath, **kwargs):
         """Put file(s) from local to remote. Supports both S3 and local paths."""
         if rpath.startswith("s3://"):
-            assert lpath and not lpath.startswith("s3://"), f"lpath cannot be a S3 path."
+            assert lpath and not lpath.startswith("s3://"), "lpath cannot be a S3 path."
             return self.fs.put(lpath, rpath, **kwargs)
         else:
             # Local to local copy
-            os.makedirs(os.path.dirname(rpath) if os.path.dirname(rpath) else ".", exist_ok=True)
+            os.makedirs(
+                os.path.dirname(rpath) if os.path.dirname(rpath) else ".", exist_ok=True
+            )
             if os.path.isdir(lpath):
                 os.makedirs(rpath, exist_ok=True)
                 for item in os.listdir(lpath):

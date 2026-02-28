@@ -1,4 +1,3 @@
-import pprint
 import torch
 import unittest
 
@@ -30,7 +29,10 @@ class TestFarthestFirstTraversal(unittest.TestCase):
         )
         scores = torch.Tensor([-0.5, -1.0, 0.01])
         n = 2
-        distance_fn = lambda x, y: torch.norm(x - y, p=1).item()
+
+        def distance_fn(x, y):
+            return torch.norm(x - y, p=1).item()
+
         selected_idx = ranked_fft(library, scores, n=n, distance_fn=distance_fn)
         selected_idx = selected_idx.tolist()
         self.assertEqual(selected_idx, [1, 0])
@@ -49,13 +51,16 @@ class TestFarthestFirstTraversal(unittest.TestCase):
         selected_idx = selected_idx.tolist()
         self.assertEqual(selected_idx, [1, 2])
 
+
 class TestFormatting(unittest.TestCase):
     def test_format_fewshot_disallow_same_score(self):
-        X = torch.FloatTensor([
-            [1.0, 4.0, 2.0, 3.0],
-            [2.0, 1.0, 3.0, 5.0],
-            [3.0, 3.0, 2.0, 4.0],
-        ])
+        X = torch.FloatTensor(
+            [
+                [1.0, 4.0, 2.0, 3.0],
+                [2.0, 1.0, 3.0, 5.0],
+                [3.0, 3.0, 2.0, 4.0],
+            ]
+        )
         scores = torch.FloatTensor([-0.5, 0.25, -0.5])
         ks = [1]  # only do one-shot
         outputs = format_fewshot(X, scores, ks, allow_same_score=False, seed=0)
@@ -63,10 +68,16 @@ class TestFormatting(unittest.TestCase):
         for o in outputs:
             self.assertEqual(o["input"].count("Score: "), ks[0] + 1)
             self.assertEqual(o["input"].count("Particle: "), ks[0] + 1)
-        self.assertEqual(outputs[0]["input"], "Score: 0.250\nParticle: [2, 1, 3, 5]\n\nScore: -0.500\nParticle: ")
+        self.assertEqual(
+            outputs[0]["input"],
+            "Score: 0.250\nParticle: [2, 1, 3, 5]\n\nScore: -0.500\nParticle: ",
+        )
         self.assertEqual(outputs[0]["target"], "[1, 4, 2, 3]")
         self.assertEqual(outputs[1]["target"], "[2, 1, 3, 5]")
-        self.assertEqual(outputs[2]["input"], "Score: 0.250\nParticle: [2, 1, 3, 5]\n\nScore: -0.500\nParticle: ")
+        self.assertEqual(
+            outputs[2]["input"],
+            "Score: 0.250\nParticle: [2, 1, 3, 5]\n\nScore: -0.500\nParticle: ",
+        )
         self.assertEqual(outputs[2]["target"], "[3, 3, 2, 4]")
 
 

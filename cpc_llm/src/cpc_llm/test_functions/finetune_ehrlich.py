@@ -1,11 +1,10 @@
-import gc
 import hydra
-import json
 import logging
 import os
 import numpy as np
 import pandas as pd
 import pprint
+
 # import s3fs
 import sys
 import torch
@@ -32,7 +31,6 @@ from transformers import (
     GenerationConfig,
     set_seed,
 )
-from transformers.trainer_utils import PREFIX_CHECKPOINT_DIR
 from transformers.utils import logging as transformers_logging
 
 from trl import (
@@ -83,9 +81,7 @@ def main(cfg: DictConfig):
         **cfg_dict["training_args"],
         generation_config=generation_config,
     )
-    assert (
-        training_args.include_inputs_for_metrics == True
-    )  # required for compute_metrics
+    assert training_args.include_inputs_for_metrics  # required for compute_metrics
     model_config = ModelConfig(**cfg_dict["model_config"])
     logger.info(f"training_args: {training_args}")
     logger.info(f"model_config: {model_config}")
@@ -152,12 +148,12 @@ def main(cfg: DictConfig):
     )
     train_dataset = raw_datasets["train"]
     eval_dataset = raw_datasets["test"]
-    print(f'cfg.data_fp : {cfg.data_fp}')
-    print(f'train_dataset len : {len(train_dataset)}')
-    print(f'eval_dataset len : {len(eval_dataset)}')
+    print(f"cfg.data_fp : {cfg.data_fp}")
+    print(f"train_dataset len : {len(train_dataset)}")
+    print(f"eval_dataset len : {len(eval_dataset)}")
 
     if cfg.sanity_check:
-        logger.info(f"In sanity check mode, will reduce the number of training steps.")
+        logger.info("In sanity check mode, will reduce the number of training steps.")
         train_dataset = train_dataset.select(range(min(len(train_dataset), 1000)))
         eval_dataset = eval_dataset.select(range(min(len(eval_dataset), 50)))
         training_args.num_train_epochs = 1
@@ -346,17 +342,18 @@ def main(cfg: DictConfig):
         #         s3.put(fp, cfg.s3_output_dir, recursive=recursive)
         if cfg.s3_output_dir is not None:
             transformers_logger.info("Copy output files to s3_output_dir")
-            
+
             # Determine if we're using S3 or local storage
             is_s3 = cfg.s3_output_dir.startswith("s3://")
             fs = LocalOrS3Client(init_s3=is_s3)
-            
+
             for fn in os.listdir(training_args.output_dir):
                 if fn not in ["runs"]:  # skip the runs dir
                     fp = os.path.join(training_args.output_dir, fn)
                     recursive = os.path.isdir(fp)
                     transformers_logger.info(f"Copying {fp} to {cfg.s3_output_dir}...")
                     fs.put(fp, cfg.s3_output_dir, recursive=recursive)
+
 
 if __name__ == "__main__":
     main()

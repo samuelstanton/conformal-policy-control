@@ -10,49 +10,47 @@ import torch
 import torch.distributed.checkpoint as dist_cp
 
 from ..test_functions.finetune_utils import maybe_log
-from string import Template
 from tqdm import tqdm
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 from typing import Dict, List, Any, Optional, Tuple, Union
 
-import sys
-
 
 CUDA_ERROR = getattr(torch.cuda, "CudaError", RuntimeError)
 
+
 def wait_for_gpu_availability(
     device: Optional[str] = None,
-    max_wait_time: int = 172800, # 3600, # Maximum wait time in seconds (48 hour default)
+    max_wait_time: int = 172800,  # 3600, # Maximum wait time in seconds (48 hour default)
     check_interval: int = 30,  # Check every 30 seconds
     logger: Optional[logging.Logger] = None,
 ) -> bool:
     """
     Wait for GPU to become available before proceeding.
-    
+
     Args:
         device: Device string ('cuda', 'cpu', etc.). If None or 'cpu', returns immediately.
         max_wait_time: Maximum time to wait in seconds (default: 3600 = 1 hour)
         check_interval: Time between checks in seconds (default: 5)
         logger: Optional logger for status messages
-        
+
     Returns:
         True if GPU is available, False if max_wait_time exceeded
     """
     # If device is None or 'cpu', no need to wait
     if device is None or device == "cpu":
         return True
-    
+
     # If device is 'gpu', convert to 'cuda'
     if device == "gpu":
         device = "cuda"
-    
+
     # Only wait if device is 'cuda'
     if device != "cuda":
         return True
-    
+
     start_time = time.time()
     attempts = 0
-    
+
     while time.time() - start_time < max_wait_time:
         try:
             # Try to initialize CUDA and check if it's available
@@ -63,7 +61,9 @@ def wait_for_gpu_availability(
                     del test_tensor
                     torch.cuda.empty_cache()
                     if logger:
-                        logger.info(f"GPU is now available after {attempts * check_interval} seconds")
+                        logger.info(
+                            f"GPU is now available after {attempts * check_interval} seconds"
+                        )
                     return True
                 except (CUDA_ERROR, RuntimeError) as e:
                     # GPU exists but is busy/unavailable
@@ -84,10 +84,10 @@ def wait_for_gpu_availability(
                     f"Error checking GPU availability (attempt {attempts + 1}): {e}. "
                     f"Waiting {check_interval} seconds before retry..."
                 )
-        
+
         attempts += 1
         time.sleep(check_interval)
-    
+
     # Max wait time exceeded
     if logger:
         logger.error(
@@ -95,6 +95,7 @@ def wait_for_gpu_availability(
             f"Total attempts: {attempts}"
         )
     return False
+
 
 class ModelClient:
     def __init__(
@@ -133,7 +134,7 @@ class ModelClient:
             # This helps avoid race conditions when multiple processes try to set CUDA devices simultaneously
             delay = random.uniform(0.1, 0.5)  # Random delay between 0.1-0.5 seconds
             time.sleep(delay)
-            
+
             maybe_log(
                 self.logger,
                 "Waiting for GPU to become available...",
@@ -142,7 +143,7 @@ class ModelClient:
             gpu_available = wait_for_gpu_availability(
                 device=actual_device,
                 max_wait_time=172800,  # Wait up to 48 hours
-                check_interval=30, # Check every 30 seconds
+                check_interval=30,  # Check every 30 seconds
                 logger=self.logger,
             )
             if not gpu_available:
@@ -181,7 +182,7 @@ class ModelClient:
                 # Only use device_map="cuda" if we're actually using CUDA
                 if actual_device == "cuda":
                     extra_model_kwargs["device_map"] = "cuda"
-            
+
             # Wrap model loading in retry logic for CUDA errors with exponential backoff
             # This addresses race conditions when multiple processes initialize CUDA simultaneously
             max_retries = 5
@@ -190,21 +191,25 @@ class ModelClient:
             while retry_count < max_retries:
                 try:
                     self.model = AutoModelForCausalLM.from_pretrained(
-                        self.model_name_or_path, trust_remote_code=True, **extra_model_kwargs
+                        self.model_name_or_path,
+                        trust_remote_code=True,
+                        **extra_model_kwargs,
                     )
                     break  # Success, exit retry loop
                 except Exception as e:
                     # Check if it's a CUDA-related error (could be RuntimeError, AcceleratorError, etc.)
                     error_str = str(e)
                     is_cuda_error = (
-                        "CUDA error" in error_str 
-                        or "AcceleratorError" in error_str 
+                        "CUDA error" in error_str
+                        or "AcceleratorError" in error_str
                         or "busy or unavailable" in error_str.lower()
                         or "CUDA" in error_str
                     )
-                    
+
                     if is_cuda_error and retry_count < max_retries - 1:
-                        wait_time = retry_delay * (2 ** retry_count)  # Exponential backoff: 1s, 2s, 4s, 8s, 16s
+                        wait_time = retry_delay * (
+                            2**retry_count
+                        )  # Exponential backoff: 1s, 2s, 4s, 8s, 16s
                         retry_count += 1
                         maybe_log(
                             self.logger,
@@ -218,7 +223,7 @@ class ModelClient:
                             wait_for_gpu_availability(
                                 device=actual_device,
                                 max_wait_time=172800,  # Wait up to 48 hours for GPU
-                                check_interval=30, # Check every 30 seconds
+                                check_interval=30,  # Check every 30 seconds
                                 logger=self.logger,
                             )
                     elif is_cuda_error:
@@ -231,7 +236,7 @@ class ModelClient:
                     else:
                         # Not a CUDA availability error, re-raise immediately
                         raise
-            
+
             if self.device is not None:
                 self.model = self.model.to(self.device)
             elif actual_device is not None and actual_device != "cpu":
@@ -274,11 +279,11 @@ class ModelClient:
             # Add a small random delay to stagger CUDA initialization across processes
             delay = random.uniform(0.1, 0.5)  # Random delay between 0.1-0.5 seconds
             time.sleep(delay)
-            
+
             gpu_available = wait_for_gpu_availability(
                 device=actual_device,
                 max_wait_time=172800,  # Wait up to 48 hours
-                check_interval=30, # Check every 30 seconds
+                check_interval=30,  # Check every 30 seconds
                 logger=self.logger,
             )
             if not gpu_available:
@@ -303,7 +308,7 @@ class ModelClient:
             self.s3.get(s3_uri, td)
             self.config = AutoConfig.from_pretrained(td)
             self.model_init_args["trust_remote_code"] = True
-            
+
             # Wrap model loading in retry logic for CUDA errors with exponential backoff
             # This addresses race conditions when multiple processes initialize CUDA simultaneously
             max_retries = 5
@@ -319,14 +324,16 @@ class ModelClient:
                     # Check if it's a CUDA-related error (could be RuntimeError, AcceleratorError, etc.)
                     error_str = str(e)
                     is_cuda_error = (
-                        "CUDA error" in error_str 
-                        or "AcceleratorError" in error_str 
+                        "CUDA error" in error_str
+                        or "AcceleratorError" in error_str
                         or "busy or unavailable" in error_str.lower()
                         or "CUDA" in error_str
                     )
-                    
+
                     if is_cuda_error and retry_count < max_retries - 1:
-                        wait_time = retry_delay * (2 ** retry_count)  # Exponential backoff: 1s, 2s, 4s, 8s, 16s
+                        wait_time = retry_delay * (
+                            2**retry_count
+                        )  # Exponential backoff: 1s, 2s, 4s, 8s, 16s
                         retry_count += 1
                         maybe_log(
                             self.logger,
@@ -340,7 +347,7 @@ class ModelClient:
                             wait_for_gpu_availability(
                                 device=actual_device,
                                 max_wait_time=172800,
-                                check_interval=30, # Check every 30 seconds
+                                check_interval=30,  # Check every 30 seconds
                                 logger=self.logger,
                             )
                     elif is_cuda_error:
@@ -353,7 +360,7 @@ class ModelClient:
                     else:
                         # Not a CUDA availability error, re-raise immediately
                         raise
-            
+
             if self.device is not None:
                 self.model = self.model.to(self.device)
             elif actual_device is not None and actual_device != "cpu":
@@ -386,10 +393,10 @@ class ModelClient:
             # Add a small random delay to stagger CUDA initialization across processes
             delay = random.uniform(0.1, 0.5)  # Random delay between 0.1-0.5 seconds
             time.sleep(delay)
-            
+
             gpu_available = wait_for_gpu_availability(
                 device=actual_device,
-                max_wait_time=172800, #3600,  # Wait up to 48 hours
+                max_wait_time=172800,  # 3600,  # Wait up to 48 hours
                 check_interval=30,
                 logger=self.logger,
             )
@@ -399,11 +406,13 @@ class ModelClient:
                     "GPU did not become available within timeout. Checkpoint conversion requires GPU.",
                     level="error",
                 )
-                raise RuntimeError("GPU required for checkpoint conversion but not available")
+                raise RuntimeError(
+                    "GPU required for checkpoint conversion but not available"
+                )
 
         config = AutoConfig.from_pretrained(hf_model_name, trust_remote_code=True)
         tokenizer = AutoTokenizer.from_pretrained(hf_model_name, trust_remote_code=True)
-        
+
         # Wrap model creation in retry logic for CUDA errors with exponential backoff
         # This addresses race conditions when multiple processes initialize CUDA simultaneously
         max_retries = 5
@@ -419,14 +428,16 @@ class ModelClient:
                 # Check if it's a CUDA-related error (could be RuntimeError, AcceleratorError, etc.)
                 error_str = str(e)
                 is_cuda_error = (
-                    "CUDA error" in error_str 
-                    or "AcceleratorError" in error_str 
+                    "CUDA error" in error_str
+                    or "AcceleratorError" in error_str
                     or "busy or unavailable" in error_str.lower()
                     or "CUDA" in error_str
                 )
-                
+
                 if is_cuda_error and retry_count < max_retries - 1:
-                    wait_time = retry_delay * (2 ** retry_count)  # Exponential backoff: 1s, 2s, 4s, 8s, 16s
+                    wait_time = retry_delay * (
+                        2**retry_count
+                    )  # Exponential backoff: 1s, 2s, 4s, 8s, 16s
                     retry_count += 1
                     maybe_log(
                         self.logger,
@@ -438,7 +449,7 @@ class ModelClient:
                     # Wait for GPU availability again
                     wait_for_gpu_availability(
                         device="cuda",
-                        max_wait_time=172800,  
+                        max_wait_time=172800,
                         check_interval=30,
                         logger=self.logger,
                     )
@@ -452,7 +463,7 @@ class ModelClient:
                 else:
                     # Not a CUDA availability error, re-raise immediately
                     raise
-        
+
         model = self._load_sharded_model_single_gpu(model, fsdp_model_path)
         model.save_pretrained(output_path, max_shard_size="10GB")
         tokenizer.save_pretrained(output_path)
@@ -538,9 +549,7 @@ class ModelClient:
         msgs = [{"role": "user", "content": text}]
         return self._chat_hf_model(msgs, **kwargs)
 
-
-
-    ### NOTE: Had attempted modifying this function for unconditional generation, wasn't working so reverted to 
+    ### NOTE: Had attempted modifying this function for unconditional generation, wasn't working so reverted to
     ### original version below this commented-out block
     # @torch.no_grad()
     # def generate_texts_batched(
@@ -594,15 +603,15 @@ class ModelClient:
     #         is_unconditional = True
     #     else:
     #         is_unconditional = False
-        
+
     #     output_strs = []
     #     all_output_token_ids = []
     #     all_token_logps = []
     #     for batch_start_idx in tqdm(
     #         range(0, len(input_texts), batch_size), desc="Batched generation..."
-    #     ):  
+    #     ):
     #         if subsample_seeds:
-    #             ## In this condition: Subsample input seed seqs uniformly with replacement 
+    #             ## In this condition: Subsample input seed seqs uniformly with replacement
     #             ## (ensures that each output is sampled from the mixture of the prompt-conditional distributions)
     #             idx_input_texts = np.random.choice(range(len(input_texts)), size=batch_size, replace=True)
     #             batch_texts = [input_texts[idx] for idx in idx_input_texts]
@@ -623,7 +632,7 @@ class ModelClient:
     #         )
     #         output_token_ids = outputs.sequences if return_likelihoods else outputs
     #         self.logger.info(f"len(output_token_ids) '{len(output_token_ids)}', output_token_ids[0] : {output_token_ids[0]}")
-            
+
     #         # Handle output decoding based on generation type
     #         if is_unconditional:
     #             # For unconditional generation, remove the BOS/start token to get clean sequences
@@ -671,8 +680,6 @@ class ModelClient:
     #     if return_likelihoods:
     #         return (output_strs, all_output_token_ids, all_token_logps)
     #     return output_strs
-    
-
 
     @torch.no_grad()
     def generate_texts_batched(
@@ -693,11 +700,13 @@ class ModelClient:
         all_token_logps = []
         for batch_start_idx in tqdm(
             range(0, len(input_texts), batch_size), desc="Batched generation..."
-        ):  
+        ):
             if subsample_seeds:
-                ## In this condition: Subsample input seed seqs uniformly with replacement 
+                ## In this condition: Subsample input seed seqs uniformly with replacement
                 ## (ensures that each output is sampled from the mixture of the prompt-conditional distributions)
-                idx_input_texts = np.random.choice(range(len(input_texts)), size=batch_size, replace=True)
+                idx_input_texts = np.random.choice(
+                    range(len(input_texts)), size=batch_size, replace=True
+                )
                 batch_texts = [input_texts[idx] for idx in idx_input_texts]
             else:
                 ## In this condition: Move through all the input seeds in minibatches
@@ -734,9 +743,6 @@ class ModelClient:
         if return_likelihoods:
             return (output_strs, all_output_token_ids, all_token_logps)
         return output_strs
-
-
-
 
     @torch.no_grad()
     def compute_likelihoods(
@@ -780,7 +786,7 @@ class ModelClient:
             # probs = torch.exp(torch.nn.functional.log_softmax(scores, dim=-1))
 
             ### NOTE: Think this should be log_softmax (without exp as above)
-            probs = torch.nn.functional.log_softmax(scores, dim=-1) ###
+            probs = torch.nn.functional.log_softmax(scores, dim=-1)  ###
             # logger.info(f"probs shape : {probs.shape}")
             # get probs and mask out both padding and input tokens
             inputs_tokenized = self._tokenize_batch(inputs[start_index:end_index])
@@ -811,15 +817,11 @@ class ModelClient:
             avg_likelihoods = list(next_token_probs.sum(-1) / targets_seq_lens)
             # logger.info(f"avg_likelihoods shape : {np.shape(avg_likelihoods)}")
             # logger.info(f"seq likelihood : {list(next_token_probs.prod(-1) / targets_seq_lens)}")
-            
+
             all_likelihoods.extend(avg_likelihoods)
             # logger.info(f"all_likelihoods : {all_likelihoods}")
 
         return all_likelihoods
-
-
-
-
 
     @torch.no_grad()
     def compute_likelihoods_avg(
@@ -828,7 +830,8 @@ class ModelClient:
         targets: List[str],
         batch_size: int = 10,
         device: str = "cuda",
-        float_constant: int = 10**10, ## constant to scale probabilities by to reduce float point issues
+        float_constant: int = 10
+        ** 10,  ## constant to scale probabilities by to reduce float point issues
         # add_start_token: bool = True,
         logger: logging.Logger = None,
     ) -> List[float]:
@@ -855,12 +858,13 @@ class ModelClient:
         all_likelihoods_torch = torch.zeros(len(targets), dtype=torch.float64)
 
         ## Looping over target sequences
-        for t, target in enumerate(tqdm(targets, desc="Computing log likelihoods averaged over inputs...")):
-            
+        for t, target in enumerate(
+            tqdm(targets, desc="Computing log likelihoods averaged over inputs...")
+        ):
             log_likelihoods_target = []
-            
+
             ## Looping over batches of input sequences
-            for start_index in range(0, len(inputs), batch_size):  
+            for start_index in range(0, len(inputs), batch_size):
                 end_index = min(start_index + batch_size, len(inputs))
 
                 ## For a given target, minibatch of concatenations with subset of input prompt sequences
@@ -871,14 +875,11 @@ class ModelClient:
                 )
                 outputs = self.model(**tokenized)
                 scores = outputs.logits / self.temperature
-                
 
                 # probs = torch.exp(torch.nn.functional.log_softmax(scores, dim=-1)) ## Seems unnecessary to do exp(log(softmax)) ??
                 probs = torch.nn.functional.log_softmax(scores, dim=-1)
 
                 # probs = torch.clip(torch.nn.functional.softmax(scores, dim=-1), min=sys.float_info.min) ## Clip probabilities at minimum float value
-
-
 
                 # logger.info(f"torch.nn.functional.softmax(scores, dim=-1) : {torch.nn.functional.softmax(scores, dim=-1).shape}")
                 # logger.info(f"clipped probs : {probs.shape}")
@@ -887,12 +888,11 @@ class ModelClient:
 
                 # logger.info(f"log clipped probs : {probs.shape}")
 
-
                 ## TO DO: Compute probabilities averaged over input sequences
 
                 # get probs and mask out both padding and input tokens
                 inputs_tokenized = self._tokenize_batch(inputs[start_index:end_index])
-                input_seq_lens = inputs_tokenized.attention_mask.sum(-1) ## length = 75 
+                input_seq_lens = inputs_tokenized.attention_mask.sum(-1)  ## length = 75
                 # logger.info(f"input_seq_lens : {input_seq_lens}")
                 input_tokens_mask = torch.LongTensor(
                     [
@@ -914,7 +914,6 @@ class ModelClient:
                 # logger.info(f"probs[:,:,:100] : {probs[:,:,:100]}")
                 # logger.info(f"torch.sum(exp(probs), dim=2) : {torch.sum(np.exp(probs), dim=2)}")
 
-
                 # logger.info(f"torch.gather(probs, -1, indexes.unsqueeze(-1)).shape : {torch.gather(probs, -1, indexes.unsqueeze(-1))[:, 74:84]}")
                 # logger.info(f"tokenized.attention_mask[:, 1:] : {tokenized.attention_mask[:, 74:84]}")
                 # logger.info(f"input_tokens_mask[:, 1:] : {input_tokens_mask[:, 74:84]}")
@@ -925,14 +924,16 @@ class ModelClient:
                     * tokenized.attention_mask[:, 1:]
                     * input_tokens_mask[:, 1:]
                 )
-                
+
                 next_token_probs = next_token_probs.cpu().numpy()
                 # targets_tokenized = self._tokenize_batch(targets[start_index:end_index])
                 targets_tokenized = self._tokenize_batch(target)
 
-                targets_seq_lens = targets_tokenized.attention_mask.sum(-1).cpu().numpy()  ## length = 75 
+                (targets_tokenized.attention_mask.sum(-1).cpu().numpy())  ## length = 75
                 # logger.info(f"targets_seq_lens : {targets_seq_lens}")
-                log_likelihoods_batch = list(next_token_probs.sum(-1)) # / targets_seq_lens)
+                log_likelihoods_batch = list(
+                    next_token_probs.sum(-1)
+                )  # / targets_seq_lens)
 
                 # logger.info(f"start_index : {start_index}, end_index : {end_index}")
                 # logger.info(f"next_token_probs : {next_token_probs}")
@@ -942,7 +943,6 @@ class ModelClient:
                 # logger.info(f"sum log_likelihoods_batch      : {log_likelihoods_batch}")
                 # logger.info(f"likelihoods_batch      : {np.exp(log_likelihoods_batch)}")
 
-
                 # logger.info("\n\n\n")
                 # logger.info(f"next_token_probs.shape : {next_token_probs.shape}")
                 # # logger.info(f"next_token_probs       : {next_token_probs}")
@@ -950,9 +950,6 @@ class ModelClient:
                 # logger.info(f"exp sum log_liks next token   : {np.exp(np.sum(next_token_probs[:, 74:]))}")
                 # logger.info(f"input_seq_lens : {input_seq_lens}")
                 # logger.info(f"prod next_token_probs       : {np.prod(next_token_probs[input_seq_lens:end_index])}")
-
-
-
 
                 log_likelihoods_target.extend(log_likelihoods_batch)
 
@@ -970,13 +967,14 @@ class ModelClient:
             # all_likelihoods.append(max(np.exp(log_likelihoods_target_scaled).mean(), sys.float_info.min)) ## Clip likelihoods at minimum float value for now (if was generated, then actual likelihood is positive)
             # logger.info(f"log_likelihoods_target : {log_likelihoods_target}")
             # logger.info(f"exp(log_likelihoods_target)   : {torch.exp(torch.tensor(log_likelihoods_target, dtype=torch.float64))}")
-            
+
             # all_likelihoods.append(torch.exp(torch.tensor(log_likelihoods_target, dtype=torch.float64)).mean()) ## Clip likelihoods at minimum float value for now (if was generated, then actual likelihood is positive)
-            all_likelihoods_torch[t] = torch.exp(torch.tensor(log_likelihoods_target, dtype=torch.float64)).mean()
+            all_likelihoods_torch[t] = torch.exp(
+                torch.tensor(log_likelihoods_target, dtype=torch.float64)
+            ).mean()
 
             # all_likelihoods.append(torch.mean(log_likelihoods_target))
             # all_likelihoods.append(likelihoods_target.prod())
-
 
             # logger.info(f"np.exp(log_likelihoods_target) : {np.exp(log_likelihoods_target)}")
             # logger.info(f"liks prior to avg : {np.exp(log_likelihoods_target_scaled)}")
@@ -987,16 +985,9 @@ class ModelClient:
             # if t == 2:
             #     raise ValueError("Stopping for debugging")
 
-                
         return all_likelihoods_torch.tolist()
 
-
-
-
-
-
-
-    ### NOTE: Had attempted modifying this function for unconditional generation, wasn't working so reverted to 
+    ### NOTE: Had attempted modifying this function for unconditional generation, wasn't working so reverted to
     ### original version below this commented-out block
     # @torch.no_grad()
     # def generate_texts_batched(
@@ -1050,15 +1041,15 @@ class ModelClient:
     #         is_unconditional = True
     #     else:
     #         is_unconditional = False
-        
+
     #     output_strs = []
     #     all_output_token_ids = []
     #     all_token_logps = []
     #     for batch_start_idx in tqdm(
     #         range(0, len(input_texts), batch_size), desc="Batched generation..."
-    #     ):  
+    #     ):
     #         if subsample_seeds:
-    #             ## In this condition: Subsample input seed seqs uniformly with replacement 
+    #             ## In this condition: Subsample input seed seqs uniformly with replacement
     #             ## (ensures that each output is sampled from the mixture of the prompt-conditional distributions)
     #             idx_input_texts = np.random.choice(range(len(input_texts)), size=batch_size, replace=True)
     #             batch_texts = [input_texts[idx] for idx in idx_input_texts]
@@ -1079,7 +1070,7 @@ class ModelClient:
     #         )
     #         output_token_ids = outputs.sequences if return_likelihoods else outputs
     #         self.logger.info(f"len(output_token_ids) '{len(output_token_ids)}', output_token_ids[0] : {output_token_ids[0]}")
-            
+
     #         # Handle output decoding based on generation type
     #         if is_unconditional:
     #             # For unconditional generation, remove the BOS/start token to get clean sequences
@@ -1127,9 +1118,6 @@ class ModelClient:
     #     if return_likelihoods:
     #         return (output_strs, all_output_token_ids, all_token_logps)
     #     return output_strs
-    
-
-
 
     # @torch.no_grad()
     # def generate_texts_batched_contrastive_mixture(
@@ -1249,4 +1237,3 @@ class ModelClient:
     #     if return_likelihood_ratios:
     #         return decoded_outputs, [float(sum(per_step_log_ratios))]
     #     return decoded_outputs
-

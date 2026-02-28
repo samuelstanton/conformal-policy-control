@@ -1,6 +1,5 @@
 import logging
 import os
-import s3fs
 import torch
 import warnings
 
@@ -34,6 +33,7 @@ if TYPE_CHECKING:
     from peft import PeftConfig
 
 from ..infrastructure.file_handler import LocalOrS3Client
+
 
 @dataclass
 class Seq2SeqSFTConfig(SFTConfig):
@@ -110,13 +110,12 @@ class Seq2SeqSFTConfig(SFTConfig):
 #             )
 
 
-
 class S3Callback(TrainerCallback):
     def __init__(self, s3_output_dir: str, logger: logging.Logger = None):
         self.s3_output_dir = s3_output_dir
         if not self.s3_output_dir.endswith("/"):
             self.s3_output_dir += "/"
-        
+
         # Use LocalOrS3Client instead of direct s3fs
         # Detect if it's an S3 path
         self.is_s3 = self.s3_output_dir.startswith("s3://")
@@ -134,7 +133,7 @@ class S3Callback(TrainerCallback):
             args.output_dir,
             f"{PREFIX_CHECKPOINT_DIR}-{state.global_step}",
         )
-        
+
         # Check if checkpoint still exists before trying to copy
         # It may have been deleted due to save_total_limit or failing validity checks
         if not os.path.exists(checkpoint_dir):
@@ -145,7 +144,7 @@ class S3Callback(TrainerCallback):
                     "Skipping S3 upload."
                 )
             return
-        
+
         self.fs.put(checkpoint_dir, self.s3_output_dir, recursive=True)
         if self.logger is not None:
             self.logger.info(
@@ -228,7 +227,7 @@ class Seq2SeqSFTTrainer(SFTTrainer):
 
     @staticmethod
     def load_generation_config(
-        gen_config_arg: Union[str, GenerationConfig]
+        gen_config_arg: Union[str, GenerationConfig],
     ) -> GenerationConfig:
         """
         Loads a `~generation.GenerationConfig` from the `Seq2SeqTrainingArguments.generation_config` arguments.
@@ -456,7 +455,7 @@ class Seq2SeqSFTTrainer(SFTTrainer):
                 ignore_keys=ignore_keys,
             )
         # breakpoint()
-        print(f'inputs : {inputs}')
+        print(f"inputs : {inputs}")
         has_labels = "labels" in inputs
         inputs = self._prepare_inputs(inputs)
 
