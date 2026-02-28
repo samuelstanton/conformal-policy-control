@@ -238,10 +238,10 @@ def run_smoke_test(cache: bool = False):
     """Quick smoke test: tiny model, 1 MARGE round, minimal data.
 
     Args:
-        cache: If True, persist pipeline outputs (checkpoints, generated data)
-            to a Modal volume for reuse across runs. Speeds up repeated smoke
-            tests by skipping completed stages. Use --no-cache to clear the
-            outputs volume and run fresh.
+        cache: If True, reuse pipeline outputs (checkpoints, generated data)
+            from previous runs, skipping completed stages. If False (default),
+            clear the outputs volume first and run fresh. Either way, outputs
+            are persisted to the volume for future --cache runs.
     """
     import logging
     import shutil
@@ -259,12 +259,9 @@ def run_smoke_test(cache: bool = False):
 
     logger.info(f"CUDA: {torch.cuda.is_available()}")
 
-    if cache:
-        output_dir = OUTPUTS_PATH
-        logger.info(f"Using cached outputs volume at {output_dir}")
-    else:
-        output_dir = f"{app_path}/outputs"
-        # Clear any stale cached outputs so --no-cache is a clean run
+    # Always write to the persistent volume. --no-cache clears it first.
+    output_dir = OUTPUTS_PATH
+    if not cache:
         outputs_dir = Path(OUTPUTS_PATH)
         if outputs_dir.exists():
             for child in outputs_dir.iterdir():
@@ -274,6 +271,8 @@ def run_smoke_test(cache: bool = False):
                     child.unlink()
             outputs_volume.commit()
             logger.info("Cleared cached outputs volume")
+    else:
+        logger.info(f"Using cached outputs volume at {output_dir}")
 
     try:
         import hydra
@@ -321,8 +320,7 @@ def run_smoke_test(cache: bool = False):
             run_pipeline(cfg)
 
         hf_cache_volume.commit()
-        if cache:
-            outputs_volume.commit()
+        outputs_volume.commit()
         logger.info("Smoke test passed!")
         return "Smoke test passed!"
 
