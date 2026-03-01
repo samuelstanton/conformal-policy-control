@@ -37,6 +37,12 @@ class TestSubmitCmdDirect:
         )
         assert p.returncode == 0
 
+    def test_tees_output_to_stderr(self, tmp_path, capsys):
+        submit_cmd_direct("echo tee_marker", str(tmp_path), blocking=True)
+        captured = capsys.readouterr()
+        # subprocess output should be tee'd to stderr
+        assert "tee_marker" in captured.err
+
 
 class TestWaitForDirectJobs:
     def test_waits_for_all(self, tmp_path):
