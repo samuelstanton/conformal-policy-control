@@ -158,10 +158,11 @@ def run_experiment_remote(
     if torch.cuda.is_available():
         logger.info(f"CUDA device: {torch.cuda.get_device_name(0)}")
 
-    # Outputs always persist to the volume; --no-cache empties it first.
-    output_dir = OUTPUTS_PATH
+    # Each config gets its own subdirectory so --no-cache on one
+    # config doesn't wipe cached outputs from another.
+    output_dir = f"{OUTPUTS_PATH}/{config_name}"
+    output_path = Path(output_dir)
     if not cache:
-        output_path = Path(output_dir)
         if output_path.exists():
             for child in output_path.iterdir():
                 if child.is_dir():
@@ -169,8 +170,9 @@ def run_experiment_remote(
                 else:
                     child.unlink()
             outputs_volume.commit()
-            logger.info("Cleared outputs volume (--no-cache)")
+            logger.info(f"Cleared outputs for config '{config_name}' (--no-cache)")
     else:
+        output_path.mkdir(parents=True, exist_ok=True)
         logger.info(f"Reusing cached outputs at {output_dir}")
 
     try:
