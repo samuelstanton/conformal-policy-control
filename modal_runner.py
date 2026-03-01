@@ -140,6 +140,7 @@ def run_experiment_remote(
             clear the outputs volume first. Either way, outputs are persisted
             to the volume for future --cache runs.
     """
+    import hashlib
     import logging
     import shutil
 
@@ -158,33 +159,17 @@ def run_experiment_remote(
     if torch.cuda.is_available():
         logger.info(f"CUDA device: {torch.cuda.get_device_name(0)}")
 
-    # Each config gets its own subdirectory so --no-cache on one
-    # config doesn't wipe cached outputs from another.
-    output_dir = f"{OUTPUTS_PATH}/{config_name}"
-    output_path = Path(output_dir)
-    if not cache:
-        if output_path.exists():
-            for child in output_path.iterdir():
-                if child.is_dir():
-                    shutil.rmtree(child)
-                else:
-                    child.unlink()
-            outputs_volume.commit()
-            logger.info(f"Cleared outputs for config '{config_name}' (--no-cache)")
-    else:
-        output_path.mkdir(parents=True, exist_ok=True)
-        logger.info(f"Reusing cached outputs at {output_dir}")
-
     try:
         import hydra
         from omegaconf import OmegaConf
 
         override_list = overrides or []
-        # Force direct execution (no SLURM) and local storage
+        # Force direct execution (no SLURM) and local storage.
+        # Use placeholder output dir — we'll override after hashing the config.
         modal_overrides = [
             "job_submission_system=direct",
             "parent_output_dir=null",
-            f"local_output_dir={output_dir}",
+            "local_output_dir=null",
             f"path_to_repo={app_path}",
         ]
         override_list.extend(modal_overrides)
@@ -192,6 +177,35 @@ def run_experiment_remote(
         config_path = f"{app_path}/cpc_llm/config"
         with hydra.initialize_config_dir(config_dir=config_path, version_base="1.1"):
             cfg = hydra.compose(config_name=config_name, overrides=override_list)
+
+            # Hash the resolved config (excluding infrastructure fields that
+            # vary per-run) to get a stable, content-addressed cache key.
+            cfg_for_hash = OmegaConf.to_container(cfg, resolve=True)
+            for key in ("local_output_dir", "parent_output_dir", "path_to_repo"):
+                cfg_for_hash.pop(key, None)
+            config_hash = hashlib.sha256(
+                OmegaConf.to_yaml(cfg_for_hash).encode()
+            ).hexdigest()[:12]
+
+            output_dir = f"{OUTPUTS_PATH}/{config_name}_{config_hash}"
+            output_path = Path(output_dir)
+            logger.info(f"Output dir: {output_dir}")
+
+            if not cache:
+                if output_path.exists():
+                    for child in output_path.iterdir():
+                        if child.is_dir():
+                            shutil.rmtree(child)
+                        else:
+                            child.unlink()
+                    outputs_volume.commit()
+                    logger.info("Cleared outputs (--no-cache)")
+            else:
+                output_path.mkdir(parents=True, exist_ok=True)
+                logger.info(f"Reusing cached outputs at {output_dir}")
+
+            # Now set the real output dir in the config
+            cfg.local_output_dir = output_dir
             logger.info(f"Config:\n{OmegaConf.to_yaml(cfg)}")
 
             from cpc_llm.main import run_pipeline
