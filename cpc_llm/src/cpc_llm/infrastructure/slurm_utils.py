@@ -3,11 +3,24 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
+import threading
 import time
 import uuid
 
-from typing import List, Optional, Tuple
+from typing import IO, Callable, List, Optional, Tuple
+
+# Optional hook called after each direct subprocess completes.
+# Used by modal_runner to commit the outputs volume mid-pipeline
+# so logs survive hard kills (OOM, timeout).
+_post_subprocess_hook: Callable[[], None] | None = None
+
+
+def set_post_subprocess_hook(hook: Callable[[], None] | None) -> None:
+    """Register a callback invoked after each direct subprocess completes."""
+    global _post_subprocess_hook
+    _post_subprocess_hook = hook
 
 
 @contextlib.contextmanager
@@ -152,6 +165,14 @@ def wait_for_slurm_jobs_to_complete(jobs: List[Tuple[subprocess.Popen, str]]):
         logging.info(f"Slurm job {job_id} succeeded!")
 
 
+def _tee_stream(source: IO[bytes], *destinations: IO[bytes]) -> None:
+    """Copy lines from source to all destinations until EOF."""
+    for line in iter(source.readline, b""):
+        for dest in destinations:
+            dest.write(line)
+            dest.flush()
+
+
 def submit_cmd_direct(
     py_cmd: str,
     dump_dir: str,
@@ -162,31 +183,53 @@ def submit_cmd_direct(
 
     Drop-in alternative to submit_cmd_to_slurm for environments without
     a job scheduler (e.g., Modal, local development).
+
+    Subprocess output is tee'd to both a log file and the parent's stderr,
+    making it visible in ``modal app logs`` while still preserving a
+    persistent log on disk.
+
     Extra kwargs (slurm_args, path_to_repo, etc.) are ignored.
     """
     os.makedirs(dump_dir, exist_ok=True)
     log_path = os.path.join(dump_dir, f"direct_{uuid.uuid1()}.log")
     logging.info(f"Running directly: {py_cmd}")
 
-    with open(log_path, "w") as log_file:
-        p = subprocess.Popen(
-            py_cmd,
-            shell=True,
-            executable="/bin/bash",
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-        )
+    log_file = open(log_path, "wb")  # noqa: SIM115
+    p = subprocess.Popen(
+        py_cmd,
+        shell=True,
+        executable="/bin/bash",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+
+    # Tee subprocess output to both the log file and parent stderr
+    tee_thread = threading.Thread(
+        target=_tee_stream,
+        args=(p.stdout, log_file, sys.stderr.buffer),
+        daemon=True,
+    )
+    tee_thread.start()
 
     job_id = f"direct-{p.pid}"
-    # Attach log path so wait_for_direct_jobs_to_complete can read it on failure
+    # Attach resources so wait_for_direct_jobs_to_complete can clean up
     p._direct_log_path = log_path
+    p._tee_thread = tee_thread
+    p._log_file = log_file
     if blocking:
         logging.info(f"Waiting for process {p.pid}...")
         p.wait()
+        tee_thread.join()
+        p.stdout.close()
+        log_file.close()
         if p.returncode != 0:
+            if _post_subprocess_hook:
+                _post_subprocess_hook()
             _log_direct_failure(p.returncode, log_path, py_cmd)
             raise RuntimeError(f"Direct execution failed: {py_cmd}")
         logging.info(f"Process {p.pid} succeeded")
+        if _post_subprocess_hook:
+            _post_subprocess_hook()
 
     return p, job_id
 
@@ -206,9 +249,21 @@ def wait_for_direct_jobs_to_complete(jobs: List[Tuple[subprocess.Popen, str]]):
     """Wait for direct subprocess jobs to complete."""
     for p, job_id in jobs:
         rc = p.wait()
+        # Clean up tee thread and log file handle from submit_cmd_direct
+        tee_thread = getattr(p, "_tee_thread", None)
+        log_file_obj = getattr(p, "_log_file", None)
+        if tee_thread:
+            tee_thread.join()
+            p.stdout.close()
+        if log_file_obj:
+            log_file_obj.close()
         if rc != 0:
+            if _post_subprocess_hook:
+                _post_subprocess_hook()
             log_path = getattr(p, "_direct_log_path", None)
             if log_path:
                 _log_direct_failure(rc, log_path)
             raise RuntimeError(f"Process {job_id} failed with return code {rc}")
         logging.info(f"Process {job_id} succeeded")
+        if _post_subprocess_hook:
+            _post_subprocess_hook()

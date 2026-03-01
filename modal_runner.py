@@ -11,6 +11,9 @@ Usage:
     # Smoke test with cached outputs (skips completed stages on re-run)
     modal run modal_runner.py --smoke --cache
 
+    # Check progress (tail latest subprocess log from outputs volume)
+    modal run modal_runner.py --check-progress
+
     # Sanity check (MARGE, local storage, ~30 min)
     modal run modal_runner.py --config-name pipeline_sanity_check_no_s3
 
@@ -208,8 +211,10 @@ def run_experiment_remote(
             cfg.local_output_dir = output_dir
             logger.info(f"Config:\n{OmegaConf.to_yaml(cfg)}")
 
+            from cpc_llm.infrastructure.slurm_utils import set_post_subprocess_hook
             from cpc_llm.main import run_pipeline
 
+            set_post_subprocess_hook(outputs_volume.commit)
             run_pipeline(cfg)
 
         # Persist any newly downloaded models and pipeline outputs to volumes
@@ -273,12 +278,45 @@ def test_environment():
     return "Environment test passed!"
 
 
+@app.function(
+    image=image,
+    timeout=60,
+    volumes={OUTPUTS_PATH: outputs_volume},
+)
+def check_progress_remote() -> str:
+    """Print the tail of the most recent subprocess log on the outputs volume."""
+    from datetime import datetime
+
+    outputs_volume.reload()
+
+    outputs = Path(OUTPUTS_PATH)
+    log_files = sorted(outputs.rglob("direct_*.log"), key=lambda p: p.stat().st_mtime)
+
+    if not log_files:
+        print("No subprocess logs found on the outputs volume.")
+        return "No logs found"
+
+    latest = log_files[-1]
+    st = latest.stat()
+    print(f"Latest log: {latest}")
+    print(f"Size: {st.st_size} bytes")
+    print(f"Modified: {datetime.fromtimestamp(st.st_mtime).isoformat()}")
+    print("--- Last 50 lines ---")
+
+    lines = latest.read_text().splitlines()
+    for line in lines[-50:]:
+        print(line)
+
+    return str(latest)
+
+
 @app.local_entrypoint()
 def main_entrypoint(
     config_name: str = "pipeline_sanity_check_no_s3",
     test: bool = False,
     smoke: bool = False,
     cache: bool = False,
+    check_progress: bool = False,
     overrides: str = None,
 ):
     """
@@ -294,6 +332,9 @@ def main_entrypoint(
         # Smoke test with cached outputs (skips completed stages)
         modal run modal_runner.py --smoke --cache
 
+        # Check progress (tail latest subprocess log)
+        modal run modal_runner.py --check-progress
+
         # Sanity check run
         modal run modal_runner.py --config-name pipeline_sanity_check_no_s3
 
@@ -307,6 +348,10 @@ def main_entrypoint(
     if test:
         print("Running environment test...")
         result = test_environment.remote()
+        print(f"Result: {result}")
+    elif check_progress:
+        print("Checking progress...")
+        result = check_progress_remote.remote()
         print(f"Result: {result}")
     else:
         override_list = []
