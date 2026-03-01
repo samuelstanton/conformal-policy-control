@@ -208,6 +208,7 @@ def run_experiment_remote(
         import traceback
 
         traceback.print_exc()
+        outputs_volume.commit()  # persist partial work so --cache can resume
         raise
 
 
