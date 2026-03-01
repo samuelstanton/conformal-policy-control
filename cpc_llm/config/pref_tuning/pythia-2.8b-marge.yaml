@@ -23,7 +23,7 @@ marge_config:  # marge_trainer.MargeConfig
   learning_rate: 1e-6
   num_train_epochs: 2
   load_best_model_at_end: True
-  evaluation_strategy: "steps"
+  eval_strategy: "steps"
   eval_steps: 0.1
   save_strategy: "steps"
   save_steps: 0.2
@@ -37,6 +37,7 @@ marge_config:  # marge_trainer.MargeConfig
   target_score_field_name: "score_target"
   resume_from_checkpoint: True
   save_total_limit: 1
+  torch_compile: false
   self_normalize_weights: False
   reinforce_style: False
   log_level: "info"
