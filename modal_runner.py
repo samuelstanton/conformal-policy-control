@@ -14,6 +14,9 @@ Usage:
     # Sanity check (MARGE, local storage, ~30 min)
     modal run modal_runner.py --config-name pipeline_sanity_check_no_s3
 
+    # With cached outputs (skips completed stages on re-run)
+    modal run modal_runner.py --config-name pipeline_sanity_check_no_s3 --cache
+
     # With overrides
     modal run modal_runner.py --config-name pipeline_sanity_check_no_s3 \
         --overrides "num_marge_rounds=1"
@@ -120,14 +123,26 @@ def _setup_env():
     memory=32768,
     timeout=14400,  # 4 hours
     secrets=[modal.Secret.from_name("wandb")],
-    volumes={HF_CACHE_PATH: hf_cache_volume},
+    volumes={HF_CACHE_PATH: hf_cache_volume, OUTPUTS_PATH: outputs_volume},
 )
 def run_experiment_remote(
     config_name: str = "pipeline_sanity_check_no_s3",
     overrides: list | None = None,
+    cache: bool = False,
 ):
-    """Run CPC-LLM pipeline with the specified Hydra config."""
+    """Run CPC-LLM pipeline with the specified Hydra config.
+
+    Args:
+        config_name: Hydra config to use.
+        overrides: List of Hydra overrides.
+        cache: If True, reuse pipeline outputs (checkpoints, generated data)
+            from previous runs, skipping completed stages. If False (default),
+            clear the outputs volume first. Either way, outputs are persisted
+            to the volume for future --cache runs.
+    """
+    import hashlib
     import logging
+    import shutil
 
     app_path = _setup_env()
 
@@ -149,11 +164,12 @@ def run_experiment_remote(
         from omegaconf import OmegaConf
 
         override_list = overrides or []
-        # Force direct execution (no SLURM) and local storage
+        # Force direct execution (no SLURM) and local storage.
+        # Use placeholder output dir — we'll override after hashing the config.
         modal_overrides = [
             "job_submission_system=direct",
             "parent_output_dir=null",
-            f"local_output_dir={app_path}/outputs",
+            "local_output_dir=null",
             f"path_to_repo={app_path}",
         ]
         override_list.extend(modal_overrides)
@@ -161,14 +177,44 @@ def run_experiment_remote(
         config_path = f"{app_path}/cpc_llm/config"
         with hydra.initialize_config_dir(config_dir=config_path, version_base="1.1"):
             cfg = hydra.compose(config_name=config_name, overrides=override_list)
+
+            # Hash the resolved config (excluding infrastructure fields that
+            # vary per-run) to get a stable, content-addressed cache key.
+            cfg_for_hash = OmegaConf.to_container(cfg, resolve=True)
+            for key in ("local_output_dir", "parent_output_dir", "path_to_repo"):
+                cfg_for_hash.pop(key, None)
+            config_hash = hashlib.sha256(
+                OmegaConf.to_yaml(cfg_for_hash).encode()
+            ).hexdigest()[:12]
+
+            output_dir = f"{OUTPUTS_PATH}/{config_name}_{config_hash}"
+            output_path = Path(output_dir)
+            logger.info(f"Output dir: {output_dir}")
+
+            if not cache:
+                if output_path.exists():
+                    for child in output_path.iterdir():
+                        if child.is_dir():
+                            shutil.rmtree(child)
+                        else:
+                            child.unlink()
+                    outputs_volume.commit()
+                    logger.info("Cleared outputs (--no-cache)")
+            else:
+                output_path.mkdir(parents=True, exist_ok=True)
+                logger.info(f"Reusing cached outputs at {output_dir}")
+
+            # Now set the real output dir in the config
+            cfg.local_output_dir = output_dir
             logger.info(f"Config:\n{OmegaConf.to_yaml(cfg)}")
 
             from cpc_llm.main import run_pipeline
 
             run_pipeline(cfg)
 
-        # Persist any newly downloaded models to the volume
+        # Persist any newly downloaded models and pipeline outputs to volumes
         hf_cache_volume.commit()
+        outputs_volume.commit()
 
         logger.info("CPC-LLM pipeline completed!")
         return "Success"
@@ -178,6 +224,7 @@ def run_experiment_remote(
         import traceback
 
         traceback.print_exc()
+        outputs_volume.commit()  # persist partial work so --cache can resume
         raise
 
 
@@ -226,112 +273,6 @@ def test_environment():
     return "Environment test passed!"
 
 
-@app.function(
-    image=image,
-    gpu="A100",
-    memory=32768,
-    timeout=1800,  # 30 min
-    secrets=[modal.Secret.from_name("wandb")],
-    volumes={HF_CACHE_PATH: hf_cache_volume, OUTPUTS_PATH: outputs_volume},
-)
-def run_smoke_test(cache: bool = False):
-    """Quick smoke test: tiny model, 1 MARGE round, minimal data.
-
-    Args:
-        cache: If True, reuse pipeline outputs (checkpoints, generated data)
-            from previous runs, skipping completed stages. If False (default),
-            clear the outputs volume first and run fresh. Either way, outputs
-            are persisted to the volume for future --cache runs.
-    """
-    import logging
-    import shutil
-
-    app_path = _setup_env()
-
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
-    )
-    logger = logging.getLogger(__name__)
-    logger.info("Starting smoke test")
-
-    import torch
-
-    logger.info(f"CUDA: {torch.cuda.is_available()}")
-
-    # Always write to the persistent volume. --no-cache clears it first.
-    output_dir = OUTPUTS_PATH
-    if not cache:
-        output_path = Path(output_dir)
-        if output_path.exists():
-            for child in output_path.iterdir():
-                if child.is_dir():
-                    shutil.rmtree(child)
-                else:
-                    child.unlink()
-            outputs_volume.commit()
-            logger.info("Cleared cached outputs volume")
-    else:
-        logger.info(f"Using cached outputs volume at {output_dir}")
-
-    try:
-        import hydra
-        from omegaconf import OmegaConf
-
-        overrides = [
-            # Direct execution, local storage
-            "job_submission_system=direct",
-            "parent_output_dir=null",
-            f"local_output_dir={output_dir}",
-            f"path_to_repo={app_path}",
-            # Single seed
-            "initial_seed=0",
-            "last_seed=0",
-            # Tiny model for speed
-            "initial_model=EleutherAI/pythia-14m",
-            "sft.args.model_config.model_name_or_path=EleutherAI/pythia-14m",
-            # Minimal iterations
-            "num_marge_rounds=1",
-            "num_sft_rounds=0",
-            "num_dpo_rounds=0",
-            # Small data
-            "sanity_check=True",
-            "evol_dataset_gen.args.num_opt_steps=3",
-            "evol_dataset_gen.args.optimizer.num_particles=100",
-            "iterative_generation.num_jobs=1",
-            "iterative_generation.init_args.sample_size=10",
-            "iterative_generation.init_args.max_iterations=2",
-            "iterative_generation.args.sample_size=10",
-            "iterative_generation.args.max_iterations=2",
-            # Fast training
-            "sft.args.training_args.num_train_epochs=1",
-            "marge.args.marge_config.num_train_epochs=1",
-        ]
-
-        # Use cpc_llm.yaml as base — it has all required fields.
-        # pipeline_sanity_check_no_s3.yaml is incomplete for standalone use.
-        config_path = f"{app_path}/cpc_llm/config"
-        with hydra.initialize_config_dir(config_dir=config_path, version_base="1.1"):
-            cfg = hydra.compose(config_name="cpc_llm", overrides=overrides)
-            logger.info(f"Smoke test config:\n{OmegaConf.to_yaml(cfg)}")
-
-            from cpc_llm.main import run_pipeline
-
-            run_pipeline(cfg)
-
-        hf_cache_volume.commit()
-        outputs_volume.commit()
-        logger.info("Smoke test passed!")
-        return "Smoke test passed!"
-
-    except Exception as e:
-        logger.error(f"Smoke test failed: {e}")
-        import traceback
-
-        traceback.print_exc()
-        raise
-
-
 @app.local_entrypoint()
 def main_entrypoint(
     config_name: str = "pipeline_sanity_check_no_s3",
@@ -356,6 +297,9 @@ def main_entrypoint(
         # Sanity check run
         modal run modal_runner.py --config-name pipeline_sanity_check_no_s3
 
+        # With cached outputs (skips completed stages)
+        modal run modal_runner.py --config-name pipeline_sanity_check_no_s3 --cache
+
         # With overrides
         modal run modal_runner.py --config-name pipeline_sanity_check_no_s3 \
             --overrides "num_marge_rounds=1"
@@ -364,16 +308,16 @@ def main_entrypoint(
         print("Running environment test...")
         result = test_environment.remote()
         print(f"Result: {result}")
-    elif smoke:
-        print("Running smoke test (pythia-14m, 1 round)...")
-        if cache:
-            print("Using cached outputs volume")
-        result = run_smoke_test.remote(cache=cache)
-        print(f"Result: {result}")
     else:
-        print(f"Running CPC-LLM with config: {config_name}")
         override_list = []
         if overrides:
             override_list = [o.strip() for o in overrides.split(",")]
-        result = run_experiment_remote.remote(config_name, override_list)
+        if smoke:
+            config_name = "smoke"
+            print("Running smoke test (pythia-14m, 1 round)...")
+        else:
+            print(f"Running CPC-LLM with config: {config_name}")
+        if cache:
+            print("Using cached outputs volume")
+        result = run_experiment_remote.remote(config_name, override_list, cache=cache)
         print(f"Result: {result}")
