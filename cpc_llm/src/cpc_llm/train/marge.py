@@ -60,7 +60,18 @@ def main(cfg: DictConfig):
 
     cfg_dict = OmegaConf.to_container(cfg)
     script_args = cfg_dict.get("dpo_script_args", {})
-    training_args = MargeConfig(**cfg_dict["marge_config"])
+
+    # Filter out config keys that were removed from DPOConfig in newer trl
+    # versions. max_prompt_length is passed directly to the trainer instead.
+    marge_cfg = cfg_dict["marge_config"]
+    max_prompt_length = marge_cfg.pop("max_prompt_length", None)
+    import dataclasses
+
+    valid_fields = {f.name for f in dataclasses.fields(MargeConfig)}
+    removed = {k: marge_cfg.pop(k) for k in list(marge_cfg) if k not in valid_fields}
+    if removed:
+        logging.info(f"Dropped unsupported MargeConfig fields: {list(removed)}")
+    training_args = MargeConfig(**marge_cfg)
     model_config = ModelConfig(**cfg_dict["model_config"])
 
     if TRL_USE_RICH:
@@ -279,6 +290,7 @@ def main(cfg: DictConfig):
             tokenizer=tokenizer,
             peft_config=peft_config,
             callbacks=callbacks,
+            max_prompt_length=max_prompt_length,
         )
     trainer.evaluate()
     trainer.train(resume_from_checkpoint=latest_local_ckpt_dir)

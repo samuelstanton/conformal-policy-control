@@ -63,6 +63,17 @@ def main(cfg: DictConfig):
     cfg_dict = OmegaConf.to_container(cfg)
     script_args = cfg_dict.get("dpo_script_args", {})
 
+    # Filter out config keys that were removed from DPOConfig in newer trl
+    # versions. max_prompt_length is passed directly to the trainer instead.
+    dpo_cfg = cfg_dict["dpo_config"]
+    max_prompt_length = dpo_cfg.pop("max_prompt_length", None)
+    import dataclasses
+
+    valid_fields = {f.name for f in dataclasses.fields(DPOConfig)}
+    removed = {k: dpo_cfg.pop(k) for k in list(dpo_cfg) if k not in valid_fields}
+    if removed:
+        logging.info(f"Dropped unsupported DPOConfig fields: {list(removed)}")
+
     # Add a small random delay to stagger CUDA initialization across distributed processes
     # This helps avoid race conditions when multiple processes try to set CUDA devices simultaneously
     if torch.cuda.is_available():
@@ -76,7 +87,7 @@ def main(cfg: DictConfig):
     training_args = None
     for attempt in range(max_retries):
         try:
-            training_args = DPOConfig(**cfg_dict["dpo_config"])
+            training_args = DPOConfig(**dpo_cfg)
             break
         except Exception as e:
             # Check if it's a CUDA-related error (could be RuntimeError, AcceleratorError, etc.)
@@ -272,6 +283,7 @@ def main(cfg: DictConfig):
             peft_config=peft_config,
             callbacks=callbacks,
             threshold_percent_valid=cfg.threshold_percent_valid,
+            max_prompt_length=max_prompt_length,
         )
     trainer.evaluate()
     trainer.train()
