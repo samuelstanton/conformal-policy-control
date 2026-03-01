@@ -16,9 +16,9 @@ The system iteratively improves a language model policy while maintaining statis
 
 ## Entry point
 
-`main.py` — Hydra-decorated entry point. Config at `config/pipeline.yaml` (or variants like `pipeline_dpo_f2.yaml`). Run via:
+`main.py` — Hydra-decorated entry point. Config at `config/cpc_llm.yaml` (or variants like `pipeline_dpo_f2.yaml`, `pipeline_marge_f2.yaml`). Run via:
 ```
-cpc-llm --config-name=pipeline
+cpc-llm --config-name=cpc_llm
 ```
 
 ## Module overview
