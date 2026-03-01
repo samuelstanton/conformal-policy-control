@@ -2,6 +2,7 @@ import pytest
 from omegaconf import OmegaConf
 
 from cpc_llm.infrastructure.slurm_utils import (
+    set_post_subprocess_hook,
     submit_cmd_direct,
     wait_for_direct_jobs_to_complete,
 )
@@ -59,6 +60,40 @@ class TestWaitForDirectJobs:
         p, job_id = submit_cmd_direct("exit 42", str(tmp_path), blocking=False)
         with pytest.raises(RuntimeError):
             wait_for_direct_jobs_to_complete([(p, job_id)])
+
+
+class TestPostSubprocessHook:
+    def test_hook_called_on_success(self, tmp_path):
+        calls = []
+        set_post_subprocess_hook(lambda: calls.append("commit"))
+        try:
+            submit_cmd_direct("echo ok", str(tmp_path), blocking=True)
+            assert calls == ["commit"]
+        finally:
+            set_post_subprocess_hook(None)
+
+    def test_hook_called_on_failure(self, tmp_path):
+        calls = []
+        set_post_subprocess_hook(lambda: calls.append("commit"))
+        try:
+            with pytest.raises(RuntimeError):
+                submit_cmd_direct("exit 1", str(tmp_path), blocking=True)
+            assert calls == ["commit"]
+        finally:
+            set_post_subprocess_hook(None)
+
+    def test_hook_called_per_job_in_wait(self, tmp_path):
+        calls = []
+        set_post_subprocess_hook(lambda: calls.append("commit"))
+        try:
+            jobs = [
+                submit_cmd_direct(f"echo job_{i}", str(tmp_path), blocking=False)
+                for i in range(3)
+            ]
+            wait_for_direct_jobs_to_complete(jobs)
+            assert len(calls) == 3
+        finally:
+            set_post_subprocess_hook(None)
 
 
 class TestDispatcher:

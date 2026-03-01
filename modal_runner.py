@@ -211,8 +211,10 @@ def run_experiment_remote(
             cfg.local_output_dir = output_dir
             logger.info(f"Config:\n{OmegaConf.to_yaml(cfg)}")
 
+            from cpc_llm.infrastructure.slurm_utils import set_post_subprocess_hook
             from cpc_llm.main import run_pipeline
 
+            set_post_subprocess_hook(outputs_volume.commit)
             run_pipeline(cfg)
 
         # Persist any newly downloaded models and pipeline outputs to volumes

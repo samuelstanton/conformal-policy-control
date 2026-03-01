@@ -9,7 +9,18 @@ import threading
 import time
 import uuid
 
-from typing import IO, List, Optional, Tuple
+from typing import IO, Callable, List, Optional, Tuple
+
+# Optional hook called after each direct subprocess completes.
+# Used by modal_runner to commit the outputs volume mid-pipeline
+# so logs survive hard kills (OOM, timeout).
+_post_subprocess_hook: Callable[[], None] | None = None
+
+
+def set_post_subprocess_hook(hook: Callable[[], None] | None) -> None:
+    """Register a callback invoked after each direct subprocess completes."""
+    global _post_subprocess_hook
+    _post_subprocess_hook = hook
 
 
 @contextlib.contextmanager
@@ -212,9 +223,13 @@ def submit_cmd_direct(
         p.stdout.close()
         log_file.close()
         if p.returncode != 0:
+            if _post_subprocess_hook:
+                _post_subprocess_hook()
             _log_direct_failure(p.returncode, log_path, py_cmd)
             raise RuntimeError(f"Direct execution failed: {py_cmd}")
         logging.info(f"Process {p.pid} succeeded")
+        if _post_subprocess_hook:
+            _post_subprocess_hook()
 
     return p, job_id
 
@@ -243,8 +258,12 @@ def wait_for_direct_jobs_to_complete(jobs: List[Tuple[subprocess.Popen, str]]):
         if log_file_obj:
             log_file_obj.close()
         if rc != 0:
+            if _post_subprocess_hook:
+                _post_subprocess_hook()
             log_path = getattr(p, "_direct_log_path", None)
             if log_path:
                 _log_direct_failure(rc, log_path)
             raise RuntimeError(f"Process {job_id} failed with return code {rc}")
         logging.info(f"Process {job_id} succeeded")
+        if _post_subprocess_hook:
+            _post_subprocess_hook()
