@@ -58,7 +58,7 @@ _base_deps = (
     .pip_install("uv")
     .run_commands(
         "uv pip install --system --compile-bytecode "
-        "torch>=2.2 "
+        "'torch>=2.2,<2.9' "
         "transformers>=4.41 "
         "datasets>=2.20 "
         "accelerate>=0.31 "

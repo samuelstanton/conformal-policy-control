@@ -18,6 +18,7 @@ training_args:
   load_best_model_at_end: True
   batch_eval_metrics: True
   predict_with_generate: True
+  torch_compile: true
   max_length: 512
   generation_num_beams: 1
   save_total_limit: 1

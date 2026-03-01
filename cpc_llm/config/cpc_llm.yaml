@@ -249,31 +249,31 @@ initial_sft:
     training_args:
       num_train_epochs: 10 #10 #2 #10
       seed: 0
-      eval_steps: 0.1
-      save_steps: 0.2
+      eval_strategy: epoch
+      save_strategy: epoch
       learning_rate: 1e-6
       per_device_train_batch_size: 32 #16 #2
-      per_device_eval_batch_size: 8
+      per_device_eval_batch_size: 64
       eval_accumulation_steps: 2
       gradient_accumulation_steps: 1 #16 #32
-      max_length: 512 #256 #512
+      max_length: 256 #512
       log_level: "info"
       save_total_limit: 2
       #warmup_ratio: 0.0
 
     generation_config:  # use greedy decoding during evaluation
-      max_new_tokens: 512 #256
+      max_new_tokens: 256 #512
       num_beams: 1
       do_sample: False
       num_return_sequences: 1
 
     model_config:
       model_name_or_path: "EleutherAI/pythia-14m" # "EleutherAI/pythia-2.8b"
-      attn_implementation: "eager"
+      attn_implementation: "sdpa"
 
     train_size: 0.95
     max_eval_size: 100 # evaluation takes a long time, so we set a max. size on the eval dataset
-    seq_length: 512 #256 #512
+    seq_length: 256 #512
     format_type: "edit_pairs"
     # test function
     test_fn_type: "ehrlich"  # [ehrlich, mt_fuji]
@@ -304,31 +304,31 @@ sft:
     training_args:
       num_train_epochs: 2  #5
       seed: 0
-      eval_steps: 0.1
-      save_steps: 0.2
+      eval_strategy: epoch
+      save_strategy: epoch
       learning_rate: 1e-4 #1e-6
       per_device_train_batch_size: 16 #2
-      per_device_eval_batch_size: 8
+      per_device_eval_batch_size: 64
       eval_accumulation_steps: 2
       gradient_accumulation_steps: 2 #16 #32
-      max_length: 512 #256 #512
+      max_length: 256 #512
       log_level: "info"
       save_total_limit: 2
       #warmup_ratio: 0.0
 
     generation_config:  # use greedy decoding during evaluation
-      max_new_tokens: 512 #256
+      max_new_tokens: 256 #512
       num_beams: 1
       do_sample: False
       num_return_sequences: 1
 
     model_config:
       model_name_or_path: "EleutherAI/pythia-14m" # "EleutherAI/pythia-2.8b"
-      attn_implementation: "eager"
+      attn_implementation: "sdpa"
 
     train_size: 0.95
     max_eval_size: 100 # evaluation takes a long time, so we set a max. size on the eval dataset
-    seq_length: 512 #256 #512
+    seq_length: 256 #512
     format_type: "edit_pairs"
     # test function
     test_fn_type: "ehrlich"  # [ehrlich, mt_fuji]
@@ -368,7 +368,7 @@ initial_generation:
     test_fn_type: "ehrlich"  # [ehrlich, mt_fuji]
     init_sampling_method: "uniform" ## Method for selecting seeds # "uniform", "combination", "best_scoring"
     generation_config:
-      max_new_tokens: 512 #256 #512
+      max_new_tokens: 256 #512
   slurm_args:
     nodes: 1
     cpus_per_task: 1
@@ -397,7 +397,7 @@ contrastive_generation:
     test_fn_type: "ehrlich"  # [ehrlich, mt_fuji]
     # init_sampling_method: "uniform" ## Method for selecting seeds # "uniform", "combination", "best_scoring"
     generation_config:
-      max_new_tokens: 512 #256 #512
+      max_new_tokens: 256 #512
   slurm_args:
     nodes: 1
     cpus_per_task: 1
@@ -432,7 +432,7 @@ iterative_generation:
     max_iterations: 100 #60 #120 #120 #50 #100 #10
     sampling_method: "best_scoring" ## Method for selecting seeds # "uniform", "combination", "best_scoring"
     generation_config:
-      max_new_tokens: 512 #256 #512
+      max_new_tokens: 256 #512
   slurm_args:
     nodes: 1
     cpus_per_task: 1
@@ -490,7 +490,7 @@ compute_likelihooods_all_models:
     # test_fn_type: "ehrlich"  # [ehrlich, mt_fuji]
     # init_sampling_method: "uniform" ## Method for selecting seeds # "uniform", "combination", "best_scoring"
     generation_config:
-      max_new_tokens: 512 #256 #512
+      max_new_tokens: 256 #512
   slurm_args:
     nodes: 1
     cpus_per_task: 1
@@ -514,21 +514,20 @@ dpo:
       beta: 0.4
       gradient_accumulation_steps: 1
       num_train_epochs: 1 #1 #2 #2 #1
-      eval_steps: 0.1
-      save_steps: 0.2
-      # self_normalize_weights: True
-      # reinforce_style: False
-      max_length: 512 #256 #512
-      max_prompt_length: 512 #256
+      eval_strategy: epoch
+      save_strategy: epoch
+      torch_compile: true
+      max_length: 256 #512
+      max_prompt_length: 128 #512
       log_level: "info"
       seed: 0
       per_device_train_batch_size: 32
-      per_device_eval_batch_size: 8
+      per_device_eval_batch_size: 64
     test_fn_type: "ehrlich"
     train_size: 0.95
     max_eval_size: 100
     generation_config:
-      max_new_tokens: 512 #256
+      max_new_tokens: 256 #512
   slurm_args:
     nodes: 1
     cpus_per_task: 1 #2
@@ -550,22 +549,23 @@ marge:
       learning_rate: 1e-6
       alpha: 1.0
       beta: 10.0
-      gradient_accumulation_steps: 32
+      gradient_accumulation_steps: 1
       num_train_epochs: 5
-      eval_steps: 0.1
-      save_steps: 0.2
+      eval_strategy: epoch
+      save_strategy: epoch
+      torch_compile: true
       self_normalize_weights: True
       reinforce_style: False
-      max_length: 1024
-      max_prompt_length: 512 #256 #512
+      max_length: 512 #1024
+      max_prompt_length: 128 #512
       log_level: "info"
       seed: 0
-      per_device_train_batch_size: 1
+      per_device_train_batch_size: 32
     test_fn_type: "ehrlich"
     train_size: 0.95
     max_eval_size: 100
     generation_config:
-      max_new_tokens: 512 #256 #512
+      max_new_tokens: 256 #512
   slurm_args:
     nodes: 1
     cpus_per_task: 2

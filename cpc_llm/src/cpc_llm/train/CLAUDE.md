@@ -9,6 +9,7 @@ Policy training procedures: SFT, DPO, and MARGE.
 - **marge.py** — MARGE (margin-based) preference optimization. Alternative to DPO with a different objective function. Same interface pattern.
 - **marge_trainer.py** — Core MARGE training implementation with `MargeTrainer` and `MargeConfig`.
 - **pref_tuning_trainer.py** — `DPOTrainerWithLogging`: enhanced DPO trainer with detailed metric logging.
+- **data_collators.py** — `DataCollatorForCompletionOnlyLM`: vendored from TRL, masks input tokens so the loss is computed only on completion tokens during SFT.
 
 ## Training data formats
 

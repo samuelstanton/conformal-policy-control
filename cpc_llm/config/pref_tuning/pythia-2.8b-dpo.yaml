@@ -22,7 +22,7 @@ dpo_config:  # trl.DPOConfig
   learning_rate: 1e-6
   num_train_epochs: 2
   load_best_model_at_end: True
-  evaluation_strategy: "steps"
+  eval_strategy: "steps"
   eval_steps: 0.05
   save_strategy: "steps"
   save_steps: 0.1
@@ -30,6 +30,7 @@ dpo_config:  # trl.DPOConfig
   seed: 0
   remove_unused_columns: False
   save_total_limit: 1
+  torch_compile: false
   log_level: "info"
   # self_normalize_weights: True ## Drew added
   # reinforce_style: False

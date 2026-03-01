@@ -6,7 +6,7 @@ Model inference and likelihood computation. Wraps HuggingFace transformers for s
 
 - **model_client.py** — `ModelClient` class: loads a HuggingFace causal LM, handles CUDA initialization with exponential backoff, computes log-likelihoods via `compute_likelihoods_avg()`, and generates sequences via `generate()`.
 - **compute_likelihoods_one_model_all_data.py** — Computes likelihoods from the latest model across all historical calibration datasets. Backfills likelihood columns for previously sampled data.
-- **compute_liks_all_models_one_target.py** — Computes likelihoods for a single calibration dataset from all previously trained models. Builds up the (n_particles x n_models) likelihood matrix needed by CPC.
+- **compute_liks_all_models_one_target.py** — `compute_likelihoods_inmemory()`: core function that accepts DataFrames and returns a DataFrame with likelihood columns appended. `compute_likelihoods_all_models_one_target()`: file-I/O wrapper for subprocess execution. Builds up the (n_particles x n_models) likelihood matrix needed by CPC.
 - **score.py / score2.py** — Standalone scoring utilities for evaluating model outputs on input-target pairs.
 
 ## Data structures
