@@ -160,7 +160,6 @@ def _tee_stream(source: IO[bytes], *destinations: IO[bytes]) -> None:
         for dest in destinations:
             dest.write(line)
             dest.flush()
-    source.close()
 
 
 def submit_cmd_direct(
@@ -210,6 +209,7 @@ def submit_cmd_direct(
         logging.info(f"Waiting for process {p.pid}...")
         p.wait()
         tee_thread.join()
+        p.stdout.close()
         log_file.close()
         if p.returncode != 0:
             _log_direct_failure(p.returncode, log_path, py_cmd)
@@ -239,6 +239,7 @@ def wait_for_direct_jobs_to_complete(jobs: List[Tuple[subprocess.Popen, str]]):
         log_file_obj = getattr(p, "_log_file", None)
         if tee_thread:
             tee_thread.join()
+            p.stdout.close()
         if log_file_obj:
             log_file_obj.close()
         if rc != 0:

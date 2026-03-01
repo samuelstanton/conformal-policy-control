@@ -281,7 +281,7 @@ def test_environment():
     timeout=60,
     volumes={OUTPUTS_PATH: outputs_volume},
 )
-def check_progress_remote():
+def check_progress_remote() -> str:
     """Print the tail of the most recent subprocess log on the outputs volume."""
     from datetime import datetime
 
