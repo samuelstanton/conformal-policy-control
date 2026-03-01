@@ -1,0 +1,34 @@
+# Smoke test config: tiny model, 1 MARGE round, minimal data (~5 min on A100).
+# Inherits all defaults from cpc_llm.yaml; only overrides what needs to shrink.
+defaults:
+  - cpc_llm
+  - _self_
+
+last_seed: 0
+num_dpo_rounds: 0
+num_marge_rounds: 1
+sanity_check: True
+
+evol_dataset_gen:
+  args:
+    num_opt_steps: 3
+    optimizer:
+      num_particles: 100
+
+iterative_generation:
+  num_jobs: 1
+  init_args:
+    sample_size: 10
+    max_iterations: 2
+  args:
+    max_iterations: 2
+
+sft:
+  args:
+    training_args:
+      num_train_epochs: 1
+
+marge:
+  args:
+    marge_config:
+      num_train_epochs: 1
