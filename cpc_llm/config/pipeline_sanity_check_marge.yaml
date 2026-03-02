@@ -187,7 +187,7 @@ dpo:
       per_device_train_batch_size: 2
       per_device_eval_batch_size: 8
       max_length: 512
-      max_prompt_length: 256
+      max_prompt_length: 256  # TODO: remove — filtered at runtime by dataclasses.fields(DPOConfig)
       log_level: "info"
     test_fn_type: "ehrlich"
     train_size: 0.95

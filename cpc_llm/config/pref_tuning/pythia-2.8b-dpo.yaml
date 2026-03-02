@@ -3,11 +3,11 @@ dpo_script_args:  # trl.DpoScriptArguments
 
 dpo_config:  # trl.DPOConfig
   beta: 0.1
-  loss_type: "sigmoid"
-  precompute_ref_log_probs: False # True
+  loss_type: "sigmoid"  # TODO: change to ["sigmoid"] — converted str→list at runtime in dpo.py
+  precompute_ref_log_probs: False  # TODO: remove — filtered at runtime
   max_length: 512
-  max_prompt_length: 256
-  generate_during_eval: True
+  max_prompt_length: 256  # TODO: remove — filtered at runtime
+  generate_during_eval: True  # TODO: remove — extracted at runtime in dpo.py
   output_dir: ???
   run_name: ???
   do_train: True
