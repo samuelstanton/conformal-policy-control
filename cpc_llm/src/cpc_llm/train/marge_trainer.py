@@ -259,6 +259,9 @@ class MargeTrainer(Trainer):
         else:
             self.use_marge_data_collator = False
 
+        # Set args early so tokenize_row can access self.args before super().__init__()
+        self.args = args
+
         # Tokenize dataset if not pretokenized
         with PartialState().local_main_process_first():
             self.pretokenized = pretokenized
@@ -890,7 +893,7 @@ class MargeTrainer(Trainer):
                 rewards,
                 target_num_tokens,
             )
-            metrics[f"{prefix}rewards/target"] = target_rewards.mean().cpu()
+            metrics[f"{prefix}rewards/target"] = target_rewards.mean().cpu().item()
             metrics[f"{prefix}rewards/running_average"] = avg_reward_baseline
         else:
             losses, kl_div_to_target, kl_div_to_ref = self.marge_loss(
@@ -899,15 +902,23 @@ class MargeTrainer(Trainer):
                 rewards,
                 target_num_tokens,
             )
-            metrics[f"{prefix}kl_div/reverse_to_target"] = kl_div_to_target.mean().cpu()
-            metrics[f"{prefix}kl_div/forward_to_ref"] = kl_div_to_ref.mean().cpu()
+            metrics[f"{prefix}kl_div/reverse_to_target"] = (
+                kl_div_to_target.mean().cpu().item()
+            )
+            metrics[f"{prefix}kl_div/forward_to_ref"] = (
+                kl_div_to_ref.mean().cpu().item()
+            )
 
         metrics[f"{prefix}likelihoods/policy_reference_ratio"] = (
-            policy_reference_target_ratios.mean().cpu()
+            policy_reference_target_ratios.mean().cpu().item()
         )
 
-        metrics[f"{prefix}logps/policy"] = policy_target_logps.detach().mean().cpu()
-        metrics[f"{prefix}logits/target"] = policy_target_logits.detach().mean().cpu()
+        metrics[f"{prefix}logps/policy"] = (
+            policy_target_logps.detach().mean().cpu().item()
+        )
+        metrics[f"{prefix}logits/target"] = (
+            policy_target_logits.detach().mean().cpu().item()
+        )
 
         return losses.mean(), metrics
 
@@ -1253,7 +1264,7 @@ class MargeTrainer(Trainer):
                         passed_validity_check = False
                         break
                 if passed_validity_check:
-                    self.state.best_metric = metric_value
+                    self.state.best_metric = float(metric_value)
                     self.state.best_model_checkpoint = output_dir
 
         # Save the Trainer state
