@@ -24,6 +24,7 @@ def compute_likelihoods_inmemory(
     model_indices: List[int],
     cfg: DictConfig,
     logger: logging.Logger | None = None,
+    model_clients: dict[str, ModelClient] | None = None,
 ) -> pd.DataFrame:
     """Compute likelihoods for target_df under each model, entirely in memory.
 
@@ -34,6 +35,9 @@ def compute_likelihoods_inmemory(
         model_indices: List of integer indices identifying each model (for column naming).
         cfg: Hydra config (needs batch_size, generation_config, overwrite_cmp_lik_all).
         logger: Logger instance.
+        model_clients: Optional dict mapping model path to pre-loaded ModelClient.
+            When provided, skips model loading/unloading to avoid reload churn
+            across AR iterations.
 
     Returns:
         DataFrame with lik_r{i} columns appended for each model index.
@@ -79,58 +83,64 @@ def compute_likelihoods_inmemory(
     ## For each model, compute likelihoods of each target sequence, averaged over seeds
     all_timestep_likelihoods = []
     for i, model_name_or_path in enumerate(model_name_or_path_list):
-        # GPU memory management
-        torch.cuda.empty_cache()
+        # Use cached model client if available, otherwise load fresh
+        cached = model_clients is not None and model_name_or_path in model_clients
+        if cached:
+            model_client = model_clients[model_name_or_path]
+            logger.info(f"Using cached ModelClient for {model_name_or_path}")
+        else:
+            # GPU memory management
+            torch.cuda.empty_cache()
 
-        logger.info(f"torch.cuda.is_available() : {torch.cuda.is_available()}")
+            logger.info(f"torch.cuda.is_available() : {torch.cuda.is_available()}")
 
-        # Retry ModelClient initialization with exponential backoff
-        max_retries = 5
-        retry_delay_base = 1.0
-        model_client = None
-        fallback_to_cpu = False
-        for attempt in range(max_retries):
-            try:
+            # Retry ModelClient initialization with exponential backoff
+            max_retries = 5
+            retry_delay_base = 1.0
+            model_client = None
+            fallback_to_cpu = False
+            for attempt in range(max_retries):
+                try:
+                    model_client = ModelClient(
+                        model_name_or_path=model_name_or_path,
+                        logger=logger,
+                        temperature=cfg.generation_config.temperature,
+                        max_generate_length=cfg.generation_config.max_new_tokens,
+                        device="cuda",
+                    )
+                    break
+                except Exception as e:
+                    error_str = str(e)
+                    is_cuda_error = (
+                        "CUDA" in error_str
+                        or "busy" in error_str.lower()
+                        or "unavailable" in error_str.lower()
+                        or "AcceleratorError" in type(e).__name__
+                    )
+                    if is_cuda_error and attempt < max_retries - 1:
+                        wait_time = retry_delay_base * (2**attempt)
+                        logger.warning(
+                            f"CUDA initialization failed (attempt {attempt + 1}/{max_retries}): {e}. "
+                            f"Retrying in {wait_time:.1f} seconds..."
+                        )
+                        time.sleep(wait_time)
+                    elif is_cuda_error:
+                        fallback_to_cpu = True
+                        logger.error(
+                            f"CUDA initialization failed after {max_retries} attempts for model {model_name_or_path}: {e}. "
+                            "Falling back to CPU."
+                        )
+                        break
+                    else:
+                        raise
+            if model_client is None and fallback_to_cpu:
                 model_client = ModelClient(
                     model_name_or_path=model_name_or_path,
                     logger=logger,
                     temperature=cfg.generation_config.temperature,
                     max_generate_length=cfg.generation_config.max_new_tokens,
-                    device="cuda",
+                    device="cpu",
                 )
-                break
-            except Exception as e:
-                error_str = str(e)
-                is_cuda_error = (
-                    "CUDA" in error_str
-                    or "busy" in error_str.lower()
-                    or "unavailable" in error_str.lower()
-                    or "AcceleratorError" in type(e).__name__
-                )
-                if is_cuda_error and attempt < max_retries - 1:
-                    wait_time = retry_delay_base * (2**attempt)
-                    logger.warning(
-                        f"CUDA initialization failed (attempt {attempt + 1}/{max_retries}): {e}. "
-                        f"Retrying in {wait_time:.1f} seconds..."
-                    )
-                    time.sleep(wait_time)
-                elif is_cuda_error:
-                    fallback_to_cpu = True
-                    logger.error(
-                        f"CUDA initialization failed after {max_retries} attempts for model {model_name_or_path}: {e}. "
-                        "Falling back to CPU."
-                    )
-                    break
-                else:
-                    raise
-        if model_client is None and fallback_to_cpu:
-            model_client = ModelClient(
-                model_name_or_path=model_name_or_path,
-                logger=logger,
-                temperature=cfg.generation_config.temperature,
-                max_generate_length=cfg.generation_config.max_new_tokens,
-                device="cpu",
-            )
 
         ## Format input seeds
         input_df = input_data_list[i]
@@ -150,8 +160,10 @@ def compute_likelihoods_inmemory(
         all_timestep_likelihoods.append(target_likelihoods)
 
         # Free model to reclaim GPU memory before loading the next one
-        del model_client
-        torch.cuda.empty_cache()
+        # (skip if using a cached client — caller manages lifecycle)
+        if not cached:
+            del model_client
+            torch.cuda.empty_cache()
 
     ## Assemble result DataFrame
     if "score" in target_df.columns:
