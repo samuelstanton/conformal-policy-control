@@ -154,23 +154,29 @@ class TestCheckColNames:
 
 
 class TestIWMCIOverlapEst:
-    def test_safe_proposal_returns_valid(self):
+    def test_safe_proposal_exact(self):
         LRs = np.array([0.5, 1.5, 2.0, 3.0])
         unconstrained = np.array([1.0, 2.0, 3.0, 4.0])
         safe = np.array([2.0, 1.0, 1.5, 1.0])
         result = iwmci_overlap_est(
             LRs, unconstrained, safe, beta_t=2.0, psi_t=1.0, proposal="safe"
         )
-        assert 0 <= result <= 1.0
+        # constrained_density = min(safe * 2, unconstrained) = [1, 2, 3, 2]
+        # ratio = min([1,2,3,2], [2,1,1.5,1]) / [2,1,1.5,1] = [0.5, 1, 1, 1]
+        # mean = 0.875
+        np.testing.assert_almost_equal(result, 0.875)
 
-    def test_unconstrained_proposal_returns_valid(self):
+    def test_unconstrained_proposal_exact(self):
         LRs = np.array([0.5, 1.5, 2.0, 3.0])
         unconstrained = np.array([1.0, 2.0, 3.0, 4.0])
         safe = np.array([2.0, 1.0, 1.5, 1.0])
         result = iwmci_overlap_est(
             LRs, unconstrained, safe, beta_t=2.0, psi_t=1.0, proposal="unconstrained"
         )
-        assert 0 <= result <= 1.0
+        # constrained_density = min(safe * 2, unconstrained) = [1, 2, 3, 2]
+        # ratio = min([1,2,3,2], [1,2,3,4]) / [1,2,3,4] = [1, 1, 1, 0.5]
+        # mean = 0.875
+        np.testing.assert_almost_equal(result, 0.875)
 
     def test_invalid_proposal_raises(self):
         LRs = np.array([1.0])
