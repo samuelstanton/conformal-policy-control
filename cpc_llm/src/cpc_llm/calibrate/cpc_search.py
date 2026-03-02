@@ -253,6 +253,8 @@ def cpc_beta_search(
                 raise ValueError(f"Unrecognized proposal name : {proposal}")
 
             gen_model_client = lik_model_clients.get(gen_model_dir)
+            if use_inmemory and gen_model_client is None:
+                raise RuntimeError(f"Model client not pre-loaded for {gen_model_dir}")
 
             ## Step 1: Generate samples from the proposal model
             gen_df = generate_sample_batch(

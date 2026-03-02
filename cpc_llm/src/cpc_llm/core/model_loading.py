@@ -38,7 +38,6 @@ def init_model_client_with_retry(
     _logger = _logger or logger
     max_retries = 5
     retry_delay = 1.0
-    fallback_to_cpu = False
 
     if torch.cuda.is_available():
         time.sleep(random.uniform(0.1, 0.5))
@@ -68,7 +67,6 @@ def init_model_client_with_retry(
                 )
                 time.sleep(wait_time)
             elif is_cuda_error:
-                fallback_to_cpu = True
                 _logger.warning(
                     f"CUDA init failed after {max_retries} attempts: {e}. "
                     "Falling back to CPU."
@@ -77,15 +75,15 @@ def init_model_client_with_retry(
             else:
                 raise
 
-    if fallback_to_cpu:
-        return ModelClient(
-            model_name_or_path=model_name_or_path,
-            logger=_logger,
-            max_generate_length=max_new_tokens,
-            temperature=temperature,
-            device="cpu",
-        )
-    raise RuntimeError(f"Failed to initialize ModelClient for {model_name_or_path}")
+    # All CUDA attempts exhausted — fall back to CPU.
+    # If CPU init also fails, ModelClient.__init__ raises naturally.
+    return ModelClient(
+        model_name_or_path=model_name_or_path,
+        logger=_logger,
+        max_generate_length=max_new_tokens,
+        temperature=temperature,
+        device="cpu",
+    )
 
 
 def preload_model_clients(
@@ -166,16 +164,14 @@ def cleanup_model_clients(
 ) -> None:
     """Free pre-loaded models and reclaim GPU memory.
 
-    Clears the likelihood clients dict first (releasing all references),
-    then deletes the generation client (which may have been shared with
-    the lik dict), then empties the CUDA cache.
+    Clears the likelihood clients dict (releasing all references) and
+    empties the CUDA cache. The gen_model_client parameter is accepted
+    for API compatibility but is not used — gen clients are typically
+    aliases into lik_model_clients and freed by the clear().
 
     Args:
         lik_model_clients: Dict of likelihood model clients to clear.
-        gen_model_client: Generation model client to delete (may be shared
-            with lik_model_clients).
+        gen_model_client: Unused; kept for call-site compatibility.
     """
     lik_model_clients.clear()
-    if gen_model_client is not None:
-        del gen_model_client
     torch.cuda.empty_cache()
