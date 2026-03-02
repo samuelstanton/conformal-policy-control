@@ -1,14 +1,20 @@
 dpo_script_args:  # trl.DpoScriptArguments
   sanity_check: False  # If true, will train on only 1K examples and not save the final model.
 
-marge_config:  # marge_trainer.MargeConfig
+marge_config:  # marge_trainer.MargeConfig (extends TrainingArguments)
+  # MARGE-specific
   alpha: 1.0
   beta: 0.1
-  loss_type: "sigmoid"
-  precompute_ref_log_probs: False # True
   max_length: 512
   max_prompt_length: 256
   generate_during_eval: True
+  input_field_name: "input"
+  target_field_name: "target"
+  input_score_field_name: "score_input"
+  target_score_field_name: "score_target"
+  self_normalize_weights: False
+  reinforce_style: False
+  # TrainingArguments
   output_dir: ???
   run_name: ???
   do_train: True
@@ -27,19 +33,11 @@ marge_config:  # marge_trainer.MargeConfig
   eval_steps: 0.1
   save_strategy: "steps"
   save_steps: 0.2
-  # optim: "rmsprop"
   seed: 0
   remove_unused_columns: False
-  input_field_name: "input"
-  target_field_name: "target"
-  # score fields should NOT be prefixed by input_field_name or target_field_name
-  input_score_field_name: "score_input"
-  target_score_field_name: "score_target"
   resume_from_checkpoint: True
   save_total_limit: 1
   torch_compile: false
-  self_normalize_weights: False
-  reinforce_style: False
   log_level: "info"
 
 model_config:

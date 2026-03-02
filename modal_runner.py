@@ -123,7 +123,7 @@ def _setup_env():
 @app.function(
     image=image,
     gpu="A100",
-    memory=32768,
+    memory=65536,
     timeout=14400,  # 4 hours
     secrets=[modal.Secret.from_name("wandb")],
     volumes={HF_CACHE_PATH: hf_cache_volume, OUTPUTS_PATH: outputs_volume},
