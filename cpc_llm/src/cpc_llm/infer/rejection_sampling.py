@@ -247,6 +247,7 @@ def _compute_liks_all_models_inmemory(
     seeds_fp_list: List[str],
     model_dir_list: List[str],
     model_indices: List[int],
+    _lik_model_clients: dict[str, ModelClient] | None = None,
 ) -> pd.DataFrame:
     """Compute likelihoods for all models in memory, without subprocesses."""
     input_data_list = [_read_jsonl_cached(fp) for fp in seeds_fp_list]
@@ -273,6 +274,7 @@ def _compute_liks_all_models_inmemory(
         list(model_indices),
         lik_cfg,
         logger,
+        model_clients=_lik_model_clients,
     )
 
 
@@ -304,6 +306,7 @@ def generate_proposals_for_AR_sampling(
     global_random_seed: int = 0,
     _gen_model_client: ModelClient | dict[str, ModelClient] | None = None,
     _test_fn: Ehrlich | RoughMtFuji | None = None,
+    _lik_model_clients: dict[str, ModelClient] | None = None,
 ) -> str:
 
     n_models = len(model_dir_list)
@@ -352,6 +355,7 @@ def generate_proposals_for_AR_sampling(
                 seeds_fp_list,
                 model_dir_list,
                 list(range(n_models)),
+                _lik_model_clients=_lik_model_clients,
             )
             # Synthetic filepath for output-dir derivation downstream
             gen_liks_fp = os.path.join(output_dir, "inmemory_liks.jsonl")
@@ -479,6 +483,7 @@ def generate_proposals_for_AR_sampling(
                     seeds_fp_list,
                     model_dir_list,
                     list(range(n_models)),
+                    _lik_model_clients=_lik_model_clients,
                 )
                 gen_liks_fp = os.path.join(output_dir, "inmemory_liks.jsonl")
             else:
@@ -586,6 +591,7 @@ def generate_proposals_for_AR_sampling(
                     [seeds_fp_list[-1]],
                     [model_dir_list[-1]],
                     [len(model_dir_list) - 1],
+                    _lik_model_clients=_lik_model_clients,
                 )
                 gen_liks_fp = os.path.join(output_dir, "inmemory_liks.jsonl")
             else:
@@ -698,6 +704,7 @@ def accept_reject_sample_and_get_likelihoods(
     # ---- Pre-load generation model and test function for in-memory mode ----
     gen_model_client = None
     test_fn = None
+    lik_model_clients: dict[str, ModelClient] = {}
     if use_inmemory:
         test_fn = _load_test_fn(ga_data_dir)
         max_new_tokens = cfg.iterative_generation.args.generation_config.max_new_tokens
@@ -721,6 +728,17 @@ def accept_reject_sample_and_get_likelihoods(
                     model_dir_list[0], max_new_tokens, logger
                 ),
             }
+
+        # ---- Pre-load likelihood models for reuse across AR iterations ----
+        max_new_tokens_lik = (
+            cfg.compute_likelihooods_all_models.args.generation_config.max_new_tokens
+        )
+        for model_path in model_dir_list:
+            if model_path not in lik_model_clients:
+                logger.info(f"Pre-loading likelihood model: {model_path}")
+                lik_model_clients[model_path] = _init_model_client_with_retry(
+                    model_path, max_new_tokens_lik, logger
+                )
 
     # if betas_list[-1] >= 1:
     if proposal == "unconstrained":
@@ -785,6 +803,7 @@ def accept_reject_sample_and_get_likelihoods(
                 global_random_seed=global_random_seed,
                 _gen_model_client=gen_model_client,
                 _test_fn=test_fn,
+                _lik_model_clients=lik_model_clients or None,
             )
 
             call_idx += 1
@@ -898,6 +917,7 @@ def accept_reject_sample_and_get_likelihoods(
                     global_random_seed=global_random_seed,
                     _gen_model_client=gen_model_client,
                     _test_fn=test_fn,
+                    _lik_model_clients=lik_model_clients or None,
                 )
                 call_idx += 1
 
@@ -943,6 +963,7 @@ def accept_reject_sample_and_get_likelihoods(
                         [seeds_fp_list[-1]],
                         [model_dir_list[-1]],
                         [len(model_dir_list) - 1],
+                        _lik_model_clients=lik_model_clients or None,
                     )
                     gen_liks_fp = os.path.join(output_dir, "inmemory_liks.jsonl")
                 else:
@@ -1128,6 +1149,7 @@ def accept_reject_sample_and_get_likelihoods(
                         global_random_seed=global_random_seed,
                         _gen_model_client=mix_model_client,
                         _test_fn=test_fn,
+                        _lik_model_clients=lik_model_clients or None,
                     )
 
                     call_idx += 1
@@ -1278,10 +1300,14 @@ def accept_reject_sample_and_get_likelihoods(
     else:
         raise ValueError(f"Unknown proposal name : {proposal}")
 
-    # ---- Free pre-loaded generation model(s) to reclaim GPU memory ----
+    # ---- Free pre-loaded models to reclaim GPU memory ----
     if gen_model_client is not None:
         del gen_model_client
-        torch.cuda.empty_cache()
+    if lik_model_clients:
+        for _mc in lik_model_clients.values():
+            del _mc
+        lik_model_clients.clear()
+    torch.cuda.empty_cache()
 
     # ## Save accepted with unconstrained likelihoods
     # t = len(model_dir_list)-1
