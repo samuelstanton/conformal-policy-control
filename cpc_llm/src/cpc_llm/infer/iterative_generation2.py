@@ -147,7 +147,9 @@ def generate_single_batch(
     return pd.DataFrame(outputs)
 
 
-def run_iterative_generation(cfg: DictConfig, logger: logging.Logger = None):
+def run_iterative_generation(
+    cfg: DictConfig, logger: logging.Logger | None = None
+) -> None:
     test_fn_params = pd.read_json(cfg.test_fn_fp, orient="records", lines=True).to_dict(
         "records"
     )[0]
