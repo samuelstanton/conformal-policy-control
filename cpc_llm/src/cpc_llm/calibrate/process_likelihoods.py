@@ -63,7 +63,7 @@ def check_col_names(df: Any):
     """
     lik_cols = []
     for c in df.columns:
-        if (c[0] == "l" and c[1] == "i") or c[0] == "c":
+        if c.startswith("lik_r") or c.startswith("con_lik_r"):
             lik_cols.append(c)
 
     col_indices = [int(c.split("_")[-1][1:]) for c in lik_cols]

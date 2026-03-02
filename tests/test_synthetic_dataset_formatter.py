@@ -1,16 +1,15 @@
 import pandas as pd
-import unittest
 
 from omegaconf import OmegaConf
-from .synthetic_dataset_formatter import (
+from cpc_llm.data.synthetic_dataset_formatter import (
     find_dense_pairs,
     find_preference_pairs,
     filter_infeasible_examples,
 )
 
 
-class TestDatasetSelection(unittest.TestCase):
-    def test_find_dense_pairs_x_threshold(self):
+class TestFindDensePairs:
+    def test_x_threshold(self):
         cfg = OmegaConf.create(
             {
                 "score_lower_threshold": -0.5,
@@ -32,9 +31,6 @@ class TestDatasetSelection(unittest.TestCase):
         ]
         scores = [0.1, 0.2, 0.3, 0.4, 0.5]
         df = pd.DataFrame({"particle": library, "score": scores})
-        # nearest neighbors: 0 -> (0, 1, 2), 1 -> (0, 1, 3), 2 -> (1, 2, 4),
-        #                    3 -> (3, 4, 0), 4 -> (3, 4, 0)
-        # within x threshold: 0 -> (1,), 1 -> (0,), 3 -> (4,), 4 -> (3)
 
         outputs = find_dense_pairs(cfg, df)
         expected_outputs = [
@@ -51,9 +47,9 @@ class TestDatasetSelection(unittest.TestCase):
                 "higher_score": "0.500",
             },
         ]
-        self.assertEqual(outputs, expected_outputs)
+        assert outputs == expected_outputs
 
-    def test_find_dense_pairs_xy_thresholds(self):
+    def test_xy_thresholds(self):
         cfg = OmegaConf.create(
             {
                 "score_lower_threshold": -0.5,
@@ -75,9 +71,6 @@ class TestDatasetSelection(unittest.TestCase):
         ]
         scores = [0.1, 0.2, 0.3, 0.4, 0.55]
         df = pd.DataFrame({"particle": library, "score": scores})
-        # nearest neighbors: 0 -> (0, 1, 2), 1 -> (0, 1, 3), 2 -> (1, 2, 4),
-        #                    3 -> (3, 4, 0), 4 -> (3, 4, 0)
-        # within x threshold: 0 -> (1,), 1 -> (0,), 3 -> (4,), 4 -> (3)
 
         outputs = find_dense_pairs(cfg, df)
         expected_outputs = [
@@ -88,9 +81,9 @@ class TestDatasetSelection(unittest.TestCase):
                 "higher_score": "0.200",
             },
         ]
-        self.assertEqual(outputs, expected_outputs)
+        assert outputs == expected_outputs
 
-    def test_find_dense_pairs_lower_score_threshold(self):
+    def test_lower_score_threshold(self):
         cfg = OmegaConf.create(
             {
                 "score_lower_threshold": 0.1,
@@ -112,9 +105,6 @@ class TestDatasetSelection(unittest.TestCase):
         ]
         scores = [0.1, 0.2, 0.3, 0.4, 0.5]
         df = pd.DataFrame({"particle": library, "score": scores})
-        # nearest neighbors: 1 -> (1, 2, 3), 2 -> (1, 2, 4),
-        #                    3 -> (3, 4, 0), 4 -> (3, 4, 0)
-        # within x threshold: 0 -> (1,), 1 -> (0,), 3 -> (4,), 4 -> (3)
 
         outputs = find_dense_pairs(cfg, df)
         expected_outputs = [
@@ -125,9 +115,11 @@ class TestDatasetSelection(unittest.TestCase):
                 "higher_score": "0.500",
             },
         ]
-        self.assertEqual(outputs, expected_outputs)
+        assert outputs == expected_outputs
 
-    def test_downsample_infeasible_sequences(self):
+
+class TestFilterInfeasibleExamples:
+    def test_downsample_infeasible(self):
         ds = [
             {"higher_score": "inf"},
             {"higher_score": "inf"},
@@ -137,35 +129,35 @@ class TestDatasetSelection(unittest.TestCase):
             {"higher_score": "0.25"},
             {"higher_score": "0.25"},
         ]
-        prop_infs = 2 / 3
         cfg = OmegaConf.create(
             {
                 "seed": 0,
-                "max_proportion_infeasible": prop_infs,
+                "max_proportion_infeasible": 2 / 3,
             }
         )
         out_ds = filter_infeasible_examples(cfg, ds)
         out_num_infs = len([d for d in out_ds if d["higher_score"] == "inf"])
-        self.assertEqual(out_num_infs, 4)
+        assert out_num_infs == 4
 
-    def test_no_filter_infeasible_sequences(self):
+    def test_no_filter_needed(self):
         ds = [
             {"higher_score": "inf"},
             {"higher_score": "0.25"},
             {"higher_score": "0.25"},
         ]
-        prop_infs = 2 / 3
         cfg = OmegaConf.create(
             {
                 "seed": 0,
-                "max_proportion_infeasible": prop_infs,
+                "max_proportion_infeasible": 2 / 3,
             }
         )
         out_ds = filter_infeasible_examples(cfg, ds)
         out_num_infs = len([d for d in out_ds if d["higher_score"] == "inf"])
-        self.assertEqual(out_num_infs, 1)
+        assert out_num_infs == 1
 
-    def test_find_preference_pairs(self):
+
+class TestFindPreferencePairs:
+    def test_basic(self):
         cfg = OmegaConf.create(
             {
                 "score_lower_threshold": -0.5,
@@ -261,14 +253,6 @@ class TestDatasetSelection(unittest.TestCase):
                 "rejected_score": "0.400",
             },
         ]
-        self.assertEqual(len(outputs), len(expected_outputs))
+        assert len(outputs) == len(expected_outputs)
         for o in expected_outputs:
-            try:
-                self.assertTrue(o in outputs)
-            except Exception as e:
-                print(f"Cannot find {o} in outputs:\n{outputs}")
-                raise e
-
-
-if __name__ == "__main__":
-    unittest.main()
+            assert o in outputs, f"Cannot find {o} in outputs:\n{outputs}"
