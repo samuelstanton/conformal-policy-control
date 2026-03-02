@@ -130,35 +130,31 @@ def preload_model_clients(
     gen_model_client: ModelClient | dict[str, ModelClient] | None = None
 
     if proposal == "unconstrained":
-        gen_model_client = lik_model_clients.get(
-            model_dir_list[-1],
-            init_model_client_with_retry(
+        if model_dir_list[-1] in lik_model_clients:
+            gen_model_client = lik_model_clients[model_dir_list[-1]]
+        else:
+            gen_model_client = init_model_client_with_retry(
                 model_dir_list[-1], max_new_tokens_gen, logger
-            ),
-        )
+            )
     elif proposal == "safe":
         if cfg.conformal_policy_control.constrain_against == "init":
-            gen_model_client = lik_model_clients.get(
-                model_dir_list[0],
-                init_model_client_with_retry(
+            if model_dir_list[0] in lik_model_clients:
+                gen_model_client = lik_model_clients[model_dir_list[0]]
+            else:
+                gen_model_client = init_model_client_with_retry(
                     model_dir_list[0], max_new_tokens_gen, logger
-                ),
-            )
+                )
         # For safe/non-init, generation happens via recursion (no pre-load needed)
     elif proposal == "mixture":
+
+        def _get_or_load(path: str) -> ModelClient:
+            if path in lik_model_clients:
+                return lik_model_clients[path]
+            return init_model_client_with_retry(path, max_new_tokens_gen, logger)
+
         gen_model_client = {
-            "unconstrained": lik_model_clients.get(
-                model_dir_list[-1],
-                init_model_client_with_retry(
-                    model_dir_list[-1], max_new_tokens_gen, logger
-                ),
-            ),
-            "safe": lik_model_clients.get(
-                model_dir_list[0],
-                init_model_client_with_retry(
-                    model_dir_list[0], max_new_tokens_gen, logger
-                ),
-            ),
+            "unconstrained": _get_or_load(model_dir_list[-1]),
+            "safe": _get_or_load(model_dir_list[0]),
         }
 
     return gen_model_client, lik_model_clients
