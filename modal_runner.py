@@ -215,7 +215,7 @@ def run_experiment_remote(
             from cpc_llm.main import run_pipeline
 
             set_post_subprocess_hook(outputs_volume.commit)
-            run_pipeline(cfg)
+            run_pipeline(cfg, on_round_complete=outputs_volume.commit)
 
         # Persist any newly downloaded models and pipeline outputs to volumes
         hf_cache_volume.commit()

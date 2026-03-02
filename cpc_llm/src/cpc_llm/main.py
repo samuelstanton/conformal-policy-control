@@ -1,3 +1,5 @@
+from collections.abc import Callable
+
 import hydra
 import logging
 import numpy as np
@@ -37,8 +39,15 @@ from .infer.generation_utils import get_temperatures
 logger = logging.getLogger(__name__)
 
 
-def run_pipeline(cfg: DictConfig):
-    """Run the CPC-LLM pipeline. Can be called directly with a DictConfig."""
+def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None = None):
+    """Run the CPC-LLM pipeline. Can be called directly with a DictConfig.
+
+    Args:
+        cfg: Hydra configuration for the pipeline.
+        on_round_complete: Optional callback invoked after each training round
+            completes. Used by modal_runner to commit the outputs volume so that
+            completed rounds survive client disconnects.
+    """
 
     for random_seed in range(cfg.initial_seed, cfg.last_seed + 1):
         logging.basicConfig(
@@ -169,6 +178,9 @@ def run_pipeline(cfg: DictConfig):
 
             logger.info(f"Trained initial SFT model: {sft_dir}")
             all_model_paths.append(sft_dir)
+
+            if on_round_complete is not None:
+                on_round_complete()
 
         if pi_optimizer_name == "dpo":
             higher_score_particle_field = "prompt"
@@ -551,6 +563,9 @@ def run_pipeline(cfg: DictConfig):
             ## Keep track of calibration data with *constrained* liklihoods
             cal_data_constrained_fp_list.append(cal_constrained_output_path)
 
+            if on_round_complete is not None:
+                on_round_complete()
+
         all_prev_dpo_datasets = []
         """DPO Policy Improvement Outer Loop, with Policy Control Inner Loop"""
         for i in tqdm(
@@ -855,6 +870,9 @@ def run_pipeline(cfg: DictConfig):
             ## Keep track of calibration data with *constrained* liklihoods
             cal_data_constrained_fp_list.append(cal_constrained_output_path)
 
+            if on_round_complete is not None:
+                on_round_complete()
+
         all_prev_marge_datasets = []
         """MARGE Policy Improvement Outer Loop, with Policy Control Inner Loop"""
         for i in tqdm(range(1, cfg.num_marge_rounds), desc="MargE Iterations"):
@@ -1153,6 +1171,9 @@ def run_pipeline(cfg: DictConfig):
 
             ## Keep track of calibration data with *constrained* liklihoods
             cal_data_constrained_fp_list.append(cal_constrained_output_path)
+
+            if on_round_complete is not None:
+                on_round_complete()
 
 
 @hydra.main(config_path="../../config", config_name="pipeline")
