@@ -194,7 +194,7 @@ def main(cfg: DictConfig):
         transformers_logger = transformers_logging.get_logger("transformers")
         try:
             transformers_logger.setLevel(cfg.log_level.upper())
-        except Exception:
+        except (ValueError, AttributeError):
             logger.warning(
                 f"Could not set transformers logger to level {cfg.log_level}. Keeping defaults..."
             )

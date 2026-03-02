@@ -241,7 +241,7 @@ def _log_direct_failure(rc: int, log_path: str, cmd: str = ""):
             lines = f.readlines()
             tail = "".join(lines[-30:])
             logging.error(f"Command failed (rc={rc}). Output tail:\n{tail}")
-    except Exception:
+    except OSError:
         logging.error(f"Command failed (rc={rc}). See {log_path}")
 
 

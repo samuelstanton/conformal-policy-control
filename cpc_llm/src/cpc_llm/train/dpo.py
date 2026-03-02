@@ -145,7 +145,7 @@ def main(cfg: DictConfig):
             transformers_logging, f"set_verbosity_{cfg.log_level}"
         )
         set_verbosity_fn()
-    except Exception:
+    except (AttributeError, ValueError):
         logging.warning(
             f"Could not set transformers logger to level {cfg.log_level}. Keeping defaults..."
         )
