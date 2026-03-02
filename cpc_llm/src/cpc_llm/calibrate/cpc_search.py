@@ -9,7 +9,7 @@ from typing import List
 from omegaconf import DictConfig
 
 from ..infrastructure.file_handler import LocalOrS3Client
-from ..infer.rejection_sampling import accept_reject_sample_and_get_likelihoods
+from ..infer.rejection_sampling import generate_proposals_for_AR_sampling
 from .grid import prepare_grid
 from .normalization import (
     importance_weighted_monte_carlo_integration,
@@ -244,12 +244,15 @@ def cpc_beta_search(
         # psis_list_tmp_dict[proposal] = psis_list_tmp
 
         ## Get proposal samples, unconstrained likelihoods, and constrained likelihoods
+        ## Single generation pass — no AR loop needed for proposal data (D_prop).
         (
             unconstrained_df,
-            unconstrained_gen_liks_fp,
+            gen_liks_fp,
             constrained_liks_df,
-            constrained_gen_liks_fp,
-        ) = accept_reject_sample_and_get_likelihoods(
+            lik_ratios_unconstrained_over_safe,
+            unconstrained_liks,
+            safe_liks,
+        ) = generate_proposals_for_AR_sampling(
             cfg,
             fs,
             model_dir_list,
@@ -265,38 +268,38 @@ def cpc_beta_search(
             lower_score_field=lower_score_field,
             proposal=proposal,
             global_random_seed=global_random_seed,
-        )  # , safe_prop_mix_weight=safe_prop_mix_weight)
+        )
 
-        ## Restrict to number of columns to keep when rerunning from checkpoint (relevant when not overwriting)
-        ## Columns should be ["particle", "score", "lik_r0", ..., "lik_r{n_cal_sets-1}"] (similarly for constrained)
         if unconstrained_df is None and proposal == "unconstrained":
             ## If unconstrained proposal failed to return samples, then stick with proposing from safe policy
             policy_names = ["safe"]
             continue
 
+        ## Restrict to number of columns to keep when rerunning from checkpoint
         unconstrained_df = unconstrained_df.iloc[:, :num_cols_to_keep]
         constrained_liks_df = constrained_liks_df.iloc[:, :num_cols_to_keep]
+
+        ## Construct proposal-specific filepaths for downstream saving
+        unconstrained_gen_liks_fp = os.path.join(
+            os.path.dirname(gen_liks_fp),
+            f"prop_{proposal}_liks.jsonl",
+        )
+        constrained_gen_liks_fp = unconstrained_gen_liks_fp
 
         unconstrained_df_dict[proposal] = unconstrained_df
         unconstrained_gen_liks_fp_dict[proposal] = unconstrained_gen_liks_fp
         constrained_liks_df_dict[proposal] = constrained_liks_df
         constrained_gen_liks_fp_dict[proposal] = constrained_gen_liks_fp
 
-        ## NOTE/Warning: for proposal == 'unconstrained', should have unconstrained_df == constrained_liks_df (identical); else, should have constrained_liks_df.iloc[:,-1] == constrained_liks_df.iloc[:,-2] (fully constrained)
         check_col_names(unconstrained_df)
         check_col_names(constrained_liks_df)
 
+        ## Combine proposal and calibration likelihood ratios
+        prop_data_t0_safe_and_t_unconstrained_liks = np.column_stack(
+            [np.array(safe_liks), np.array(unconstrained_liks)]
+        )
+
         if cfg.conformal_policy_control.constrain_against == "init":
-            unconstrained_liks = unconstrained_df.iloc[:, -1]
-            safe_liks = constrained_liks_df["con_lik_r0"]
-            # constrained_liks = constrained_liks_df.iloc[:, -1]
-            lik_ratios_unconstrained_over_safe = (
-                unconstrained_df.iloc[:, -1] / constrained_liks_df["con_lik_r0"]
-            )
-            prop_data_t0_safe_and_t_unconstrained_liks = pd.concat(
-                [constrained_liks_df["con_lik_r0"], unconstrained_df.iloc[:, -1]],
-                axis=1,
-            ).to_numpy()
             lik_ratios_unconstrained_over_safe_cal_and_prop = np.concatenate(
                 (
                     np.array(lik_ratios_unconstrained_over_safe),
@@ -306,17 +309,7 @@ def cpc_beta_search(
                     ),
                 )
             )
-
         else:
-            unconstrained_liks = unconstrained_df.iloc[:, -1]
-            safe_liks = constrained_liks_df.iloc[:, -2]
-            # constrained_liks = constrained_liks_df.iloc[:, -1]
-            lik_ratios_unconstrained_over_safe = (
-                unconstrained_df.iloc[:, -1] / constrained_liks_df.iloc[:, -2]
-            )
-            prop_data_t0_safe_and_t_unconstrained_liks = pd.concat(
-                [constrained_liks_df.iloc[:, -2], unconstrained_df.iloc[:, -1]], axis=1
-            ).to_numpy()
             lik_ratios_unconstrained_over_safe_cal_and_prop = np.concatenate(
                 (
                     np.array(lik_ratios_unconstrained_over_safe),

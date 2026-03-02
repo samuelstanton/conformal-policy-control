@@ -4,9 +4,6 @@ import datasets
 import functools
 import numpy as np
 import pandas as pd
-import random
-import time
-import torch
 
 import logging
 import os
@@ -22,6 +19,11 @@ from ..infrastructure.orchestration import (
 )
 from ..calibrate.process_likelihoods import constrain_likelihoods
 from ..core.model_client import ModelClient
+from ..core.model_loading import (
+    init_model_client_with_retry,
+    preload_model_clients,
+    cleanup_model_clients,
+)
 from ..core.compute_liks_all_models_one_target import compute_likelihoods_inmemory
 from .iterative_generation2 import run_iterative_generation_inmemory
 from holo.test_functions.closed_form import Ehrlich, RoughMtFuji
@@ -79,75 +81,9 @@ def _load_test_fn(ga_data_dir: str) -> Ehrlich | RoughMtFuji:
     )
 
 
-def _init_model_client_with_retry(
-    model_name_or_path: str,
-    max_new_tokens: int,
-    _logger: logging.Logger,
-    temperature: float = 1.0,
-) -> ModelClient:
-    """Initialize a ModelClient with CUDA exponential-backoff retry.
-
-    Args:
-        model_name_or_path: HuggingFace model identifier or local path.
-        max_new_tokens: Maximum number of tokens to generate.
-        _logger: Logger instance for status messages.
-        temperature: Temperature for likelihood computation scaling.
-
-    Returns:
-        An initialized ModelClient on CUDA (or CPU as fallback).
-    """
-    max_retries = 5
-    retry_delay = 1.0
-    model_client = None
-    fallback_to_cpu = False
-
-    if torch.cuda.is_available():
-        time.sleep(random.uniform(0.1, 0.5))
-
-    for attempt in range(max_retries):
-        try:
-            model_client = ModelClient(
-                model_name_or_path=model_name_or_path,
-                logger=_logger,
-                max_generate_length=max_new_tokens,
-                temperature=temperature,
-                device="cuda",
-            )
-            return model_client
-        except Exception as e:
-            error_str = str(e)
-            is_cuda_error = (
-                "CUDA" in error_str
-                or "busy" in error_str.lower()
-                or "unavailable" in error_str.lower()
-                or "AcceleratorError" in type(e).__name__
-            )
-            if is_cuda_error and attempt < max_retries - 1:
-                wait_time = retry_delay * (2**attempt)
-                _logger.warning(
-                    f"CUDA init failed (attempt {attempt + 1}/{max_retries}): {e}. "
-                    f"Retrying in {wait_time:.1f}s..."
-                )
-                time.sleep(wait_time)
-            elif is_cuda_error:
-                fallback_to_cpu = True
-                _logger.warning(
-                    f"CUDA init failed after {max_retries} attempts: {e}. "
-                    "Falling back to CPU."
-                )
-                break
-            else:
-                raise
-
-    if fallback_to_cpu:
-        return ModelClient(
-            model_name_or_path=model_name_or_path,
-            logger=_logger,
-            max_generate_length=max_new_tokens,
-            temperature=temperature,
-            device="cpu",
-        )
-    raise RuntimeError(f"Failed to initialize ModelClient for {model_name_or_path}")
+# _init_model_client_with_retry is now in core.model_loading; alias for
+# backward compatibility with any callers that import the private name.
+_init_model_client_with_retry = init_model_client_with_retry
 
 
 def _generate_inmemory(
@@ -299,7 +235,7 @@ def generate_proposals_for_AR_sampling(
     psis_list: List[float],  ## Normalization constants
     n_target: int,
     ga_data_dir: str,
-    temps: List[int] = [1.0],
+    temps: List[float] = [1.0],
     depth: int = 0,  ## Recursion depth
     higher_score_particle_field: str = "higher_score_particle",
     lower_score_particle_field: str = "lower_score_particle",
@@ -313,19 +249,100 @@ def generate_proposals_for_AR_sampling(
     _gen_model_client: ModelClient | dict[str, ModelClient] | None = None,
     _test_fn: Ehrlich | RoughMtFuji | None = None,
     _lik_model_clients: dict[str, ModelClient] | None = None,
-) -> str:
+) -> tuple[
+    pd.DataFrame | None,
+    str | None,
+    pd.DataFrame | None,
+    np.ndarray | None,
+    np.ndarray | None,
+    np.ndarray | None,
+]:
 
+    use_inmemory = _is_direct_mode(cfg)
+
+    # ---- Self-load models when not provided by caller ----
+    owns_models = use_inmemory and _lik_model_clients is None
+    if owns_models:
+        _test_fn = _load_test_fn(ga_data_dir)
+        _gen_model_client, _lik_model_clients = preload_model_clients(
+            cfg, model_dir_list, proposal
+        )
+
+    try:
+        return _generate_proposals_for_AR_sampling_impl(
+            cfg,
+            fs,
+            model_dir_list,
+            seeds_fp_list,
+            output_dir,
+            betas_list,
+            psis_list,
+            n_target,
+            ga_data_dir,
+            temps,
+            depth,
+            higher_score_particle_field,
+            lower_score_particle_field,
+            higher_score_field,
+            lower_score_field,
+            proposal,
+            post_policy_control,
+            call_idx,
+            proportion_of_target_n_accepted,
+            global_random_seed,
+            _gen_model_client,
+            _test_fn,
+            _lik_model_clients,
+        )
+    finally:
+        if owns_models:
+            cleanup_model_clients(_lik_model_clients, _gen_model_client)
+
+
+def _generate_proposals_for_AR_sampling_impl(
+    cfg: DictConfig,
+    fs: LocalOrS3Client,
+    model_dir_list: List[str],
+    seeds_fp_list: List[str],
+    output_dir: str,
+    betas_list: List[float],
+    psis_list: List[float],
+    n_target: int,
+    ga_data_dir: str,
+    temps: List[float],
+    depth: int,
+    higher_score_particle_field: str,
+    lower_score_particle_field: str,
+    higher_score_field: str,
+    lower_score_field: str,
+    proposal: str | None,
+    post_policy_control: bool,
+    call_idx: int,
+    proportion_of_target_n_accepted: float,
+    global_random_seed: int,
+    _gen_model_client: ModelClient | dict[str, ModelClient] | None,
+    _test_fn: Ehrlich | RoughMtFuji | None,
+    _lik_model_clients: dict[str, ModelClient] | None,
+) -> tuple[
+    pd.DataFrame | None,
+    str | None,
+    pd.DataFrame | None,
+    np.ndarray | None,
+    np.ndarray | None,
+    np.ndarray | None,
+]:
+    """Implementation of generate_proposals_for_AR_sampling.
+
+    Separated to allow the public function to wrap with model lifecycle
+    management via try/finally.
+    """
     n_models = len(model_dir_list)
     use_inmemory = _is_direct_mode(cfg)
 
-    ## Initialize data frames for storing data for accepted samples
     unconstrained_lik_cols = [f"lik_r{i}" for i in range(n_models)]
     unconstrained_col_names = ["particle", "score"] + unconstrained_lik_cols
-    # accepted_unconstrained_df = pd.DataFrame(columns=unconstrained_col_names)
 
     constrained_lik_cols = [f"con_lik_r{i}" for i in range(n_models)]
-    ["particle", "score"] + constrained_lik_cols
-    # accepted_constrained_df = pd.DataFrame(columns=constrained_col_names)
 
     ## Compute a deterministic random seed for this call
     random_seed_curr = (
@@ -422,8 +439,6 @@ def generate_proposals_for_AR_sampling(
             constrained_liks_mat[:, 0] = gen_liks_mat[:, 0]
 
             for c in range(1, len(unconstrained_lik_cols)):
-                gen_liks_mat[:, [0, c]]
-
                 constrained_liks_mat[:, c] = constrain_likelihoods(
                     cfg,
                     gen_liks_mat[:, [0, c]],
@@ -460,8 +475,6 @@ def generate_proposals_for_AR_sampling(
         constrained_liks_df = pd.concat(
             [gen_liks_df[["particle", "score"]], constrained_liks_df_], axis=1
         )
-
-        len(gen_liks_df)
 
     elif proposal == "safe":
         if cfg.conformal_policy_control.constrain_against == "init":
@@ -539,8 +552,6 @@ def generate_proposals_for_AR_sampling(
             constrained_liks_mat = np.zeros(np.shape(gen_liks_mat))
             constrained_liks_mat[:, 0] = gen_liks_mat[:, 0]
             for c in range(1, len(unconstrained_lik_cols)):
-                gen_liks_mat[:, [0, c]]
-
                 constrained_liks_mat[:, c] = constrain_likelihoods(
                     cfg,
                     gen_liks_mat[:, [0, c]],
@@ -677,7 +688,7 @@ def accept_reject_sample_and_get_likelihoods(
     psis_list: List[float],  ## Normalization constants
     n_target: int,
     ga_data_dir: str,
-    temps: List[int] = [1.0],
+    temps: List[float] = [1.0],
     depth: int = 0,  ## Recursion depth
     higher_score_particle_field: str = "higher_score_particle",
     lower_score_particle_field: str = "lower_score_particle",
@@ -688,7 +699,7 @@ def accept_reject_sample_and_get_likelihoods(
     safe_prop_mix_weight: float = 1.0,  ## if proposal == "mixture":  weight in (0, 1) to assign to safe proposal
     env_const: float = 1.0,  ## Recalculated envelope constant,
     global_random_seed: int = 0.0,
-) -> str:
+) -> tuple[pd.DataFrame | None, str | None, pd.DataFrame | None, str | None]:
 
     n_models = len(model_dir_list)
     use_inmemory = _is_direct_mode(cfg)
@@ -708,58 +719,14 @@ def accept_reject_sample_and_get_likelihoods(
     call_idx = 0
 
     # ---- Pre-load models for in-memory mode ----
-    gen_model_client = None
+    gen_model_client: ModelClient | dict[str, ModelClient] | None = None
     test_fn = None
     lik_model_clients: dict[str, ModelClient] = {}
     if use_inmemory:
         test_fn = _load_test_fn(ga_data_dir)
-
-        # Pre-load likelihood models first so gen can reuse them
-        max_new_tokens_lik = (
-            cfg.compute_likelihooods_all_models.args.generation_config.max_new_tokens
+        gen_model_client, lik_model_clients = preload_model_clients(
+            cfg, model_dir_list, proposal
         )
-        lik_temperature = cfg.temperature
-        for model_path in model_dir_list:
-            if model_path not in lik_model_clients:
-                logger.info(f"Pre-loading likelihood model: {model_path}")
-                lik_model_clients[model_path] = _init_model_client_with_retry(
-                    model_path, max_new_tokens_lik, logger, temperature=lik_temperature
-                )
-
-        # Reuse lik clients for generation when the model path matches
-        # (compute_likelihoods_avg does not use max_generate_length or temperature)
-        max_new_tokens = cfg.iterative_generation.args.generation_config.max_new_tokens
-        if proposal == "unconstrained":
-            if model_dir_list[-1] in lik_model_clients:
-                gen_model_client = lik_model_clients[model_dir_list[-1]]
-            else:
-                gen_model_client = _init_model_client_with_retry(
-                    model_dir_list[-1], max_new_tokens, logger
-                )
-        elif proposal == "safe":
-            if cfg.conformal_policy_control.constrain_against == "init":
-                if model_dir_list[0] in lik_model_clients:
-                    gen_model_client = lik_model_clients[model_dir_list[0]]
-                else:
-                    gen_model_client = _init_model_client_with_retry(
-                        model_dir_list[0], max_new_tokens, logger
-                    )
-            # For safe/non-init, generation happens via recursion (no pre-load needed here)
-        elif proposal == "mixture":
-            gen_model_client = {
-                "unconstrained": lik_model_clients.get(
-                    model_dir_list[-1],
-                    _init_model_client_with_retry(
-                        model_dir_list[-1], max_new_tokens, logger
-                    ),
-                ),
-                "safe": lik_model_clients.get(
-                    model_dir_list[0],
-                    _init_model_client_with_retry(
-                        model_dir_list[0], max_new_tokens, logger
-                    ),
-                ),
-            }
 
     # if betas_list[-1] >= 1:
     if proposal == "unconstrained":
@@ -1322,12 +1289,7 @@ def accept_reject_sample_and_get_likelihoods(
         raise ValueError(f"Unknown proposal name : {proposal}")
 
     # ---- Free pre-loaded models to reclaim GPU memory ----
-    # gen_model_client may be shared with lik_model_clients; clear lik dict
-    # first (releases all references), then delete gen if it was separate.
-    lik_model_clients.clear()
-    if gen_model_client is not None:
-        del gen_model_client
-    torch.cuda.empty_cache()
+    cleanup_model_clients(lik_model_clients, gen_model_client)
 
     # ## Save accepted with unconstrained likelihoods
     # t = len(model_dir_list)-1
