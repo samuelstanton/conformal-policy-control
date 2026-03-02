@@ -9,7 +9,9 @@ from typing import List
 from omegaconf import DictConfig
 
 from ..infrastructure.file_handler import LocalOrS3Client
-from ..infer.rejection_sampling import accept_reject_sample_and_get_likelihoods
+from ..infer.rejection_sampling import generate_sample_batch, compute_batch_likelihoods
+from ..core.model_loading import preload_model_clients, cleanup_model_clients
+from ..infer.rejection_sampling import _load_test_fn, _is_direct_mode
 from .grid import prepare_grid
 from .normalization import (
     importance_weighted_monte_carlo_integration,
@@ -220,139 +222,191 @@ def cpc_beta_search(
     prop_data_t0_safe_and_t_unconstrained_liks_dict = {}
     # betas_list_tmp_dict, psis_list_tmp_dict = {}, {}
 
-    for i, proposal in enumerate(policy_names):
-        if proposal == "safe":
-            ## Use constrained/safe policy as the proposal
-            betas_list_tmp = betas_list + [sys.float_info.min]
-            psis_list_tmp = psis_list + [sys.float_info.min]
-            # model_dir_list_tmp = model_dir_list[:-1]
-            # seeds_fp_list_tmp = seeds_fp_list[:-1]
-            # model_fp_tmp = model_dir_list[-2]
+    ## Pre-load models for in-memory mode
+    use_inmemory = _is_direct_mode(cfg)
+    gen_model_client, lik_model_clients = None, {}
+    test_fn = None
+    if use_inmemory:
+        test_fn = _load_test_fn(ga_data_dir)
+        # Load lik clients once; gen client is selected per proposal below
+        _, lik_model_clients = preload_model_clients(
+            cfg, model_dir_list, "unconstrained"
+        )
 
-        elif proposal == "unconstrained":
-            ## Else, use unconstrained policy as the proposal
-            betas_list_tmp = betas_list + [np.inf]
-            psis_list_tmp = psis_list + [1.0]
-            # model_dir_list_tmp = model_dir_list
-            # seeds_fp_list_tmp = seeds_fp_list
-            # model_fp_tmp = model_dir_list[-1]
+    try:
+        for i, proposal in enumerate(policy_names):
+            if proposal == "safe":
+                betas_list_tmp = betas_list + [sys.float_info.min]
+                psis_list_tmp = psis_list + [sys.float_info.min]
+                gen_model_dir = model_dir_list[0]
+                gen_seeds_fp = seeds_fp_list[0]
+                gen_temp = cfg.temperature_init
+            elif proposal == "unconstrained":
+                betas_list_tmp = betas_list + [np.inf]
+                psis_list_tmp = psis_list + [1.0]
+                gen_model_dir = model_dir_list[-1]
+                gen_seeds_fp = seeds_fp_list[-1]
+                gen_temp = (
+                    cfg.temperature if len(model_dir_list) > 1 else cfg.temperature_init
+                )
+            else:
+                raise ValueError(f"Unrecognized proposal name : {proposal}")
 
-        else:
-            raise ValueError(f"Unrecognized proposal name : {proposal}")
+            gen_model_client = lik_model_clients.get(gen_model_dir)
+            if use_inmemory and gen_model_client is None:
+                raise RuntimeError(f"Model client not pre-loaded for {gen_model_dir}")
 
-        # betas_list_tmp_dict[proposal] = betas_list_tmp
-        # psis_list_tmp_dict[proposal] = psis_list_tmp
-
-        ## Get proposal samples, unconstrained likelihoods, and constrained likelihoods
-        (
-            unconstrained_df,
-            unconstrained_gen_liks_fp,
-            constrained_liks_df,
-            constrained_gen_liks_fp,
-        ) = accept_reject_sample_and_get_likelihoods(
-            cfg,
-            fs,
-            model_dir_list,
-            seeds_fp_list,
-            model_dir_list[-1],
-            betas_list_tmp,
-            psis_list_tmp,
-            cfg.conformal_policy_control.accept_reject.n_target_pre_cpc,
-            ga_data_dir,
-            higher_score_particle_field=higher_score_particle_field,
-            lower_score_particle_field=lower_score_particle_field,
-            higher_score_field=higher_score_field,
-            lower_score_field=lower_score_field,
-            proposal=proposal,
-            global_random_seed=global_random_seed,
-        )  # , safe_prop_mix_weight=safe_prop_mix_weight)
-
-        ## Restrict to number of columns to keep when rerunning from checkpoint (relevant when not overwriting)
-        ## Columns should be ["particle", "score", "lik_r0", ..., "lik_r{n_cal_sets-1}"] (similarly for constrained)
-        if unconstrained_df is None and proposal == "unconstrained":
-            ## If unconstrained proposal failed to return samples, then stick with proposing from safe policy
-            policy_names = ["safe"]
-            continue
-
-        unconstrained_df = unconstrained_df.iloc[:, :num_cols_to_keep]
-        constrained_liks_df = constrained_liks_df.iloc[:, :num_cols_to_keep]
-
-        unconstrained_df_dict[proposal] = unconstrained_df
-        unconstrained_gen_liks_fp_dict[proposal] = unconstrained_gen_liks_fp
-        constrained_liks_df_dict[proposal] = constrained_liks_df
-        constrained_gen_liks_fp_dict[proposal] = constrained_gen_liks_fp
-
-        ## NOTE/Warning: for proposal == 'unconstrained', should have unconstrained_df == constrained_liks_df (identical); else, should have constrained_liks_df.iloc[:,-1] == constrained_liks_df.iloc[:,-2] (fully constrained)
-        check_col_names(unconstrained_df)
-        check_col_names(constrained_liks_df)
-
-        if cfg.conformal_policy_control.constrain_against == "init":
-            unconstrained_liks = unconstrained_df.iloc[:, -1]
-            safe_liks = constrained_liks_df["con_lik_r0"]
-            # constrained_liks = constrained_liks_df.iloc[:, -1]
-            lik_ratios_unconstrained_over_safe = (
-                unconstrained_df.iloc[:, -1] / constrained_liks_df["con_lik_r0"]
+            ## Step 1: Generate samples from the proposal model
+            gen_df = generate_sample_batch(
+                cfg,
+                fs,
+                gen_seeds_fp,
+                ga_data_dir,
+                gen_model_dir,
+                model_dir_list[-1],  # output_dir
+                gen_temp,
+                higher_score_particle_field=higher_score_particle_field,
+                lower_score_particle_field=lower_score_particle_field,
+                higher_score_field=higher_score_field,
+                lower_score_field=lower_score_field,
+                random_seed=global_random_seed * 10000,
+                n_target=cfg.conformal_policy_control.accept_reject.n_target_pre_cpc,
+                _model_client=gen_model_client,
+                _test_fn=test_fn,
             )
-            prop_data_t0_safe_and_t_unconstrained_liks = pd.concat(
-                [constrained_liks_df["con_lik_r0"], unconstrained_df.iloc[:, -1]],
+
+            if gen_df is None and proposal == "unconstrained":
+                policy_names = ["safe"]
+                continue
+            if gen_df is None:
+                continue
+
+            ## Step 2: Compute likelihoods under all models
+            unconstrained_df = compute_batch_likelihoods(
+                cfg,
+                fs,
+                gen_df,
+                seeds_fp_list,
+                model_dir_list,
+                _lik_model_clients=lik_model_clients or None,
+            )
+
+            unconstrained_lik_cols_prop = [f"lik_r{j}" for j in range(n_models)]
+            unconstrained_col_names_prop = [
+                "particle",
+                "score",
+            ] + unconstrained_lik_cols_prop
+            unconstrained_df = unconstrained_df[unconstrained_col_names_prop]
+
+            ## Step 3: Constrain likelihoods
+            gen_liks_mat = unconstrained_df[unconstrained_lik_cols_prop].to_numpy()
+
+            if cfg.conformal_policy_control.constrain_against == "init":
+                constrained_liks_mat = np.zeros(np.shape(gen_liks_mat))
+                constrained_liks_mat[:, 0] = gen_liks_mat[:, 0]
+                for c in range(1, n_models):
+                    constrained_liks_mat[:, c] = constrain_likelihoods(
+                        cfg,
+                        gen_liks_mat[:, [0, c]],
+                        [betas_list_tmp[0], betas_list_tmp[c]],
+                        [psis_list_tmp[0], psis_list_tmp[c]],
+                    )[:, -1]
+                safe_liks = constrained_liks_mat[:, 0]
+            else:
+                constrained_liks_mat = constrain_likelihoods(
+                    cfg, gen_liks_mat, betas_list_tmp, psis_list_tmp
+                )
+                if constrained_liks_mat.shape[1] > 1:
+                    safe_liks = constrained_liks_mat[:, -2]
+                else:
+                    safe_liks = constrained_liks_mat[:, -1]
+
+            unconstrained_liks = gen_liks_mat[:, -1]
+            lik_ratios_unconstrained_over_safe = unconstrained_liks / safe_liks
+
+            constrained_lik_cols_prop = [f"con_lik_r{j}" for j in range(n_models)]
+            constrained_liks_df = pd.concat(
+                [
+                    unconstrained_df[["particle", "score"]],
+                    pd.DataFrame(
+                        constrained_liks_mat, columns=constrained_lik_cols_prop
+                    ),
+                ],
                 axis=1,
-            ).to_numpy()
-            lik_ratios_unconstrained_over_safe_cal_and_prop = np.concatenate(
-                (
-                    np.array(lik_ratios_unconstrained_over_safe),
-                    np.array(
-                        cal_data_unconstrained_all.iloc[:, -1]
-                        / cal_data_constrained_all["con_lik_r0"]
-                    ),
+            )
+
+            ## Restrict to number of columns to keep when rerunning from checkpoint
+            unconstrained_df = unconstrained_df.iloc[:, :num_cols_to_keep]
+            constrained_liks_df = constrained_liks_df.iloc[:, :num_cols_to_keep]
+
+            ## Construct proposal-specific filepaths for downstream saving
+            proposal_fp = os.path.join(
+                model_dir_list[-1], f"prop_{proposal}_liks.jsonl"
+            )
+
+            unconstrained_df_dict[proposal] = unconstrained_df
+            unconstrained_gen_liks_fp_dict[proposal] = proposal_fp
+            constrained_liks_df_dict[proposal] = constrained_liks_df
+            constrained_gen_liks_fp_dict[proposal] = proposal_fp
+
+            check_col_names(unconstrained_df)
+            check_col_names(constrained_liks_df)
+
+            ## Combine proposal and calibration likelihood ratios
+            prop_data_t0_safe_and_t_unconstrained_liks = np.column_stack(
+                [np.array(safe_liks), np.array(unconstrained_liks)]
+            )
+
+            if cfg.conformal_policy_control.constrain_against == "init":
+                lik_ratios_unconstrained_over_safe_cal_and_prop = np.concatenate(
+                    (
+                        np.array(lik_ratios_unconstrained_over_safe),
+                        np.array(
+                            cal_data_unconstrained_all.iloc[:, -1]
+                            / cal_data_constrained_all["con_lik_r0"]
+                        ),
+                    )
                 )
-            )
-
-        else:
-            unconstrained_liks = unconstrained_df.iloc[:, -1]
-            safe_liks = constrained_liks_df.iloc[:, -2]
-            # constrained_liks = constrained_liks_df.iloc[:, -1]
-            lik_ratios_unconstrained_over_safe = (
-                unconstrained_df.iloc[:, -1] / constrained_liks_df.iloc[:, -2]
-            )
-            prop_data_t0_safe_and_t_unconstrained_liks = pd.concat(
-                [constrained_liks_df.iloc[:, -2], unconstrained_df.iloc[:, -1]], axis=1
-            ).to_numpy()
-            lik_ratios_unconstrained_over_safe_cal_and_prop = np.concatenate(
-                (
-                    np.array(lik_ratios_unconstrained_over_safe),
-                    np.array(
-                        cal_data_unconstrained_all.iloc[:, -1]
-                        / cal_data_unconstrained_all.iloc[:, -2]
-                    ),
+            else:
+                lik_ratios_unconstrained_over_safe_cal_and_prop = np.concatenate(
+                    (
+                        np.array(lik_ratios_unconstrained_over_safe),
+                        np.array(
+                            cal_data_unconstrained_all.iloc[:, -1]
+                            / cal_data_unconstrained_all.iloc[:, -2]
+                        ),
+                    )
                 )
+
+            prop_data_t0_safe_and_t_unconstrained_liks_dict[proposal] = (
+                prop_data_t0_safe_and_t_unconstrained_liks
+            )
+            lik_ratios_unconstrained_over_safe_cal_and_prop_dict[proposal] = (
+                lik_ratios_unconstrained_over_safe_cal_and_prop
+            )
+            lik_ratios_unconstrained_over_safe_dict[proposal] = (
+                lik_ratios_unconstrained_over_safe
             )
 
-        prop_data_t0_safe_and_t_unconstrained_liks_dict[proposal] = (
-            prop_data_t0_safe_and_t_unconstrained_liks
-        )
-        lik_ratios_unconstrained_over_safe_cal_and_prop_dict[proposal] = (
-            lik_ratios_unconstrained_over_safe_cal_and_prop
-        )
-        lik_ratios_unconstrained_over_safe_dict[proposal] = (
-            lik_ratios_unconstrained_over_safe
-        )
+            unconstrained_liks_dict[proposal] = unconstrained_liks
+            safe_liks_dict[proposal] = safe_liks
+            # constrained_liks_dict[proposal] = constrained_liks
 
-        unconstrained_liks_dict[proposal] = unconstrained_liks
-        safe_liks_dict[proposal] = safe_liks
-        # constrained_liks_dict[proposal] = constrained_liks
-
-        ## Compute mixture weights for past data
-        prop_data_constrained_all = constrained_liks_df
-        prop_data_constrained_prev_liks = prop_data_constrained_all[
-            constrained_lik_cols
-        ].to_numpy()
-        mixture_weights = np.array(n_cal_per_model)
-        prop_mixture_constrained_density = mixture_pdf_from_densities_mat(
-            prop_data_constrained_prev_liks, mixture_weights
-        )
-        prop_mixture_constrained_density_dict[proposal] = (
-            prop_mixture_constrained_density
-        )
+            ## Compute mixture weights for past data
+            prop_data_constrained_all = constrained_liks_df
+            prop_data_constrained_prev_liks = prop_data_constrained_all[
+                constrained_lik_cols
+            ].to_numpy()
+            mixture_weights = np.array(n_cal_per_model)
+            prop_mixture_constrained_density = mixture_pdf_from_densities_mat(
+                prop_data_constrained_prev_liks, mixture_weights
+            )
+            prop_mixture_constrained_density_dict[proposal] = (
+                prop_mixture_constrained_density
+            )
+    finally:
+        if use_inmemory:
+            cleanup_model_clients(lik_model_clients, gen_model_client)
 
     lik_ratios_unconstrained_over_safe_cal_and_prop_arr = np.array(
         lik_ratios_unconstrained_over_safe_cal_and_prop_dict[policy_names[0]]

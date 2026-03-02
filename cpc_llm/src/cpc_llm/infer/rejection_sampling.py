@@ -4,9 +4,6 @@ import datasets
 import functools
 import numpy as np
 import pandas as pd
-import random
-import time
-import torch
 
 import logging
 import os
@@ -22,8 +19,13 @@ from ..infrastructure.orchestration import (
 )
 from ..calibrate.process_likelihoods import constrain_likelihoods
 from ..core.model_client import ModelClient
+from ..core.model_loading import (
+    init_model_client_with_retry,
+    preload_model_clients,
+    cleanup_model_clients,
+)
 from ..core.compute_liks_all_models_one_target import compute_likelihoods_inmemory
-from .iterative_generation2 import run_iterative_generation_inmemory
+from .iterative_generation2 import generate_single_batch
 from holo.test_functions.closed_form import Ehrlich, RoughMtFuji
 
 
@@ -79,75 +81,150 @@ def _load_test_fn(ga_data_dir: str) -> Ehrlich | RoughMtFuji:
     )
 
 
-def _init_model_client_with_retry(
-    model_name_or_path: str,
-    max_new_tokens: int,
-    _logger: logging.Logger,
-    temperature: float = 1.0,
-) -> ModelClient:
-    """Initialize a ModelClient with CUDA exponential-backoff retry.
+# _init_model_client_with_retry is now in core.model_loading; alias for
+# backward compatibility with any callers that import the private name.
+_init_model_client_with_retry = init_model_client_with_retry
+
+
+def generate_sample_batch(
+    cfg: DictConfig,
+    fs: LocalOrS3Client,
+    seeds_fp: str,
+    ga_data_dir: str,
+    model_dir: str,
+    output_dir: str,
+    temp: float,
+    higher_score_particle_field: str = "higher_score_particle",
+    lower_score_particle_field: str = "lower_score_particle",
+    higher_score_field: str = "higher_score",
+    lower_score_field: str = "lower_score",
+    random_seed: int = 0,
+    call_idx: int = 0,
+    global_random_seed: int = 0,
+    n_target: int | None = None,
+    _model_client: ModelClient | None = None,
+    _test_fn: Ehrlich | RoughMtFuji | None = None,
+) -> pd.DataFrame | None:
+    """Generate samples from a model, with optional early stopping.
+
+    In in-memory mode, generates one batch at a time via generate_single_batch,
+    looping up to max_iterations and stopping early when n_target valid samples
+    have been collected. In subprocess mode, delegates to run_iterative_generation.
 
     Args:
-        model_name_or_path: HuggingFace model identifier or local path.
-        max_new_tokens: Maximum number of tokens to generate.
-        _logger: Logger instance for status messages.
-        temperature: Temperature for likelihood computation scaling.
+        cfg: Pipeline config.
+        fs: File handler (local or S3).
+        seeds_fp: Path to the JSONL seeds file.
+        ga_data_dir: Directory containing test function parameters.
+        model_dir: Path to the model to generate from.
+        output_dir: Output directory for subprocess mode.
+        temp: Generation temperature.
+        higher_score_particle_field: Column name for higher-score particles.
+        lower_score_particle_field: Column name for lower-score particles.
+        higher_score_field: Column name for higher scores.
+        lower_score_field: Column name for lower scores.
+        random_seed: Random seed for reproducible seed selection.
+        call_idx: Call index for subprocess filename construction.
+        global_random_seed: Global random seed for subprocess mode.
+        n_target: If provided, stop generation early once this many valid
+            samples have been collected (in-memory mode only).
+        _model_client: Pre-loaded ModelClient (required for in-memory mode).
+        _test_fn: Pre-loaded test function (required for in-memory mode).
 
     Returns:
-        An initialized ModelClient on CUDA (or CPU as fallback).
+        DataFrame with columns: particle, score, num_particles_generated.
+        Returns None if generation produced no samples.
     """
-    max_retries = 5
-    retry_delay = 1.0
-    model_client = None
-    fallback_to_cpu = False
-
-    if torch.cuda.is_available():
-        time.sleep(random.uniform(0.1, 0.5))
-
-    for attempt in range(max_retries):
-        try:
-            model_client = ModelClient(
-                model_name_or_path=model_name_or_path,
-                logger=_logger,
-                max_generate_length=max_new_tokens,
-                temperature=temperature,
-                device="cuda",
-            )
-            return model_client
-        except Exception as e:
-            error_str = str(e)
-            is_cuda_error = (
-                "CUDA" in error_str
-                or "busy" in error_str.lower()
-                or "unavailable" in error_str.lower()
-                or "AcceleratorError" in type(e).__name__
-            )
-            if is_cuda_error and attempt < max_retries - 1:
-                wait_time = retry_delay * (2**attempt)
-                _logger.warning(
-                    f"CUDA init failed (attempt {attempt + 1}/{max_retries}): {e}. "
-                    f"Retrying in {wait_time:.1f}s..."
-                )
-                time.sleep(wait_time)
-            elif is_cuda_error:
-                fallback_to_cpu = True
-                _logger.warning(
-                    f"CUDA init failed after {max_retries} attempts: {e}. "
-                    "Falling back to CPU."
-                )
-                break
-            else:
-                raise
-
-    if fallback_to_cpu:
-        return ModelClient(
-            model_name_or_path=model_name_or_path,
-            logger=_logger,
-            max_generate_length=max_new_tokens,
-            temperature=temperature,
-            device="cpu",
+    if _is_direct_mode(cfg):
+        gen_df = _generate_inmemory(
+            cfg,
+            seeds_fp,
+            _model_client,
+            _test_fn,
+            temp,
+            higher_score_particle_field,
+            lower_score_particle_field,
+            higher_score_field,
+            lower_score_field,
+            random_seed,
+            n_target=n_target,
         )
-    raise RuntimeError(f"Failed to initialize ModelClient for {model_name_or_path}")
+    else:
+        _, iter_gen_outputs_list, _hd = run_iterative_generation(
+            cfg,
+            fs,
+            seeds_fp,
+            ga_data_dir,
+            model_dir,
+            output_dir,
+            higher_score_particle_field=higher_score_particle_field,
+            lower_score_particle_field=lower_score_particle_field,
+            higher_score_field=higher_score_field,
+            lower_score_field=lower_score_field,
+            temps=[temp],
+            model_idx=0,
+            call_idx=call_idx,
+            global_random_seed=global_random_seed,
+        )
+        gen_df = pd.read_json(iter_gen_outputs_list[-1], orient="records", lines=True)
+
+    if len(gen_df) == 0:
+        return None
+    return gen_df
+
+
+def compute_batch_likelihoods(
+    cfg: DictConfig,
+    fs: LocalOrS3Client,
+    target_df: pd.DataFrame,
+    seeds_fp_list: List[str],
+    model_dir_list: List[str],
+    model_indices: List[int] | None = None,
+    target_fp: str | None = None,
+    _lik_model_clients: dict[str, ModelClient] | None = None,
+) -> pd.DataFrame:
+    """Compute likelihoods for a batch of samples under all models.
+
+    Handles both in-memory (direct) and subprocess (SLURM) execution modes.
+
+    Args:
+        cfg: Pipeline config.
+        fs: File handler (local or S3).
+        target_df: DataFrame of generated samples (particle, score, ...).
+        seeds_fp_list: List of seed filepaths, one per model.
+        model_dir_list: List of model directory paths.
+        model_indices: Indices for likelihood column naming (lik_r0, lik_r1, ...).
+            Defaults to range(len(model_dir_list)).
+        target_fp: Filepath of target data on disk (required for subprocess mode).
+        _lik_model_clients: Pre-loaded model clients for in-memory mode.
+
+    Returns:
+        DataFrame with lik_r0, lik_r1, ... columns appended.
+    """
+    if model_indices is None:
+        model_indices = list(range(len(model_dir_list)))
+
+    if _is_direct_mode(cfg):
+        return _compute_liks_all_models_inmemory(
+            cfg,
+            target_df,
+            seeds_fp_list,
+            model_dir_list,
+            model_indices,
+            _lik_model_clients=_lik_model_clients,
+        )
+    else:
+        gen_liks_fp_list, _hd = run_compute_liks_all_models_and_cal_data(
+            cfg,
+            fs,
+            seeds_fp_list=seeds_fp_list,
+            prev_cal_data_fp_list=[],
+            model_dir_list=model_dir_list,
+            target_fp=target_fp,
+            model_indices=model_indices,
+            temps=[cfg.temperature],
+        )
+        return pd.read_json(gen_liks_fp_list[-1], orient="records", lines=True)
 
 
 def _generate_inmemory(
@@ -161,23 +238,12 @@ def _generate_inmemory(
     higher_score_field: str,
     lower_score_field: str,
     random_seed: int,
+    n_target: int | None = None,
 ) -> pd.DataFrame:
-    """Read seeds, select, and generate proposals entirely in memory.
+    """Read seeds, select, and generate samples entirely in memory.
 
-    Args:
-        cfg: Pipeline config with iterative_generation settings.
-        seeds_fp: Path to the JSONL seeds file.
-        model_client: Pre-initialized ModelClient for generation.
-        test_fn: Test function for scoring generated particles.
-        temp: Generation temperature.
-        higher_score_particle_field: Column name for higher-score particles.
-        lower_score_particle_field: Column name for lower-score particles.
-        higher_score_field: Column name for higher scores.
-        lower_score_field: Column name for lower scores.
-        random_seed: Random seed for reproducible seed selection.
-
-    Returns:
-        DataFrame with columns: particle, score, loglikelihood, num_particles_generated.
+    Calls generate_single_batch in a loop up to max_iterations times,
+    stopping early if n_target valid samples have been collected.
     """
     df = _read_jsonl_cached(seeds_fp)
 
@@ -230,10 +296,8 @@ def _generate_inmemory(
         max_new_tokens=cfg.iterative_generation.args.generation_config.max_new_tokens,
     )
 
-    # Build a minimal config for run_iterative_generation_inmemory
     gen_cfg = OmegaConf.create(
         {
-            "max_iterations": cfg.iterative_generation.args.max_iterations,
             "batch_size": cfg.sampling_gen_batch_size,
             "subsample_seeds": cfg.iterative_generation.args.subsample_seeds,
             "permissive_parsing": cfg.iterative_generation.permissive_parsing,
@@ -242,9 +306,27 @@ def _generate_inmemory(
         }
     )
 
-    return run_iterative_generation_inmemory(
-        input_ds, model_client, test_fn, gen_config, gen_cfg, logger
-    )
+    max_iterations = cfg.iterative_generation.args.max_iterations
+    all_dfs = []
+    n_collected = 0
+    for _iter in range(max_iterations):
+        batch_df = generate_single_batch(
+            input_ds, model_client, test_fn, gen_config, gen_cfg, logger
+        )
+        if len(batch_df) > 0:
+            all_dfs.append(batch_df)
+            n_collected += len(batch_df)
+
+        if n_target is not None and n_collected >= n_target:
+            logger.info(
+                f"Early exit at iteration {_iter + 1}/{max_iterations}: "
+                f"{n_collected} >= {n_target} target samples"
+            )
+            break
+
+    if all_dfs:
+        return pd.concat(all_dfs, ignore_index=True)
+    return pd.DataFrame(columns=["particle", "score", "num_particles_generated"])
 
 
 def _compute_liks_all_models_inmemory(
@@ -285,386 +367,8 @@ def _compute_liks_all_models_inmemory(
 
 
 # ---------------------------------------------------------------------------
-# Main AR-sampling functions
+# Main AR-sampling function
 # ---------------------------------------------------------------------------
-
-
-def generate_proposals_for_AR_sampling(
-    cfg: DictConfig,
-    fs: LocalOrS3Client,
-    model_dir_list: List[str],
-    seeds_fp_list: List[str],
-    output_dir: str,
-    betas_list: List[float],
-    psis_list: List[float],  ## Normalization constants
-    n_target: int,
-    ga_data_dir: str,
-    temps: List[int] = [1.0],
-    depth: int = 0,  ## Recursion depth
-    higher_score_particle_field: str = "higher_score_particle",
-    lower_score_particle_field: str = "lower_score_particle",
-    higher_score_field: str = "higher_score",
-    lower_score_field: str = "lower_score",
-    proposal: str = None,  ## Proposal distribution (safe or unconstrained), or None --> means running for filtering
-    post_policy_control: bool = False,  ## Whether calling post policy control (True <--> generating risk-controlled actions), or pre control (False <--> Generating proposals)
-    call_idx: int = 1,
-    proportion_of_target_n_accepted: float = 0.0,
-    global_random_seed: int = 0,
-    _gen_model_client: ModelClient | dict[str, ModelClient] | None = None,
-    _test_fn: Ehrlich | RoughMtFuji | None = None,
-    _lik_model_clients: dict[str, ModelClient] | None = None,
-) -> str:
-
-    n_models = len(model_dir_list)
-    use_inmemory = _is_direct_mode(cfg)
-
-    ## Initialize data frames for storing data for accepted samples
-    unconstrained_lik_cols = [f"lik_r{i}" for i in range(n_models)]
-    unconstrained_col_names = ["particle", "score"] + unconstrained_lik_cols
-    # accepted_unconstrained_df = pd.DataFrame(columns=unconstrained_col_names)
-
-    constrained_lik_cols = [f"con_lik_r{i}" for i in range(n_models)]
-    ["particle", "score"] + constrained_lik_cols
-    # accepted_constrained_df = pd.DataFrame(columns=constrained_col_names)
-
-    ## Compute a deterministic random seed for this call
-    random_seed_curr = (
-        global_random_seed * 10000 + post_policy_control * 1000 + call_idx
-    )
-
-    if proposal == "unconstrained":
-        # accepted_curr = []
-
-        temps_curr = temps if len(model_dir_list) > 1 else [cfg.temperature_init]
-
-        if use_inmemory:
-            # ---- In-memory path: no subprocesses, no intermediate files ----
-            gen_df_ = _generate_inmemory(
-                cfg,
-                seeds_fp_list[-1],
-                _gen_model_client,
-                _test_fn,
-                temps_curr[-1],
-                higher_score_particle_field,
-                lower_score_particle_field,
-                higher_score_field,
-                lower_score_field,
-                random_seed_curr,
-            )
-
-            if len(gen_df_) == 0:
-                return None, None, None, None, None, None
-
-            gen_liks_df = _compute_liks_all_models_inmemory(
-                cfg,
-                gen_df_,
-                seeds_fp_list,
-                model_dir_list,
-                list(range(n_models)),
-                _lik_model_clients=_lik_model_clients,
-            )
-            # Synthetic filepath for output-dir derivation downstream
-            gen_liks_fp = os.path.join(output_dir, "inmemory_liks.jsonl")
-        else:
-            # ---- Subprocess path (SLURM / legacy direct) ----
-            ## Sample using unconstrained model as proposal
-            _, iter_gen_outputs_list, hd = run_iterative_generation(
-                cfg,
-                fs,
-                seeds_fp_list[-1],  # combined_sft_dataset_fp,
-                ga_data_dir,
-                model_dir_list[-1],  # sft_dir,
-                output_dir,
-                higher_score_particle_field=higher_score_particle_field,
-                lower_score_particle_field=lower_score_particle_field,
-                higher_score_field=higher_score_field,
-                lower_score_field=lower_score_field,
-                temps=temps_curr,
-                model_idx=len(model_dir_list)
-                - 1,  ## Index for model being called for generation
-                call_idx=call_idx,  ## Index for times this generation has been called, including current, for same model directory
-                proportion_of_target_n_accepted=proportion_of_target_n_accepted,
-                post_policy_control=post_policy_control,
-                global_random_seed=global_random_seed,
-            )
-            # call_idx += 1
-
-            gen_df_ = pd.read_json(
-                iter_gen_outputs_list[-1], orient="records", lines=True
-            )
-
-            if len(gen_df_) == 0:
-                return None, None, None, None, None, None
-
-            ## Compute unconstrained likelihoods for all models on the output proposal samples
-            gen_liks_fp_list, hd = run_compute_liks_all_models_and_cal_data(
-                cfg,
-                fs,
-                seeds_fp_list=seeds_fp_list,
-                prev_cal_data_fp_list=[],
-                model_dir_list=model_dir_list,
-                target_fp=iter_gen_outputs_list[-1],
-                temps=[cfg.temperature],
-            )
-            gen_liks_fp = gen_liks_fp_list[-1]
-
-            gen_liks_df = pd.read_json(gen_liks_fp, orient="records", lines=True)
-
-        gen_liks_df = gen_liks_df[unconstrained_col_names]
-        gen_liks_mat = gen_liks_df[
-            unconstrained_lik_cols
-        ].to_numpy()  ## Shape (n_prop, n_models)
-
-        if cfg.conformal_policy_control.constrain_against == "init":
-            idx_safe_model = 0
-
-            constrained_liks_mat = np.zeros(np.shape(gen_liks_mat))
-            constrained_liks_mat[:, 0] = gen_liks_mat[:, 0]
-
-            for c in range(1, len(unconstrained_lik_cols)):
-                gen_liks_mat[:, [0, c]]
-
-                constrained_liks_mat[:, c] = constrain_likelihoods(
-                    cfg,
-                    gen_liks_mat[:, [0, c]],
-                    [betas_list[0], betas_list[c]],
-                    [psis_list[0], psis_list[c]],
-                )[:, -1]  ## Shape (n_prop, n_models)
-
-            unconstrained_liks = gen_liks_mat[:, -1]
-            safe_liks = constrained_liks_mat[:, idx_safe_model]
-            lik_ratios_unconstrained_over_safe = unconstrained_liks / safe_liks
-
-        else:
-            idx_safe_model = -2
-
-            constrained_liks_mat = constrain_likelihoods(
-                cfg, gen_liks_mat, betas_list, psis_list
-            )  ## Shape (n_prop, n_models)
-
-            unconstrained_liks = gen_liks_mat[:, -1]
-
-            if constrained_liks_mat.shape[1] > 1:
-                ## If is not original safe model, \pi_{\theta_0}
-                safe_liks = constrained_liks_mat[:, -2]
-            else:
-                ## Else is original safe model, \pi_{\theta_0}, so unconstrained and constrained likelihoods are the same
-                ## (Lik ratios should be == 1, and bound == inf, so should accept everything)
-                safe_liks = constrained_liks_mat[:, -1]
-
-            lik_ratios_unconstrained_over_safe = unconstrained_liks / safe_liks
-
-        constrained_liks_df_ = pd.DataFrame(
-            constrained_liks_mat, columns=constrained_lik_cols
-        )
-        constrained_liks_df = pd.concat(
-            [gen_liks_df[["particle", "score"]], constrained_liks_df_], axis=1
-        )
-
-        len(gen_liks_df)
-
-    elif proposal == "safe":
-        if cfg.conformal_policy_control.constrain_against == "init":
-            if use_inmemory:
-                # ---- In-memory path ----
-                gen_df_ = _generate_inmemory(
-                    cfg,
-                    seeds_fp_list[0],
-                    _gen_model_client,
-                    _test_fn,
-                    cfg.temperature_init,
-                    higher_score_particle_field,
-                    lower_score_particle_field,
-                    higher_score_field,
-                    lower_score_field,
-                    random_seed_curr,
-                )
-
-                if len(gen_df_) == 0:
-                    return None, None, None, None, None, None
-
-                gen_liks_df = _compute_liks_all_models_inmemory(
-                    cfg,
-                    gen_df_,
-                    seeds_fp_list,
-                    model_dir_list,
-                    list(range(n_models)),
-                    _lik_model_clients=_lik_model_clients,
-                )
-                gen_liks_fp = os.path.join(output_dir, "inmemory_liks.jsonl")
-            else:
-                # ---- Subprocess path ----
-                _, iter_gen_outputs_list, hd = run_iterative_generation(
-                    cfg,
-                    fs,
-                    seeds_fp_list[0],  # combined_sft_dataset_fp,
-                    ga_data_dir,
-                    model_dir_list[0],  # sft_dir,
-                    output_dir,
-                    higher_score_particle_field=higher_score_particle_field,
-                    lower_score_particle_field=lower_score_particle_field,
-                    higher_score_field=higher_score_field,
-                    lower_score_field=lower_score_field,
-                    temps=[cfg.temperature_init],
-                    model_idx=0,  # len(model_dir_list) - 1, ## Index for model being called for generation
-                    call_idx=call_idx,  ## Index for times this generation has been called, including current, for same model directory
-                    proportion_of_target_n_accepted=proportion_of_target_n_accepted,
-                    post_policy_control=post_policy_control,
-                    global_random_seed=global_random_seed,
-                )
-                gen_df_ = pd.read_json(
-                    iter_gen_outputs_list[-1], orient="records", lines=True
-                )
-
-                if len(gen_df_) == 0:
-                    return None, None, None, None, None, None
-
-                ## Compute unconstrained likelihoods for all models on the output proposal samples
-                gen_liks_fp_list, hd = run_compute_liks_all_models_and_cal_data(
-                    cfg,
-                    fs,
-                    seeds_fp_list=seeds_fp_list,
-                    prev_cal_data_fp_list=[],
-                    model_dir_list=model_dir_list,
-                    target_fp=iter_gen_outputs_list[-1],
-                    temps=[cfg.temperature],
-                )
-                gen_liks_fp = gen_liks_fp_list[-1]
-
-                gen_liks_df = pd.read_json(gen_liks_fp, orient="records", lines=True)
-
-            gen_liks_df = gen_liks_df[unconstrained_col_names]
-            gen_liks_mat = gen_liks_df[unconstrained_lik_cols].to_numpy()
-
-            constrained_liks_mat = np.zeros(np.shape(gen_liks_mat))
-            constrained_liks_mat[:, 0] = gen_liks_mat[:, 0]
-            for c in range(1, len(unconstrained_lik_cols)):
-                gen_liks_mat[:, [0, c]]
-
-                constrained_liks_mat[:, c] = constrain_likelihoods(
-                    cfg,
-                    gen_liks_mat[:, [0, c]],
-                    [betas_list[0], betas_list[c]],
-                    [psis_list[0], psis_list[c]],
-                )[:, -1]  ## Shape (n_prop, n_models)
-
-            unconstrained_liks = gen_liks_mat[:, -1]
-            safe_liks = constrained_liks_mat[:, 0]
-            lik_ratios_unconstrained_over_safe = unconstrained_liks / safe_liks
-
-            constrained_liks_df_ = pd.DataFrame(
-                constrained_liks_mat, columns=constrained_lik_cols
-            )
-            constrained_liks_df = pd.concat(
-                [gen_liks_df[["particle", "score"]], constrained_liks_df_], axis=1
-            )
-
-        else:
-            ## Shouldn't need this, handled in base case of recursion
-            # temps_curr = temps if len(model_dir_list) - 1 > 1 else [cfg.temperature_init] ## If model list after removing one model is not just initial, use temps
-
-            ## Sample using unconstrained model as proposal
-            (
-                gen_liks_tmin1_df,
-                gen_liks_tmin1_fp,
-                constrained_gen_liks_tmin1_df,
-                constrained_gen_liks_tmin1_fp,
-            ) = accept_reject_sample_and_get_likelihoods(
-                cfg,
-                fs,
-                model_dir_list[:-1],
-                seeds_fp_list[:-1],
-                output_dir,
-                betas_list[:-1],
-                psis_list[:-1],  ## Normalization constants
-                n_target,
-                ga_data_dir,
-                temps,
-                depth + 1,
-                higher_score_particle_field=higher_score_particle_field,
-                lower_score_particle_field=lower_score_particle_field,
-                higher_score_field=higher_score_field,
-                lower_score_field=lower_score_field,
-                proposal="safe",
-                global_random_seed=global_random_seed,
-            )
-
-            if use_inmemory:
-                # ---- In-memory path for likelihood of most recent model ----
-                gen_liks_df = _compute_liks_all_models_inmemory(
-                    cfg,
-                    gen_liks_tmin1_df,
-                    [seeds_fp_list[-1]],
-                    [model_dir_list[-1]],
-                    [len(model_dir_list) - 1],
-                    _lik_model_clients=_lik_model_clients,
-                )
-                gen_liks_fp = os.path.join(output_dir, "inmemory_liks.jsonl")
-            else:
-                ## Compute unconstrained likelihoods for most recent model (not passed to recursion) on output proposal samples
-                gen_liks_fp_list, hd = run_compute_liks_all_models_and_cal_data(
-                    cfg,
-                    fs,
-                    seeds_fp_list=[seeds_fp_list[-1]],
-                    prev_cal_data_fp_list=[],
-                    model_dir_list=[model_dir_list[-1]],
-                    target_fp=gen_liks_tmin1_fp,  ## Should add a column for time t to gen_liks_tmin1_fp
-                    model_indices=[
-                        len(model_dir_list) - 1
-                    ],  ## Index for most recent model
-                    temps=temps,
-                )
-                gen_liks_fp = gen_liks_fp_list[-1]
-
-                gen_liks_df = pd.read_json(gen_liks_fp, orient="records", lines=True)
-
-            gen_liks_df = gen_liks_df[unconstrained_col_names]
-            gen_liks_mat = gen_liks_df[
-                unconstrained_lik_cols
-            ].to_numpy()  ## Shape (n_prop, n_models)
-
-            gen_liks_df_t0_safe_and_t_unconstrained_mat = pd.concat(
-                [constrained_gen_liks_tmin1_df.iloc[:, -1], gen_liks_df.iloc[:, -1]],
-                axis=1,
-            ).to_numpy()  ## Double check this
-
-            constrained_liks_mat = constrain_likelihoods(
-                cfg,
-                gen_liks_df_t0_safe_and_t_unconstrained_mat,
-                betas_list[-2:],
-                psis_list[-2:],
-            )
-
-            unconstrained_liks = gen_liks_mat[:, -1]
-            if constrained_liks_mat.shape[1] > 1:
-                ## If is not original safe model, \pi_{\theta_0}
-                safe_liks = constrained_liks_mat[:, -2]
-            else:
-                ## Else is original safe model, \pi_{\theta_0}, so unconstrained and constrained likelihoods are the same
-                ## (Lik ratios should be == 1, and bound == inf, so should accept everything)
-                safe_liks = constrained_liks_mat[:, -1]
-
-            lik_ratios_unconstrained_over_safe = unconstrained_liks / safe_liks
-
-            constrained_liks_df_ = pd.DataFrame(
-                constrained_liks_mat, columns=constrained_lik_cols[-2:]
-            )
-            constrained_liks_df = pd.concat(
-                [constrained_gen_liks_tmin1_df, constrained_liks_df_.iloc[:, -1]],
-                axis=1,
-            )
-
-    else:
-        raise ValueError(f"Unrecognized proposal name : {proposal}")
-
-    return (
-        gen_liks_df,
-        gen_liks_fp,
-        constrained_liks_df,
-        lik_ratios_unconstrained_over_safe,
-        unconstrained_liks,
-        safe_liks,
-    )
 
 
 def accept_reject_sample_and_get_likelihoods(
@@ -677,7 +381,7 @@ def accept_reject_sample_and_get_likelihoods(
     psis_list: List[float],  ## Normalization constants
     n_target: int,
     ga_data_dir: str,
-    temps: List[int] = [1.0],
+    temps: List[float] = [1.0],
     depth: int = 0,  ## Recursion depth
     higher_score_particle_field: str = "higher_score_particle",
     lower_score_particle_field: str = "lower_score_particle",
@@ -688,7 +392,7 @@ def accept_reject_sample_and_get_likelihoods(
     safe_prop_mix_weight: float = 1.0,  ## if proposal == "mixture":  weight in (0, 1) to assign to safe proposal
     env_const: float = 1.0,  ## Recalculated envelope constant,
     global_random_seed: int = 0.0,
-) -> str:
+) -> tuple[pd.DataFrame | None, str | None, pd.DataFrame | None, str | None]:
 
     n_models = len(model_dir_list)
     use_inmemory = _is_direct_mode(cfg)
@@ -708,58 +412,14 @@ def accept_reject_sample_and_get_likelihoods(
     call_idx = 0
 
     # ---- Pre-load models for in-memory mode ----
-    gen_model_client = None
+    gen_model_client: ModelClient | dict[str, ModelClient] | None = None
     test_fn = None
     lik_model_clients: dict[str, ModelClient] = {}
     if use_inmemory:
         test_fn = _load_test_fn(ga_data_dir)
-
-        # Pre-load likelihood models first so gen can reuse them
-        max_new_tokens_lik = (
-            cfg.compute_likelihooods_all_models.args.generation_config.max_new_tokens
+        gen_model_client, lik_model_clients = preload_model_clients(
+            cfg, model_dir_list, proposal
         )
-        lik_temperature = cfg.temperature
-        for model_path in model_dir_list:
-            if model_path not in lik_model_clients:
-                logger.info(f"Pre-loading likelihood model: {model_path}")
-                lik_model_clients[model_path] = _init_model_client_with_retry(
-                    model_path, max_new_tokens_lik, logger, temperature=lik_temperature
-                )
-
-        # Reuse lik clients for generation when the model path matches
-        # (compute_likelihoods_avg does not use max_generate_length or temperature)
-        max_new_tokens = cfg.iterative_generation.args.generation_config.max_new_tokens
-        if proposal == "unconstrained":
-            if model_dir_list[-1] in lik_model_clients:
-                gen_model_client = lik_model_clients[model_dir_list[-1]]
-            else:
-                gen_model_client = _init_model_client_with_retry(
-                    model_dir_list[-1], max_new_tokens, logger
-                )
-        elif proposal == "safe":
-            if cfg.conformal_policy_control.constrain_against == "init":
-                if model_dir_list[0] in lik_model_clients:
-                    gen_model_client = lik_model_clients[model_dir_list[0]]
-                else:
-                    gen_model_client = _init_model_client_with_retry(
-                        model_dir_list[0], max_new_tokens, logger
-                    )
-            # For safe/non-init, generation happens via recursion (no pre-load needed here)
-        elif proposal == "mixture":
-            gen_model_client = {
-                "unconstrained": lik_model_clients.get(
-                    model_dir_list[-1],
-                    _init_model_client_with_retry(
-                        model_dir_list[-1], max_new_tokens, logger
-                    ),
-                ),
-                "safe": lik_model_clients.get(
-                    model_dir_list[0],
-                    _init_model_client_with_retry(
-                        model_dir_list[0], max_new_tokens, logger
-                    ),
-                ),
-            }
 
     # if betas_list[-1] >= 1:
     if proposal == "unconstrained":
@@ -792,45 +452,77 @@ def accept_reject_sample_and_get_likelihoods(
 
             accepted_curr = []
 
-            proportion_of_target_n_accepted = n_accepted / n_target
-
-            (
-                gen_liks_df,
-                gen_liks_fp,
-                constrained_liks_df,
-                lik_ratios_unconstrained_over_safe,
-                unconstrained_liks,
-                safe_liks,
-            ) = generate_proposals_for_AR_sampling(
+            ## Step 1: Generate from latest model
+            gen_liks_fp = os.path.join(output_dir, "liks.jsonl")
+            random_seed_curr = (
+                global_random_seed * 10000 + post_policy_control * 1000 + call_idx
+            )
+            temps_curr = temps if len(model_dir_list) > 1 else [cfg.temperature_init]
+            gen_df = generate_sample_batch(
                 cfg,
                 fs,
-                model_dir_list,
-                seeds_fp_list,
-                output_dir,
-                betas_list,
-                psis_list,  ## Normalization constants
-                n_target,
+                seeds_fp_list[-1],
                 ga_data_dir,
-                temps,
-                depth,  ## Recursion depth
-                higher_score_particle_field,
-                lower_score_particle_field,
-                higher_score_field,
-                lower_score_field,
-                proposal,  ## Proposal distribution (safe or unconstrained), or None --> means running for filtering
-                post_policy_control,  ## Whether calling post policy control (True <--> generating risk-controlled actions), or pre control (False <--> Generating proposals)
-                call_idx,
-                proportion_of_target_n_accepted,
+                model_dir_list[-1],
+                output_dir,
+                temps_curr[-1],
+                higher_score_particle_field=higher_score_particle_field,
+                lower_score_particle_field=lower_score_particle_field,
+                higher_score_field=higher_score_field,
+                lower_score_field=lower_score_field,
+                random_seed=random_seed_curr,
+                call_idx=call_idx,
                 global_random_seed=global_random_seed,
-                _gen_model_client=gen_model_client,
+                _model_client=gen_model_client,
                 _test_fn=test_fn,
-                _lik_model_clients=lik_model_clients or None,
             )
-
             call_idx += 1
 
-            if gen_liks_df is None:
+            if gen_df is None:
                 continue
+
+            ## Step 2: Compute likelihoods under all models
+            gen_liks_df = compute_batch_likelihoods(
+                cfg,
+                fs,
+                gen_df,
+                seeds_fp_list,
+                model_dir_list,
+                _lik_model_clients=lik_model_clients or None,
+            )
+            gen_liks_df = gen_liks_df[unconstrained_col_names]
+            gen_liks_mat = gen_liks_df[unconstrained_lik_cols].to_numpy()
+
+            ## Step 3: Constrain likelihoods
+            if cfg.conformal_policy_control.constrain_against == "init":
+                constrained_liks_mat = np.zeros(np.shape(gen_liks_mat))
+                constrained_liks_mat[:, 0] = gen_liks_mat[:, 0]
+                for c in range(1, n_models):
+                    constrained_liks_mat[:, c] = constrain_likelihoods(
+                        cfg,
+                        gen_liks_mat[:, [0, c]],
+                        [betas_list[0], betas_list[c]],
+                        [psis_list[0], psis_list[c]],
+                    )[:, -1]
+                safe_liks = constrained_liks_mat[:, 0]
+            else:
+                constrained_liks_mat = constrain_likelihoods(
+                    cfg, gen_liks_mat, betas_list, psis_list
+                )
+                if constrained_liks_mat.shape[1] > 1:
+                    safe_liks = constrained_liks_mat[:, -2]
+                else:
+                    safe_liks = constrained_liks_mat[:, -1]
+
+            unconstrained_liks = gen_liks_mat[:, -1]
+            lik_ratios_unconstrained_over_safe = unconstrained_liks / safe_liks
+            constrained_liks_df = pd.concat(
+                [
+                    gen_liks_df[["particle", "score"]],
+                    pd.DataFrame(constrained_liks_mat, columns=constrained_lik_cols),
+                ],
+                axis=1,
+            )
 
             n_prop = len(gen_liks_df)
 
@@ -906,44 +598,69 @@ def accept_reject_sample_and_get_likelihoods(
             ## Sample using unconstrained model as proposal
 
             if cfg.conformal_policy_control.constrain_against == "init":
-                proportion_of_target_n_accepted = n_accepted / n_target
-
-                (
-                    gen_liks_df,
-                    gen_liks_fp,
-                    constrained_liks_df,
-                    lik_ratios_unconstrained_over_safe,
-                    unconstrained_liks,
-                    safe_liks,
-                ) = generate_proposals_for_AR_sampling(
+                ## Step 1: Generate from initial safe model
+                gen_liks_fp = os.path.join(output_dir, "liks.jsonl")
+                random_seed_curr = (
+                    global_random_seed * 10000 + post_policy_control * 1000 + call_idx
+                )
+                gen_df = generate_sample_batch(
                     cfg,
                     fs,
-                    model_dir_list,
-                    seeds_fp_list,
-                    output_dir,
-                    betas_list,
-                    psis_list,  ## Normalization constants
-                    n_target,
+                    seeds_fp_list[0],
                     ga_data_dir,
-                    temps,
-                    depth,  ## Recursion depth
-                    higher_score_particle_field,
-                    lower_score_particle_field,
-                    higher_score_field,
-                    lower_score_field,
-                    proposal,  ## Proposal distribution (safe or unconstrained), or None --> means running for filtering
-                    post_policy_control,  ## Whether calling post policy control (True <--> generating risk-controlled actions), or pre control (False <--> Generating proposals)
-                    call_idx,
-                    proportion_of_target_n_accepted,
+                    model_dir_list[0],
+                    output_dir,
+                    cfg.temperature_init,
+                    higher_score_particle_field=higher_score_particle_field,
+                    lower_score_particle_field=lower_score_particle_field,
+                    higher_score_field=higher_score_field,
+                    lower_score_field=lower_score_field,
+                    random_seed=random_seed_curr,
+                    call_idx=call_idx,
                     global_random_seed=global_random_seed,
-                    _gen_model_client=gen_model_client,
+                    _model_client=gen_model_client,
                     _test_fn=test_fn,
-                    _lik_model_clients=lik_model_clients or None,
                 )
                 call_idx += 1
 
-                if gen_liks_df is None:
+                if gen_df is None:
                     continue
+
+                ## Step 2: Compute likelihoods under all models
+                gen_liks_df = compute_batch_likelihoods(
+                    cfg,
+                    fs,
+                    gen_df,
+                    seeds_fp_list,
+                    model_dir_list,
+                    _lik_model_clients=lik_model_clients or None,
+                )
+                gen_liks_df = gen_liks_df[unconstrained_col_names]
+                gen_liks_mat = gen_liks_df[unconstrained_lik_cols].to_numpy()
+
+                ## Step 3: Constrain likelihoods
+                constrained_liks_mat = np.zeros(np.shape(gen_liks_mat))
+                constrained_liks_mat[:, 0] = gen_liks_mat[:, 0]
+                for c in range(1, n_models):
+                    constrained_liks_mat[:, c] = constrain_likelihoods(
+                        cfg,
+                        gen_liks_mat[:, [0, c]],
+                        [betas_list[0], betas_list[c]],
+                        [psis_list[0], psis_list[c]],
+                    )[:, -1]
+
+                unconstrained_liks = gen_liks_mat[:, -1]
+                safe_liks = constrained_liks_mat[:, 0]
+                lik_ratios_unconstrained_over_safe = unconstrained_liks / safe_liks
+                constrained_liks_df = pd.concat(
+                    [
+                        gen_liks_df[["particle", "score"]],
+                        pd.DataFrame(
+                            constrained_liks_mat, columns=constrained_lik_cols
+                        ),
+                    ],
+                    axis=1,
+                )
 
             else:
                 ## Shouldn't need this, handled in base case of recursion
@@ -976,36 +693,17 @@ def accept_reject_sample_and_get_likelihoods(
                 )
                 call_idx += 1
 
-                if use_inmemory:
-                    # ---- In-memory path ----
-                    gen_liks_df = _compute_liks_all_models_inmemory(
-                        cfg,
-                        gen_liks_tmin1_df,
-                        [seeds_fp_list[-1]],
-                        [model_dir_list[-1]],
-                        [len(model_dir_list) - 1],
-                        _lik_model_clients=lik_model_clients or None,
-                    )
-                    gen_liks_fp = os.path.join(output_dir, "inmemory_liks.jsonl")
-                else:
-                    ## Compute unconstrained likelihoods for most recent model (not passed to recursion) on output proposal samples
-                    gen_liks_fp_list, hd = run_compute_liks_all_models_and_cal_data(
-                        cfg,
-                        fs,
-                        seeds_fp_list=[seeds_fp_list[-1]],
-                        prev_cal_data_fp_list=[],
-                        model_dir_list=[model_dir_list[-1]],
-                        target_fp=gen_liks_tmin1_fp,  ## Should add a column for time t to gen_liks_tmin1_fp
-                        model_indices=[
-                            len(model_dir_list) - 1
-                        ],  ## Index for most recent model
-                        temps=temps,
-                    )
-                    gen_liks_fp = gen_liks_fp_list[-1]
-
-                    gen_liks_df = pd.read_json(
-                        gen_liks_fp, orient="records", lines=True
-                    )
+                ## Compute likelihoods under the most recent model
+                gen_liks_df = compute_batch_likelihoods(
+                    cfg,
+                    fs,
+                    gen_liks_tmin1_df,
+                    [seeds_fp_list[-1]],
+                    [model_dir_list[-1]],
+                    model_indices=[len(model_dir_list) - 1],
+                    target_fp=gen_liks_tmin1_fp,
+                    _lik_model_clients=lik_model_clients or None,
+                )
 
                 gen_liks_df = gen_liks_df[unconstrained_col_names]
                 gen_liks_mat = gen_liks_df[
@@ -1132,53 +830,112 @@ def accept_reject_sample_and_get_likelihoods(
             and call_idx < cfg.conformal_policy_control.accept_reject.max_total_AR_calls
         ):
             for proposal_curr in ["safe", "unconstrained"]:
-                proportion_of_target_n_accepted = n_accepted / n_target
-
                 ## If have already proposed the number of total proposals, then redraw samples for that policy:
                 if n_proposed_dict[proposal_curr] >= N_prop_dict[proposal_curr]:
-                    # For mixture mode, select the right model client
+                    # Select model and seeds based on sub-proposal type
                     mix_model_client = None
                     if use_inmemory and isinstance(gen_model_client, dict):
                         mix_model_client = gen_model_client[proposal_curr]
-                    (
-                        gen_liks_df_dict[proposal_curr],
-                        gen_liks_fp_dict[proposal_curr],
-                        constrained_liks_df_dict[proposal_curr],
-                        lik_ratios_unconstrained_over_safe_dict[proposal_curr],
-                        unconstrained_liks_dict[proposal_curr],
-                        safe_liks_dict[proposal_curr],
-                    ) = generate_proposals_for_AR_sampling(
+                    if proposal_curr == "unconstrained":
+                        mix_seeds_fp = seeds_fp_list[-1]
+                        mix_model_dir = model_dir_list[-1]
+                        mix_temp = (
+                            temps[-1]
+                            if len(model_dir_list) > 1
+                            else cfg.temperature_init
+                        )
+                    else:
+                        mix_seeds_fp = seeds_fp_list[0]
+                        mix_model_dir = model_dir_list[0]
+                        mix_temp = cfg.temperature_init
+
+                    ## Step 1: Generate
+                    gen_liks_fp_dict[proposal_curr] = os.path.join(
+                        output_dir, "liks.jsonl"
+                    )
+                    random_seed_curr = (
+                        global_random_seed * 10000
+                        + post_policy_control * 1000
+                        + call_idx
+                    )
+                    mix_gen_df = generate_sample_batch(
                         cfg,
                         fs,
-                        model_dir_list,
-                        seeds_fp_list,
-                        output_dir,
-                        betas_list,
-                        psis_list,  ## Normalization constants
-                        n_target,
+                        mix_seeds_fp,
                         ga_data_dir,
-                        temps,
-                        depth,  ## Recursion depth
-                        higher_score_particle_field,
-                        lower_score_particle_field,
-                        higher_score_field,
-                        lower_score_field,
-                        proposal_curr,  ## Proposal distribution (safe or unconstrained), or None --> means running for filtering
-                        post_policy_control,  ## Whether calling post policy control (True <--> generating risk-controlled actions), or pre control (False <--> Generating proposals)
-                        call_idx,
-                        proportion_of_target_n_accepted,
+                        mix_model_dir,
+                        output_dir,
+                        mix_temp,
+                        higher_score_particle_field=higher_score_particle_field,
+                        lower_score_particle_field=lower_score_particle_field,
+                        higher_score_field=higher_score_field,
+                        lower_score_field=lower_score_field,
+                        random_seed=random_seed_curr,
+                        call_idx=call_idx,
                         global_random_seed=global_random_seed,
-                        _gen_model_client=mix_model_client,
+                        _model_client=mix_model_client,
                         _test_fn=test_fn,
-                        _lik_model_clients=lik_model_clients or None,
                     )
-
                     call_idx += 1
-                    if gen_liks_df_dict[proposal_curr] is None:
+
+                    if mix_gen_df is None:
+                        gen_liks_df_dict[proposal_curr] = None
                         ## If no proposals generated, break out of for loop
                         break
 
-                    ## Mixture proposal probabilies for constrained likelihoods
+                    ## Step 2: Compute likelihoods under all models
+                    gen_liks_df_dict[proposal_curr] = compute_batch_likelihoods(
+                        cfg,
+                        fs,
+                        mix_gen_df,
+                        seeds_fp_list,
+                        model_dir_list,
+                        _lik_model_clients=lik_model_clients or None,
+                    )
+                    gen_liks_df_dict[proposal_curr] = gen_liks_df_dict[proposal_curr][
+                        unconstrained_col_names
+                    ]
+                    mix_liks_mat = gen_liks_df_dict[proposal_curr][
+                        unconstrained_lik_cols
+                    ].to_numpy()
+
+                    ## Step 3: Constrain likelihoods
+                    if cfg.conformal_policy_control.constrain_against == "init":
+                        mix_constrained_mat = np.zeros(np.shape(mix_liks_mat))
+                        mix_constrained_mat[:, 0] = mix_liks_mat[:, 0]
+                        for c in range(1, n_models):
+                            mix_constrained_mat[:, c] = constrain_likelihoods(
+                                cfg,
+                                mix_liks_mat[:, [0, c]],
+                                [betas_list[0], betas_list[c]],
+                                [psis_list[0], psis_list[c]],
+                            )[:, -1]
+                        safe_liks_dict[proposal_curr] = mix_constrained_mat[:, 0]
+                    else:
+                        mix_constrained_mat = constrain_likelihoods(
+                            cfg, mix_liks_mat, betas_list, psis_list
+                        )
+                        if mix_constrained_mat.shape[1] > 1:
+                            safe_liks_dict[proposal_curr] = mix_constrained_mat[:, -2]
+                        else:
+                            safe_liks_dict[proposal_curr] = mix_constrained_mat[:, -1]
+
+                    unconstrained_liks_dict[proposal_curr] = mix_liks_mat[:, -1]
+                    lik_ratios_unconstrained_over_safe_dict[proposal_curr] = (
+                        unconstrained_liks_dict[proposal_curr]
+                        / safe_liks_dict[proposal_curr]
+                    )
+                    constrained_liks_df_dict[proposal_curr] = pd.concat(
+                        [
+                            gen_liks_df_dict[proposal_curr][["particle", "score"]],
+                            pd.DataFrame(
+                                mix_constrained_mat, columns=constrained_lik_cols
+                            ),
+                        ],
+                        axis=1,
+                    )
+
+                    ## Mixture proposal probabilities for constrained likelihoods
                     constrained_liks_df_dict[proposal_curr].iloc[:, -1] = (
                         safe_prop_mix_weight * safe_liks_dict[proposal_curr]
                         + (1 - safe_prop_mix_weight)
@@ -1322,12 +1079,7 @@ def accept_reject_sample_and_get_likelihoods(
         raise ValueError(f"Unknown proposal name : {proposal}")
 
     # ---- Free pre-loaded models to reclaim GPU memory ----
-    # gen_model_client may be shared with lik_model_clients; clear lik dict
-    # first (releases all references), then delete gen if it was separate.
-    lik_model_clients.clear()
-    if gen_model_client is not None:
-        del gen_model_client
-    torch.cuda.empty_cache()
+    cleanup_model_clients(lik_model_clients, gen_model_client)
 
     # ## Save accepted with unconstrained likelihoods
     # t = len(model_dir_list)-1
