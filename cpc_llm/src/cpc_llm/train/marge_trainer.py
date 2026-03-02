@@ -945,8 +945,8 @@ class MargeTrainer(Trainer):
         return loss
 
     def generate_eval_samples(
-        self, model, batch: dict[str, torch.LongTensor]
-    ) -> tuple[str, str]:
+        self, model: nn.Module, batch: dict[str, torch.LongTensor]
+    ) -> tuple[list[str], list[str]]:
         """
         Greedily decode samples from the model and reference model for the given batch of inputs.
         """
@@ -1163,7 +1163,7 @@ class MargeTrainer(Trainer):
         # Add averaged stored metrics to logs
         for key, metrics in self._stored_metrics[train_eval].items():
             logs[key] = torch.tensor(metrics).mean().item()
-        del self._stored_metrics[train_eval]
+        self._stored_metrics[train_eval].clear()
         return super().log(logs, start_time)
 
     @wraps(Trainer.push_to_hub)
