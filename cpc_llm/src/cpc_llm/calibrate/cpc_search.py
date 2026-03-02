@@ -84,7 +84,6 @@ def cpc_beta_search(
         )
 
         ## Subset to currently relevant likelihood columns (relevant for rerunning from checkpoint)
-        # breakpoint()
 
         # cal_data_constrained_curr = cal_data_constrained_curr[list(cal_data_constrained_curr.columns[0:2]) + constrained_lik_cols]
         # cal_data_unconstrained_curr = cal_data_unconstrained_curr[list(cal_data_unconstrained_curr.columns[0:2]) + unconstrained_lik_cols]
@@ -141,7 +140,6 @@ def cpc_beta_search(
                 )
 
             else:
-                breakpoint()
                 logger.info(
                     f"cal_data_constrained_all.columns : {cal_data_constrained_all.columns}"
                 )

@@ -19,7 +19,6 @@ def score(cfg: DictConfig, logger: logging.Logger = None):
         max_generate_length=500,
         device="cuda" if torch.cuda.is_available() else "cpu",
     )
-    # breakpoint()
     input_df = pd.read_json(cfg.input_data_path, orient="records", lines=True)
     target_df = pd.read_json(cfg.target_data_path, orient="records", lines=True)
     if cfg.sanity_check:
@@ -46,11 +45,9 @@ def score(cfg: DictConfig, logger: logging.Logger = None):
     ['[12, 31, 2, 15, 15, 6, 14, 9, 12, 31, 11, 10, 25, 1, 15, 11, 19, 24, 10, 5, 19, 27, 1, 14, 31, 28, 16, 15, 11, 14, 16, 15]', 
      '[12, 31, 2, 4, 15, 6, 14, 9, 12, 31, 11, 10, 25, 1, 14, 11, 19, 24, 10, 5, 17, 27, 1, 14, 31, 28, 15, 15, 14, 14, 16, 15]']
     """
-    # breakpoint()
     formatted_targets = formatting_texts_func_single_seq(target_data)
     # formatted_targets = [json.dumps(target) for target in data[cfg.target_field]]
     # avg_likelihoods = model_client.compute_likelihoods(
-    # breakpoint()
     avg_likelihoods = model_client.compute_likelihoods_avg(
         formatted_inputs,
         formatted_targets,
