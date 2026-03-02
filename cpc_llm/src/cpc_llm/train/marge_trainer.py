@@ -1,4 +1,3 @@
-import inspect
 import os
 import random
 import warnings
@@ -7,7 +6,7 @@ from contextlib import contextmanager, nullcontext
 from copy import deepcopy
 from dataclasses import dataclass
 from functools import wraps
-from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Union
+from typing import Any, Callable, Literal
 
 import numpy as np
 import torch
@@ -18,34 +17,44 @@ from datasets import Dataset
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader
 from transformers import (
-    AutoModelForCausalLM,
     DataCollator,
     PreTrainedModel,
     PreTrainedTokenizerBase,
     Trainer,
+    TrainingArguments,
 )
 from transformers.trainer import TRAINER_STATE_NAME
 from transformers.utils import logging as transformers_logging
 from transformers.trainer_callback import TrainerCallback
-from transformers.trainer_utils import EvalLoopOutput, PREFIX_CHECKPOINT_DIR
+from transformers.trainer_utils import (
+    EvalLoopOutput,
+    PREFIX_CHECKPOINT_DIR,
+    rotate_checkpoints,
+)
 
-from trl.trainer.utils import disable_dropout_in_model, is_peft_available
-from trl.trainer.callbacks import SyncRefModelCallback, is_wandb_available
-from trl.models import create_reference_model
-from trl.trainer.dpo_config import DPOConfig
-from trl.experimental.utils import pad_to_length, peft_module_casting_to_bf16
+from trl.trainer.utils import disable_dropout_in_model
 
 logger = transformers_logging.get_logger(__name__)
 
-if is_peft_available():
-    from peft import PeftModel, get_peft_model, prepare_model_for_kbit_training
-
-
-if is_wandb_available():
-    pass
-
 if is_deepspeed_available():
     import deepspeed
+
+
+def _pad_to_length(
+    tensor: torch.Tensor, length: int, pad_value: int | float, dim: int = -1
+) -> torch.Tensor:
+    """Pad a tensor to the specified length along the given dimension."""
+    if tensor.size(dim) >= length:
+        return tensor
+    pad_size = list(tensor.shape)
+    pad_size[dim] = length - tensor.size(dim)
+    return torch.cat(
+        [
+            tensor,
+            pad_value * torch.ones(*pad_size, dtype=tensor.dtype, device=tensor.device),
+        ],
+        dim=dim,
+    )
 
 
 @dataclass
@@ -57,17 +66,17 @@ class MargeDataCollatorWithPadding:
             The tokenizer's pad_token_id.
         label_pad_token_id (`int`, defaults to -100):
             The label used for masking.
-        is_encoder_decoder (`Optional[bool]`, `optional`, defaults to `None`):
+        is_encoder_decoder (`bool | None`, `optional`, defaults to `None`):
             Whether or not you model has an encoder_decoder architecture.
     """
 
     pad_token_id: int = 0
     label_pad_token_id: int = -100
-    is_encoder_decoder: Optional[bool] = False
+    is_encoder_decoder: bool | None = False
     input_field_name: str = "input"
     target_field_name: str = "target"
 
-    def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def __call__(self, features: list[dict[str, Any]]) -> dict[str, Any]:
         # first, pad everything to the same length
         padded_batch = {}
         for k in features[0].keys():
@@ -137,406 +146,121 @@ class MargeDataCollatorWithPadding:
 
 
 @dataclass
-class MargeConfig(DPOConfig):
+class MargeConfig(TrainingArguments):
+    """Configuration for MARGE (Margin-based Reward Guided Exploration) training.
+
+    Extends TrainingArguments with MARGE-specific fields. Unlike the previous
+    version which inherited from DPOConfig, this config only contains fields
+    that MARGE actually uses.
+    """
+
     alpha: float = 1.0
+    beta: float = 0.1
+    max_length: int = 512
+    max_prompt_length: int = 128
+    disable_dropout: bool = True
     input_field_name: str = "input"
     target_field_name: str = "target"
-    # score fields should NOT be prefixed by input_field_name or target_field_name
     input_score_field_name: str = "score_input"
     target_score_field_name: str = "score_target"
     self_normalize_weights: bool = False
     reinforce_style: bool = False
+    label_pad_token_id: int = -100
+    precompute_ref_log_probs: bool = False
+    generate_during_eval: bool = False
+    truncation_mode: str = "keep_end"
 
 
 class MargeTrainer(Trainer):
+    """MARGE (Margin-based Reward Guided Exploration) trainer.
+
+    Extends Trainer with weighted NLL + KL regularization loss on
+    single (input, target) pairs with explicit rewards.
+    """
+
     def __init__(
         self,
-        metrics_fn: Callable[
-            Tuple[torch.utils.data.Dataset, List[str]], Dict[str, Any]
-        ] = None,
-        rewards_fn: Callable[
-            Dict[str, Union[List, torch.LongTensor]], torch.Tensor
-        ] = None,
+        *,
+        metrics_fn: Callable | None = None,
+        rewards_fn: Callable | None = None,
         num_generate_batches: int = 1,
-        model: Optional[Union[PreTrainedModel, nn.Module, str]] = None,
-        ref_model: Optional[Union[PreTrainedModel, nn.Module, str]] = None,
-        beta: float = 0.1,
-        label_smoothing: float = 0,
-        args: Optional[MargeConfig] = None,
-        data_collator: Optional[DataCollator] = None,
-        label_pad_token_id: int = -100,
-        padding_value: Optional[int] = None,
-        truncation_mode: str = "keep_end",
-        train_dataset: Optional[Dataset] = None,
-        eval_dataset: Optional[Union[Dataset, Dict[str, Dataset]]] = None,
-        pretokenized: bool = False,  # Whether the datasets are already pre-tokenized.
-        tokenizer: Optional[PreTrainedTokenizerBase] = None,
-        model_init: Optional[Callable[[], PreTrainedModel]] = None,
-        callbacks: Optional[List[TrainerCallback]] = None,
-        optimizers: Tuple[torch.optim.Optimizer, torch.optim.lr_scheduler.LambdaLR] = (
-            None,
-            None,
-        ),
-        preprocess_logits_for_metrics: Optional[
-            Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
-        ] = None,
-        max_length: Optional[int] = None,
-        max_prompt_length: Optional[int] = None,
-        max_target_length: Optional[int] = None,
-        peft_config: Optional[Dict] = None,
-        is_encoder_decoder: Optional[bool] = None,
-        disable_dropout: bool = True,
-        generate_during_eval: bool = False,
-        compute_metrics: Optional[Callable[[EvalLoopOutput], Dict]] = None,
-        precompute_ref_log_probs: bool = False,
-        dataset_num_proc: Optional[int] = None,
-        model_init_kwargs: Optional[Dict] = None,
-        ref_model_init_kwargs: Optional[Dict] = None,
-        model_adapter_name: Optional[str] = None,
-        ref_adapter_name: Optional[str] = None,
-        reference_free: bool = False,
-        force_use_ref_model: bool = False,
-        threshold_percent_valid: float = 0.9,  # for selecting the best checkpoint -- lower threshold of
-        # percent particles generated by the checkpoint that must be valid
+        threshold_percent_valid: float = 0.9,
+        pretokenized: bool = False,
+        model: PreTrainedModel | nn.Module | None = None,
+        ref_model: PreTrainedModel | nn.Module | None = None,
+        args: MargeConfig | None = None,
+        data_collator: DataCollator | None = None,
+        train_dataset: Dataset | None = None,
+        eval_dataset: Dataset | dict[str, Dataset] | None = None,
+        processing_class: PreTrainedTokenizerBase | None = None,
+        callbacks: list[TrainerCallback] | None = None,
+        optimizers: tuple = (None, None),
+        compute_metrics: Callable | None = None,
+        # Legacy alias
+        tokenizer: PreTrainedTokenizerBase | None = None,
+        **kwargs,
     ):
+        # Support legacy 'tokenizer' kwarg
+        if tokenizer is not None and processing_class is None:
+            processing_class = tokenizer
+
+        if processing_class is None:
+            raise ValueError("processing_class (tokenizer) must be provided.")
+
+        # MARGE-specific attributes
         self.metrics_fn = metrics_fn
         self.rewards_fn = rewards_fn
         self.num_generate_batches = num_generate_batches
         self.threshold_percent_valid = threshold_percent_valid
         self.reward_sum = 0.0
-        if model_init_kwargs is not None:
-            warnings.warn(
-                "You passed `model_init_kwargs` to the MargeTrainer, the value you passed will override the one in the `DPOConfig`."
-            )
-            args.model_init_kwargs = model_init_kwargs
-
-        if args.model_init_kwargs is None:
-            model_init_kwargs = {}
-        elif not isinstance(model, str):
-            raise ValueError(
-                "You passed model_init_kwargs to the MargeTrainer/DPOConfig, but your model is already instantiated."
-            )
-        else:
-            model_init_kwargs = args.model_init_kwargs
-            model_init_kwargs["torch_dtype"] = (
-                model_init_kwargs["torch_dtype"]
-                if model_init_kwargs["torch_dtype"] in ["auto", None]
-                else getattr(torch, model_init_kwargs["torch_dtype"])
-            )
-        if ref_model_init_kwargs is not None:
-            warnings.warn(
-                "You passed `ref_model_init_kwargs` to the MargeTrainer, the value you passed will override the one in the `DPOConfig`."
-            )
-            args.ref_model_init_kwargs = ref_model_init_kwargs
-
-        if args.ref_model_init_kwargs is None:
-            ref_model_init_kwargs = {}
-        elif not isinstance(ref_model, str):
-            raise ValueError(
-                "You passed ref_model_init_kwargs to the MargeTrainer/DPOConfig, but your ref_model is already instantiated."
-            )
-        else:
-            ref_model_init_kwargs = args.ref_model_init_kwargs
-            ref_model_init_kwargs["torch_dtype"] = (
-                ref_model_init_kwargs["torch_dtype"]
-                if ref_model_init_kwargs["torch_dtype"] in ["auto", None]
-                else getattr(torch, ref_model_init_kwargs["torch_dtype"])
-            )
-
-        if isinstance(model, str):
-            warnings.warn(
-                "You passed a model_id to the MargeTrainer. This will automatically create an "
-                "`AutoModelForCausalLM` or a `PeftModel` (if you passed a `peft_config`) for you."
-            )
-            model = AutoModelForCausalLM.from_pretrained(model, **model_init_kwargs)
-
-        if isinstance(ref_model, str):
-            warnings.warn(
-                "You passed a ref model_id to the MargeTrainer. This will automatically create an "
-                "`AutoModelForCausalLM`"
-            )
-            ref_model = AutoModelForCausalLM.from_pretrained(
-                ref_model, **ref_model_init_kwargs
-            )
-
-        # Initialize this variable to False. This helps tracking the case when `peft_module_casting_to_bf16`
-        # has been called in order to properly call autocast if needed.
         self._peft_has_been_casted_to_bf16 = False
+        self.is_encoder_decoder = getattr(model.config, "is_encoder_decoder", False)
 
-        if force_use_ref_model:
-            warnings.warn(
-                "You passed `force_use_ref_model` to the MargeTrainer, the value you passed will override the one in the `DPOConfig`."
-            )
-            args.force_use_ref_model = force_use_ref_model
+        # Store ref model before super().__init__
+        self.ref_model = ref_model
 
-        if not is_peft_available() and peft_config is not None:
-            raise ValueError(
-                "PEFT is not installed and you passed a `peft_config` in the trainer's kwargs, please install it to use the PEFT models"
-            )
-        elif is_peft_available() and peft_config is not None:
-            # if model is a peft model and we have a peft_config, we merge and unload it first
-            if isinstance(model, PeftModel):
-                model = model.merge_and_unload()
+        # Config-derived attributes
+        self.beta = args.beta
+        self.alpha = args.alpha
+        self.max_length = args.max_length
+        self.max_prompt_length = args.max_prompt_length
+        self.max_target_length = getattr(args, "max_target_length", None)
+        self.label_pad_token_id = args.label_pad_token_id
+        self.padding_value = processing_class.pad_token_id
+        self.truncation_mode = args.truncation_mode
+        self.generate_during_eval = args.generate_during_eval
+        self.precompute_ref_log_probs = args.precompute_ref_log_probs
+        self.label_smoothing = getattr(args, "label_smoothing", 0.0)
+        self.loss_type = getattr(args, "loss_type", "sigmoid")
+        self.tokenizer = processing_class
+        self.dataset_num_proc = getattr(args, "dataset_num_proc", None)
+        self._stored_metrics = defaultdict(lambda: defaultdict(list))
+        self._precomputed_train_ref_log_probs = False
+        self._precomputed_eval_ref_log_probs = False
 
-            if ref_model is not None and not args.force_use_ref_model:
-                raise ValueError(
-                    "You passed both a ref_model and a peft_config. For training PEFT adapters with DPO there is no need to pass a reference"
-                    " model. Please pass `ref_model=None` in case you want to train PEFT adapters, or pass a ref_model with `force_use_ref_model=True` in MargeTrainer's init."
-                    " if you want to use a different ref_model."
-                )
-
-            if getattr(model, "is_loaded_in_8bit", False) or getattr(
-                model, "is_loaded_in_4bit", False
-            ):
-                _support_gc_kwargs = hasattr(
-                    args, "gradient_checkpointing_kwargs"
-                ) and "gradient_checkpointing_kwargs" in list(
-                    inspect.signature(prepare_model_for_kbit_training).parameters
-                )
-
-                prepare_model_kwargs = {
-                    "use_gradient_checkpointing": args.gradient_checkpointing
-                }
-
-                if _support_gc_kwargs:
-                    prepare_model_kwargs["gradient_checkpointing_kwargs"] = (
-                        args.gradient_checkpointing_kwargs
-                    )
-
-                model = prepare_model_for_kbit_training(model, **prepare_model_kwargs)
-            elif getattr(args, "gradient_checkpointing", False):
-                # For backward compatibility with older versions of transformers
-                if hasattr(model, "enable_input_require_grads"):
-                    model.enable_input_require_grads()
-                else:
-
-                    def make_inputs_require_grad(module, input, output):
-                        output.requires_grad_(True)
-
-                    model.get_input_embeddings().register_forward_hook(
-                        make_inputs_require_grad
-                    )
-
-            # get peft model with the given config
-            model = get_peft_model(model, peft_config)
-            if args.bf16 and getattr(model, "is_loaded_in_4bit", False):
-                peft_module_casting_to_bf16(model)
-                # If args.bf16 we need to explicitly call `generate` with torch amp autocast context manager
-                self._peft_has_been_casted_to_bf16 = True
-
-        # For models that use gradient_checkpointing, we need to attach a hook that enables input
-        # to explicitly have `requires_grad=True`, otherwise training will either silently
-        # fail or completely fail.
-        elif getattr(args, "gradient_checkpointing", False):
-            # For backward compatibility with older versions of transformers
-            if hasattr(model, "enable_input_require_grads"):
-                model.enable_input_require_grads()
-            else:
-
-                def make_inputs_require_grad(module, input, output):
-                    output.requires_grad_(True)
-
-                model.get_input_embeddings().register_forward_hook(
-                    make_inputs_require_grad
-                )
-
-        if generate_during_eval:
-            warnings.warn(
-                "You passed `generate_during_eval` to the MargeTrainer, the value you passed will override the one in the `DPOConfig`."
-            )
-            args.generate_during_eval = generate_during_eval
-        if args.generate_during_eval and not is_wandb_available():
-            raise ValueError(
-                "`generate_during_eval=True` requires Weights and Biases to be installed."
-                " Please install `wandb` to resolve."
-            )
-
-        if is_encoder_decoder is not None:
-            warnings.warn(
-                "You passed `is_encoder_decoder` to the MargeTrainer, the value you passed will override the one in the `DPOConfig`."
-            )
-            args.is_encoder_decoder = is_encoder_decoder
-        if model is not None:
-            self.is_encoder_decoder = model.config.is_encoder_decoder
-        elif args.is_encoder_decoder is None:
-            raise ValueError(
-                "When no model is provided, you need to pass the parameter is_encoder_decoder to the MargeTrainer/DPOConfig."
-            )
-        else:
-            self.is_encoder_decoder = args.is_encoder_decoder
-
-        self.is_peft_model = is_peft_available() and isinstance(model, PeftModel)
-        if model_adapter_name is not None:
-            warnings.warn(
-                "You passed `model_adapter_name` to the MargeTrainer, the value you passed will override the one in the `DPOConfig`."
-            )
-            args.model_adapter_name = model_adapter_name
-        self.model_adapter_name = args.model_adapter_name
-
-        if ref_adapter_name is not None:
-            warnings.warn(
-                "You passed `ref_adapter_name` to the MargeTrainer, the value you passed will override the one in the `DPOConfig`."
-            )
-            args.ref_adapter_name = ref_adapter_name
-        self.ref_adapter_name = args.ref_adapter_name
-
-        if reference_free:
-            warnings.warn(
-                "You passed `reference_free` to the MargeTrainer, the value you passed will override the one in the `DPOConfig`."
-            )
-            args.reference_free = reference_free
-        self.reference_free = args.reference_free
-
-        if precompute_ref_log_probs:
-            warnings.warn(
-                "You passed `precompute_ref_log_probs` to the MargeTrainer, the value you passed will override the one in the `DPOConfig`."
-            )
-            args.precompute_ref_log_probs = precompute_ref_log_probs
-
-        if ref_model:
-            self.ref_model = ref_model
-        elif self.is_peft_model or args.precompute_ref_log_probs:
-            # The `model` with adapters turned off will be used as the reference model
-            self.ref_model = None
-        else:
-            self.ref_model = create_reference_model(model)
-
-        if tokenizer is None:
-            raise ValueError("tokenizer must be specified to tokenize a DPO dataset.")
-
-        if max_length is not None:
-            warnings.warn(
-                "You passed `max_length` to the MargeTrainer, the value you passed will override the one in the `DPOConfig`."
-            )
-            args.max_length = max_length
-        if args.max_length is None:
-            warnings.warn(
-                "`max_length` is not set in the DPOConfig's init"
-                " it will default to `512` by default, but you should do it yourself in the future.",
-                UserWarning,
-            )
-            args.max_length = 512
-
-        if max_prompt_length is not None:
-            warnings.warn(
-                "You passed `max_prompt_length` to the MargeTrainer, the value you passed will override the one in the `DPOConfig`."
-            )
-            args.max_prompt_length = max_prompt_length
-        if args.max_prompt_length is None:
-            warnings.warn(
-                "`max_prompt_length` is not set in the DPOConfig's init"
-                " it will default to `128` by default, but you should do it yourself in the future.",
-                UserWarning,
-            )
-            args.max_prompt_length = 128
-
-        if max_target_length is not None:
-            warnings.warn(
-                "You passed `max_target_length` to the MargeTrainer, the value you passed will override the one in the `DPOConfig`."
-            )
-            args.max_target_length = max_target_length
-        if args.max_target_length is None and self.is_encoder_decoder:
-            warnings.warn(
-                "When using an encoder decoder architecture, you should set `max_target_length` in the DPOConfig's init"
-                " it will default to `128` by default, but you should do it yourself in the future.",
-                UserWarning,
-            )
-            args.max_target_length = 128
-
-        if label_pad_token_id != -100:
-            warnings.warn(
-                "You passed `label_pad_token_id` to the MargeTrainer, the value you passed will override the one in the `DPOConfig`."
-            )
-            args.label_pad_token_id = label_pad_token_id
-        if data_collator is None:
-            data_collator = MargeDataCollatorWithPadding(
-                pad_token_id=tokenizer.pad_token_id,
-                label_pad_token_id=args.label_pad_token_id,
-                is_encoder_decoder=self.is_encoder_decoder,
-                input_field_name=args.input_field_name,
-                target_field_name=args.target_field_name,
-            )
-
-            if args.remove_unused_columns:
-                args.remove_unused_columns = False
-                # warn users
-                warnings.warn(
-                    "When using MargeDataCollatorWithPadding, you should set `remove_unused_columns=False` in your TrainingArguments"
-                    " we have set it for you, but you should do it yourself in the future.",
-                    UserWarning,
-                )
-
-            self.use_dpo_data_collator = True
-        else:
-            self.use_dpo_data_collator = False
-
-        if not disable_dropout:
-            warnings.warn(
-                "You passed `disable_dropout` to the MargeTrainer, the value you passed will override the one in the `DPOConfig`."
-            )
-            args.disable_dropout = disable_dropout
+        # Disable dropout
         if args.disable_dropout:
             disable_dropout_in_model(model)
             if self.ref_model is not None:
                 disable_dropout_in_model(self.ref_model)
 
-        self.max_length = args.max_length
-        self.generate_during_eval = args.generate_during_eval
-        self.label_pad_token_id = args.label_pad_token_id
-        if padding_value is not None:
-            warnings.warn(
-                "You passed `padding_value` to the MargeTrainer, the value you passed will override the one in the `DPOConfig`."
+        # Create data collator if not provided
+        if data_collator is None:
+            data_collator = MargeDataCollatorWithPadding(
+                pad_token_id=processing_class.pad_token_id,
+                label_pad_token_id=args.label_pad_token_id,
+                is_encoder_decoder=self.is_encoder_decoder,
+                input_field_name=args.input_field_name,
+                target_field_name=args.target_field_name,
             )
-            args.padding_value = padding_value
-        self.padding_value = (
-            args.padding_value if padding_value is not None else tokenizer.pad_token_id
-        )
-        self.max_prompt_length = args.max_prompt_length
-        if truncation_mode != "keep_end":
-            warnings.warn(
-                "You passed `truncation_mode` to the MargeTrainer, the value you passed will override the one in the `DPOConfig`."
-            )
-            args.truncation_mode = truncation_mode
-        self.truncation_mode = args.truncation_mode
-        self.max_target_length = args.max_target_length
-        self.tokenizer = tokenizer
-        self.precompute_ref_log_probs = args.precompute_ref_log_probs
+            if args.remove_unused_columns:
+                args.remove_unused_columns = False
+            self.use_dpo_data_collator = True
+        else:
+            self.use_dpo_data_collator = False
 
-        # Since ref_logs are precomputed on the first call to get_train/eval_dataloader
-        # keep track of first called to avoid computation of future calls
-        self._precomputed_train_ref_log_probs = False
-        self._precomputed_eval_ref_log_probs = False
-
-        if label_smoothing != 0:
-            warnings.warn(
-                "You passed `label_smoothing` to the MargeTrainer, the value you passed will override the one in the `DPOConfig`."
-            )
-            args.label_smoothing = label_smoothing
-
-        if beta != 0.1:
-            warnings.warn(
-                "You passed `beta` to the MargeTrainer, the value you passed will override the one in the `DPOConfig`."
-            )
-            args.beta = beta
-        self.beta = args.beta
-        self.alpha = args.alpha
-        self.label_smoothing = args.label_smoothing
-        self.loss_type = args.loss_type
-
-        self._stored_metrics = defaultdict(lambda: defaultdict(list))
-
-        if dataset_num_proc is not None:
-            warnings.warn(
-                "You passed `dataset_num_proc` to the MargeTrainer, the value you passed will override the one in the `DPOConfig`."
-            )
-            args.dataset_num_proc = dataset_num_proc
-        self.dataset_num_proc = args.dataset_num_proc
-        self.args = args
-
-        # Compute that only on the main process for faster data processing.
-        # see: https://github.com/huggingface/trl/pull/1255
+        # Tokenize dataset if not pretokenized
         with PartialState().local_main_process_first():
-            # tokenize the dataset
             self.pretokenized = pretokenized
             if not self.pretokenized:
                 train_dataset = train_dataset.map(
@@ -553,57 +277,20 @@ class MargeTrainer(Trainer):
             data_collator=data_collator,
             train_dataset=train_dataset,
             eval_dataset=eval_dataset,
-            tokenizer=tokenizer,
-            model_init=model_init,
+            processing_class=processing_class,
             compute_metrics=compute_metrics,
             callbacks=callbacks,
             optimizers=optimizers,
-            preprocess_logits_for_metrics=preprocess_logits_for_metrics,
         )
 
-        if not hasattr(self, "accelerator"):
-            raise AttributeError(
-                "Your `Trainer` does not have an `accelerator` object. Consider upgrading `transformers`."
-            )
-
-        # Deepspeed Zero-3 does not support precompute_ref_log_probs
-        if self.is_deepspeed_enabled:
-            if (
-                self.accelerator.state.deepspeed_plugin.zero_stage == 3
-                and self.precompute_ref_log_probs
-            ):
-                raise ValueError(
-                    "You cannot use `precompute_ref_log_probs=True` with Deepspeed ZeRO-3. Please set `precompute_ref_log_probs=False`."
-                )
-
-        if self.ref_model is None:
-            if not (self.is_peft_model or self.precompute_ref_log_probs):
-                raise ValueError(
-                    "No reference model and model is not a Peft model. Try setting `precompute_ref_log_probs=True`"
-                )
-            if args.sync_ref_model:
-                raise ValueError(
-                    "You currently cannot use `ref_model=None` with TR-DPO method. Please provide `ref_model`."
-                )
-        else:
+        # Prepare ref model with accelerator (must happen after super().__init__)
+        if self.ref_model is not None:
             if self.is_deepspeed_enabled:
                 self.ref_model = self._prepare_deepspeed(self.ref_model)
             else:
                 self.ref_model = self.accelerator.prepare_model(
                     self.ref_model, evaluation_mode=True
                 )
-
-        if args.sync_ref_model:
-            if precompute_ref_log_probs:
-                raise ValueError(
-                    "You cannot use `precompute_ref_log_probs=True` with TR-DPO method. Please set `precompute_ref_log_probs=False`."
-                )
-
-            self.add_callback(
-                SyncRefModelCallback(
-                    ref_model=self.ref_model, accelerator=self.accelerator
-                )
-            )
 
     def _prepare_deepspeed(self, model: PreTrainedModel):
         # Adapted from accelerate: https://github.com/huggingface/accelerate/blob/739b135f8367becb67ffaada12fe76e3aa60fefd/src/accelerate/accelerator.py#L1473
@@ -686,7 +373,7 @@ class MargeTrainer(Trainer):
 
         return super().get_train_dataloader()
 
-    def get_eval_dataloader(self, eval_dataset: Optional[Dataset] = None) -> DataLoader:
+    def get_eval_dataloader(self, eval_dataset: Dataset | None = None) -> DataLoader:
         """
         Returns the evaluation [`~torch.utils.data.DataLoader`].
 
@@ -804,8 +491,8 @@ class MargeTrainer(Trainer):
         }
 
     def tokenize_row(
-        self, feature, model: Optional[Union[PreTrainedModel, nn.Module]] = None
-    ) -> Dict:
+        self, feature, model: PreTrainedModel | nn.Module | None = None
+    ) -> dict:
         """Tokenize a single row from a MargE specific dataset.
 
         At this stage, we don't convert to PyTorch tensors yet; we just handle the truncation
@@ -957,7 +644,7 @@ class MargeTrainer(Trainer):
             if self.ref_adapter_name:
                 self.model.set_adapter(self.model_adapter_name or "default")
 
-    def compute_reference_log_probs(self, padded_batch: Dict) -> Dict:
+    def compute_reference_log_probs(self, padded_batch: dict) -> dict:
         """Computes log probabilities of the reference model for a single padded batch of a DPO specific dataset."""
         compte_ref_context_manager = (
             torch.cuda.amp.autocast
@@ -985,14 +672,14 @@ class MargeTrainer(Trainer):
 
     @staticmethod
     def concatenated_inputs(
-        batch: Dict[str, Union[List, torch.LongTensor]],
+        batch: dict[str, list | torch.LongTensor],
         is_encoder_decoder: bool = False,
         label_pad_token_id: int = -100,
         padding_value: int = 0,
-        device: Optional[torch.device] = None,
+        device: torch.device | None = None,
         target_field_name: str = "target",
         input_field_name: str = "prompt",
-    ) -> Dict[str, torch.LongTensor]:
+    ) -> dict[str, torch.LongTensor]:
         """Concatenate the chosen and rejected inputs into a single tensor.
 
         Args:
@@ -1022,7 +709,7 @@ class MargeTrainer(Trainer):
                 elif k.endswith("_attention_mask"):
                     pad_value = 0
                 concatenated_key = k.replace(target_field_name, "concatenated")
-                concatenated_batch[concatenated_key] = pad_to_length(
+                concatenated_batch[concatenated_key] = _pad_to_length(
                     batch[k], max_length, pad_value=pad_value
                 )
 
@@ -1043,7 +730,7 @@ class MargeTrainer(Trainer):
         policy_reference_target_prob_ratios: torch.FloatTensor,
         target_rewards: torch.FloatTensor,
         target_sizes: torch.LongTensor,
-    ) -> Tuple[torch.FloatTensor, torch.FloatTensor, torch.FloatTensor]:
+    ) -> tuple[torch.FloatTensor, torch.FloatTensor, torch.FloatTensor]:
         """Compute the MargE loss for a batch of policy and reference model log probabilities.
 
         Args:
@@ -1087,7 +774,7 @@ class MargeTrainer(Trainer):
         labels: torch.LongTensor,
         label_pad_token_id: int = -100,
         is_encoder_decoder: bool = False,
-    ) -> Tuple[torch.FloatTensor, torch.LongTensor]:
+    ) -> tuple[torch.FloatTensor, torch.LongTensor]:
         """Compute the log probabilities of the given labels under the given logits.
 
         Args:
@@ -1097,7 +784,7 @@ class MargeTrainer(Trainer):
             is_encoder_decoder: Whether the model is an encoder-decoder model.
 
         Returns:
-            A Tuple of two tensor of shape ((batch_size,), (batch_size,)) containing the sum of log probabilities of the given labels under the given logits in the first tensor and the number of non-masked tokens in the second tensor.
+            A tuple of two tensor of shape ((batch_size,), (batch_size,)) containing the sum of log probabilities of the given labels under the given logits in the first tensor and the number of non-masked tokens in the second tensor.
         """
         if logits.shape[:-1] != labels.shape:
             raise ValueError(
@@ -1119,8 +806,8 @@ class MargeTrainer(Trainer):
         return (per_token_logps * loss_mask).sum(-1), loss_mask.sum(-1)
 
     def concatenated_forward(
-        self, model: nn.Module, batch: Dict[str, Union[List, torch.LongTensor]]
-    ) -> Tuple[torch.FloatTensor, torch.FloatTensor, torch.FloatTensor]:
+        self, model: nn.Module, batch: dict[str, list | torch.LongTensor]
+    ) -> tuple[torch.FloatTensor, torch.FloatTensor, torch.FloatTensor]:
         """Run the given model on the given batch of inputs."""
         concatenated_batch = self.concatenated_inputs(
             batch,
@@ -1162,7 +849,7 @@ class MargeTrainer(Trainer):
     def get_batch_loss_metrics(
         self,
         model,
-        batch: Dict[str, Union[List, torch.LongTensor]],
+        batch: dict[str, list | torch.LongTensor],
         train_eval: Literal["train", "eval"] = "train",
     ):
         """Compute the DPO loss and other metrics for the given batch of inputs for train or test."""
@@ -1226,10 +913,11 @@ class MargeTrainer(Trainer):
 
     def compute_loss(
         self,
-        model: Union[PreTrainedModel, nn.Module],
-        inputs: Dict[str, Union[torch.Tensor, Any]],
-        return_outputs=False,
-    ) -> Union[torch.Tensor, Tuple[torch.Tensor, Dict[str, torch.Tensor]]]:
+        model: PreTrainedModel | nn.Module,
+        inputs: dict[str, torch.Tensor | Any],
+        return_outputs: bool = False,
+        num_items_in_batch: int | None = None,
+    ) -> torch.Tensor | tuple[torch.Tensor, dict[str, torch.Tensor]]:
         if not self.use_dpo_data_collator:
             warnings.warn(
                 "compute_loss is only implemented for MargeDataCollatorWithPadding, and you passed a datacollator that is different than "
@@ -1256,9 +944,9 @@ class MargeTrainer(Trainer):
             return (loss, metrics)
         return loss
 
-    def get_batch_samples(
-        self, model, batch: Dict[str, torch.LongTensor]
-    ) -> Tuple[str, str]:
+    def generate_eval_samples(
+        self, model, batch: dict[str, torch.LongTensor]
+    ) -> tuple[str, str]:
         """
         Greedily decode samples from the model and reference model for the given batch of inputs.
         """
@@ -1324,10 +1012,10 @@ class MargeTrainer(Trainer):
 
     def prediction_step(
         self,
-        model: Union[PreTrainedModel, nn.Module],
-        inputs: Dict[str, Union[torch.Tensor, Any]],
+        model: PreTrainedModel | nn.Module,
+        inputs: dict[str, torch.Tensor | Any],
         prediction_loss_only: bool,
-        ignore_keys: Optional[List[str]] = None,
+        ignore_keys: list[str] | None = None,
     ):
         if not self.use_dpo_data_collator:
             warnings.warn(
@@ -1370,7 +1058,7 @@ class MargeTrainer(Trainer):
         return (loss.detach(), logits, labels)
 
     def store_metrics(
-        self, metrics: Dict[str, float], train_eval: Literal["train", "eval"] = "train"
+        self, metrics: dict[str, float], train_eval: Literal["train", "eval"] = "train"
     ) -> None:
         for key, value in metrics.items():
             self._stored_metrics[train_eval][key].append(value)
@@ -1379,8 +1067,8 @@ class MargeTrainer(Trainer):
         self,
         dataloader: DataLoader,
         description: str,
-        prediction_loss_only: Optional[bool] = None,
-        ignore_keys: Optional[List[str]] = None,
+        prediction_loss_only: bool | None = None,
+        ignore_keys: list[str] | None = None,
         metric_key_prefix: str = "eval",
     ) -> EvalLoopOutput:
         """
@@ -1426,7 +1114,7 @@ class MargeTrainer(Trainer):
                 )
                 random_batch = self._prepare_inputs(self.data_collator(random_batch))
                 policy_output_decoded_batch, ref_output_decoded_batch = (
-                    self.get_batch_samples(self.model, random_batch)
+                    self.generate_eval_samples(self.model, random_batch)
                 )
                 policy_output_decoded.extend(policy_output_decoded_batch)
                 ref_output_decoded.extend(ref_output_decoded_batch)
@@ -1445,42 +1133,43 @@ class MargeTrainer(Trainer):
             self.store_metrics(ref_metrics, train_eval="eval")
 
         # Base evaluation
-        initial_output = super(MargeTrainer, self).evaluation_loop(
+        initial_output = super().evaluation_loop(
             dataloader,
             description,
             prediction_loss_only,
             ignore_keys,
             metric_key_prefix,
         )
+
+        # Average stored metrics and merge, then reset
+        averaged_metrics = {
+            k: np.mean(v) for k, v in self._stored_metrics["eval"].items()
+        }
+        self._stored_metrics["eval"].clear()
+
         initial_output = EvalLoopOutput(
             predictions=initial_output.predictions,
             label_ids=initial_output.label_ids,
-            metrics={**initial_output.metrics, **self._stored_metrics["eval"]},
+            metrics={**initial_output.metrics, **averaged_metrics},
             num_samples=initial_output.num_samples,
         )
 
         return initial_output
 
-    def log(self, logs: Dict[str, float]) -> None:
-        """
-        Log `logs` on the various objects watching training, including stored metrics.
-
-        Args:
-            logs (`Dict[str, float]`):
-                The values to log.
-        """
+    def log(self, logs: dict[str, float], start_time: float | None = None) -> None:
+        """Log `logs` on the various objects watching training, including stored metrics."""
         # logs either has 'loss' or 'eval_loss'
         train_eval = "train" if "loss" in logs else "eval"
         # Add averaged stored metrics to logs
         for key, metrics in self._stored_metrics[train_eval].items():
             logs[key] = torch.tensor(metrics).mean().item()
         del self._stored_metrics[train_eval]
-        return super().log(logs)
+        return super().log(logs, start_time)
 
     @wraps(Trainer.push_to_hub)
     def push_to_hub(
         self,
-        commit_message: Optional[str] = "End of training",
+        commit_message: str | None = "End of training",
         blocking: bool = True,
         **kwargs,
     ) -> str:
@@ -1578,6 +1267,9 @@ class MargeTrainer(Trainer):
 
         # Maybe delete some older checkpoints.
         if self.args.should_save:
-            # Use numerical checkpoint id for rotation (reliable on all filesystems)
-            # Checkpoint numbers are now monotonically increasing across epochs
-            self._rotate_checkpoints(use_mtime=False, output_dir=run_dir)
+            rotate_checkpoints(
+                output_dir=run_dir,
+                save_total_limit=self.args.save_total_limit,
+                best_model_checkpoint=self.state.best_model_checkpoint,
+                use_mtime=False,
+            )

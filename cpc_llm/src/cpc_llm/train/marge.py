@@ -1,3 +1,4 @@
+import dataclasses
 import hydra
 import json
 import logging
@@ -60,7 +61,14 @@ def main(cfg: DictConfig):
 
     cfg_dict = OmegaConf.to_container(cfg)
     script_args = cfg_dict.get("dpo_script_args", {})
-    training_args = MargeConfig(**cfg_dict["marge_config"])
+
+    # Filter out config keys not in MargeConfig (e.g. old DPO-specific fields)
+    marge_cfg = cfg_dict["marge_config"]
+    valid_fields = {f.name for f in dataclasses.fields(MargeConfig)}
+    removed = {k: marge_cfg.pop(k) for k in list(marge_cfg) if k not in valid_fields}
+    if removed:
+        logging.info(f"Dropped unsupported MargeConfig fields: {list(removed)}")
+    training_args = MargeConfig(**marge_cfg)
     model_config = ModelConfig(**cfg_dict["model_config"])
 
     if TRL_USE_RICH:
@@ -276,8 +284,7 @@ def main(cfg: DictConfig):
             train_dataset=train_dataset,
             eval_dataset=eval_dataset,
             pretokenized=cfg.pretokenized,
-            tokenizer=tokenizer,
-            peft_config=peft_config,
+            processing_class=tokenizer,
             callbacks=callbacks,
         )
     trainer.evaluate()
