@@ -5,6 +5,7 @@ import numpy as np
 import os
 import random
 import torch
+import torch.nn as nn
 
 from botorch.test_functions import SyntheticTestFunction
 from collections import defaultdict
@@ -20,7 +21,6 @@ from transformers.trainer_utils import (
 from transformers.trainer import TRAINER_STATE_NAME
 from transformers.utils import logging as transformers_logging
 from trl import DPOTrainer
-from typing import Dict, List, Optional, Tuple
 
 logger = transformers_logging.get_logger(__name__)
 
@@ -31,7 +31,6 @@ class DPOTrainerWithLogging(DPOTrainer):
     Custom functionality beyond base DPOTrainer:
     - Generation during eval with metrics from Ehrlich test function
     - Validity-gated checkpoint saving (% parsable, % feasible, etc.)
-    - Extra logging metrics (ranking accuracy, log prob margins)
     """
 
     def __init__(
@@ -59,25 +58,21 @@ class DPOTrainerWithLogging(DPOTrainer):
 
         super().__init__(**kwargs)
 
-    def _compute_loss(self, model, inputs, return_outputs):
-        """Delegate to parent — modern DPOTrainer already logs comprehensive metrics."""
-        return super()._compute_loss(model, inputs, return_outputs)
-
     def store_metrics(
         self,
-        metrics: Dict[str, float],
+        metrics: dict[str, float],
         train_eval: str = "train",
     ) -> None:
-        """Store metrics for later aggregation in log()."""
+        """Store metrics for later aggregation in evaluation_loop."""
         for key, value in metrics.items():
             self._stored_metrics[train_eval][key].append(value)
 
     def get_metrics_for_outputs(
         self,
-        outputs: List[str],
-        input_scores: List[float],
-        input_particles: List[List[int]],
-    ) -> Tuple[Dict[str, float], List[float]]:
+        outputs: list[str],
+        input_scores: list[float],
+        input_particles: list[list[int]],
+    ) -> tuple[dict[str, float], list[float | None]]:
         """Compute Ehrlich test function metrics for generated outputs.
 
         Returns both a dictionary of computed metrics and the list of scores.
@@ -88,7 +83,7 @@ class DPOTrainerWithLogging(DPOTrainer):
         num_values_in_range = 0
         num_feasible = 0
         num_repeated_input = 0
-        all_scores_including_nulls = []
+        all_scores_including_nulls: list[float | None] = []
         num_decreased_score = 0
 
         for i, o in enumerate(outputs):
@@ -169,8 +164,8 @@ class DPOTrainerWithLogging(DPOTrainer):
         self,
         dataloader: DataLoader,
         description: str,
-        prediction_loss_only: Optional[bool] = None,
-        ignore_keys: Optional[List[str]] = None,
+        prediction_loss_only: bool | None = None,
+        ignore_keys: list[str] | None = None,
         metric_key_prefix: str = "eval",
     ) -> EvalLoopOutput:
         """Override evaluation loop to add generation-based metrics."""
@@ -231,18 +226,25 @@ class DPOTrainerWithLogging(DPOTrainer):
             ignore_keys,
             metric_key_prefix,
         )
+
+        # Average stored metrics and merge into output, then reset
+        averaged_metrics = {
+            k: np.mean(v) for k, v in self._stored_metrics["eval"].items()
+        }
+        self._stored_metrics["eval"].clear()
+
         initial_output = EvalLoopOutput(
             predictions=initial_output.predictions,
             label_ids=initial_output.label_ids,
-            metrics={**initial_output.metrics, **self._stored_metrics["eval"]},
+            metrics={**initial_output.metrics, **averaged_metrics},
             num_samples=initial_output.num_samples,
         )
 
         return initial_output
 
     def generate_eval_samples(
-        self, model, batch: Dict[str, torch.LongTensor]
-    ) -> Tuple[str, str]:
+        self, model: nn.Module, batch: dict[str, torch.LongTensor]
+    ) -> tuple[list[str], list[str]]:
         """Generate samples from policy and reference model for the given batch."""
         generate_context_manager = (
             nullcontext
@@ -267,8 +269,11 @@ class DPOTrainerWithLogging(DPOTrainer):
             half = input_ids.shape[0] // 2
             chosen_ids = input_ids[:half]
             chosen_completion_mask = completion_mask[:half]
-            # Prompt = tokens where completion_mask is 0
-            prompt_lens = (chosen_completion_mask == 0).sum(dim=1)
+            chosen_attention_mask = batch["attention_mask"][:half]
+            # Prompt = attended tokens where completion_mask is 0
+            prompt_lens = (chosen_attention_mask * (1 - chosen_completion_mask)).sum(
+                dim=1
+            )
             max_prompt_len = prompt_lens.max().item()
             prompt_ids = chosen_ids[:, :max_prompt_len]
             prompt_mask = (prompt_ids != tokenizer.pad_token_id).long()
@@ -307,7 +312,9 @@ class DPOTrainerWithLogging(DPOTrainer):
 
         return policy_output_decoded, reference_output_decoded
 
-    def _save_checkpoint(self, model, trial, metrics=None):
+    def _save_checkpoint(
+        self, model: nn.Module, trial, metrics: dict[str, float] | None = None
+    ) -> None:
         """Save checkpoint with validity gating based on Ehrlich metrics."""
         # Calculate a monotonically increasing checkpoint number
         checkpoint_number = int(self.state.epoch) * 10000 + self.state.global_step
