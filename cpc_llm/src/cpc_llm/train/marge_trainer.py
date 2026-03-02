@@ -255,9 +255,9 @@ class MargeTrainer(Trainer):
             )
             if args.remove_unused_columns:
                 args.remove_unused_columns = False
-            self.use_dpo_data_collator = True
+            self.use_marge_data_collator = True
         else:
-            self.use_dpo_data_collator = False
+            self.use_marge_data_collator = False
 
         # Tokenize dataset if not pretokenized
         with PartialState().local_main_process_first():
@@ -918,7 +918,7 @@ class MargeTrainer(Trainer):
         return_outputs: bool = False,
         num_items_in_batch: int | None = None,
     ) -> torch.Tensor | tuple[torch.Tensor, dict[str, torch.Tensor]]:
-        if not self.use_dpo_data_collator:
+        if not self.use_marge_data_collator:
             warnings.warn(
                 "compute_loss is only implemented for MargeDataCollatorWithPadding, and you passed a datacollator that is different than "
                 "MargeDataCollatorWithPadding - you might see unexpected behavior. Alternatively, you can implement your own prediction_step method if you are using a custom data collator"
@@ -1017,7 +1017,7 @@ class MargeTrainer(Trainer):
         prediction_loss_only: bool,
         ignore_keys: list[str] | None = None,
     ):
-        if not self.use_dpo_data_collator:
+        if not self.use_marge_data_collator:
             warnings.warn(
                 "prediction_step is only implemented for MargeDataCollatorWithPadding, and you passed a datacollator that is different than "
                 "DPODataCollatorWithPadding - you might see unexpected behavior. Alternatively, you can implement your own prediction_step method if you are using a custom data collator"
