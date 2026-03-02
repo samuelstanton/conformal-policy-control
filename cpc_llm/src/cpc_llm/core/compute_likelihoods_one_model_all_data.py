@@ -113,7 +113,6 @@ def compute_likelihoods_one_model_all_data(
     input_df = pd.read_json(input_fp, orient="records", lines=True)
     # input_ds = datasets.Dataset.from_pandas(input_df)
     input_data = input_df.to_dict("list")
-    # breakpoint()
     formatted_inputs = formatting_texts_func_single_seq(input_data)
 
     # last_timestep_idx = len(cfg.prev_target_data_path_list) - 1
@@ -134,7 +133,6 @@ def compute_likelihoods_one_model_all_data(
             target_df = target_df[target_df.columns[0:2] + lik_col_names_prev]
 
         target_data = target_df.to_dict("list")
-        # breakpoint()
         formatted_targets = formatting_texts_func_single_seq(target_data)
 
         ## Compute likelihoods

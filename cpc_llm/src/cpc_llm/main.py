@@ -701,8 +701,6 @@ def run_pipeline(cfg: DictConfig):
                 )
 
             if constrained_liks_df_beta_hat.iloc[0, 0] != unconstrained_df.iloc[0, 0]:
-                breakpoint()
-                ## Sanity check
                 raise ValueError(
                     f"constrained_liks_df_beta_hat.iloc[0,0] ({constrained_liks_df_beta_hat.iloc[0, 0]}) != ({unconstrained_df.iloc[0, 0]}) unconstrained_df.iloc[0,0]"
                 )
