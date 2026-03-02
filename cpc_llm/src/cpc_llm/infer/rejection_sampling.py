@@ -80,7 +80,10 @@ def _load_test_fn(ga_data_dir: str) -> Ehrlich | RoughMtFuji:
 
 
 def _init_model_client_with_retry(
-    model_name_or_path: str, max_new_tokens: int, _logger: logging.Logger
+    model_name_or_path: str,
+    max_new_tokens: int,
+    _logger: logging.Logger,
+    temperature: float = 1.0,
 ) -> ModelClient:
     """Initialize a ModelClient with CUDA exponential-backoff retry.
 
@@ -88,6 +91,7 @@ def _init_model_client_with_retry(
         model_name_or_path: HuggingFace model identifier or local path.
         max_new_tokens: Maximum number of tokens to generate.
         _logger: Logger instance for status messages.
+        temperature: Temperature for likelihood computation scaling.
 
     Returns:
         An initialized ModelClient on CUDA (or CPU as fallback).
@@ -106,6 +110,7 @@ def _init_model_client_with_retry(
                 model_name_or_path=model_name_or_path,
                 logger=_logger,
                 max_generate_length=max_new_tokens,
+                temperature=temperature,
                 device="cuda",
             )
             return model_client
@@ -139,6 +144,7 @@ def _init_model_client_with_retry(
             model_name_or_path=model_name_or_path,
             logger=_logger,
             max_generate_length=max_new_tokens,
+            temperature=temperature,
             device="cpu",
         )
     raise RuntimeError(f"Failed to initialize ModelClient for {model_name_or_path}")
@@ -701,44 +707,59 @@ def accept_reject_sample_and_get_likelihoods(
 
     call_idx = 0
 
-    # ---- Pre-load generation model and test function for in-memory mode ----
+    # ---- Pre-load models for in-memory mode ----
     gen_model_client = None
     test_fn = None
     lik_model_clients: dict[str, ModelClient] = {}
     if use_inmemory:
         test_fn = _load_test_fn(ga_data_dir)
-        max_new_tokens = cfg.iterative_generation.args.generation_config.max_new_tokens
-        if proposal == "unconstrained":
-            gen_model_client = _init_model_client_with_retry(
-                model_dir_list[-1], max_new_tokens, logger
-            )
-        elif proposal == "safe":
-            if cfg.conformal_policy_control.constrain_against == "init":
-                gen_model_client = _init_model_client_with_retry(
-                    model_dir_list[0], max_new_tokens, logger
-                )
-            # For safe/non-init, generation happens via recursion (no pre-load needed here)
-        elif proposal == "mixture":
-            # Pre-load both models for mixture proposals
-            gen_model_client = {
-                "unconstrained": _init_model_client_with_retry(
-                    model_dir_list[-1], max_new_tokens, logger
-                ),
-                "safe": _init_model_client_with_retry(
-                    model_dir_list[0], max_new_tokens, logger
-                ),
-            }
 
-        # ---- Pre-load likelihood models for reuse across AR iterations ----
+        # Pre-load likelihood models first so gen can reuse them
         max_new_tokens_lik = (
             cfg.compute_likelihooods_all_models.args.generation_config.max_new_tokens
         )
+        lik_temperature = cfg.temperature
         for model_path in model_dir_list:
             if model_path not in lik_model_clients:
                 logger.info(f"Pre-loading likelihood model: {model_path}")
                 lik_model_clients[model_path] = _init_model_client_with_retry(
-                    model_path, max_new_tokens_lik, logger
+                    model_path, max_new_tokens_lik, logger, temperature=lik_temperature
                 )
+
+        # Reuse lik clients for generation when the model path matches
+        # (compute_likelihoods_avg does not use max_generate_length or temperature)
+        max_new_tokens = cfg.iterative_generation.args.generation_config.max_new_tokens
+        if proposal == "unconstrained":
+            if model_dir_list[-1] in lik_model_clients:
+                gen_model_client = lik_model_clients[model_dir_list[-1]]
+            else:
+                gen_model_client = _init_model_client_with_retry(
+                    model_dir_list[-1], max_new_tokens, logger
+                )
+        elif proposal == "safe":
+            if cfg.conformal_policy_control.constrain_against == "init":
+                if model_dir_list[0] in lik_model_clients:
+                    gen_model_client = lik_model_clients[model_dir_list[0]]
+                else:
+                    gen_model_client = _init_model_client_with_retry(
+                        model_dir_list[0], max_new_tokens, logger
+                    )
+            # For safe/non-init, generation happens via recursion (no pre-load needed here)
+        elif proposal == "mixture":
+            gen_model_client = {
+                "unconstrained": lik_model_clients.get(
+                    model_dir_list[-1],
+                    _init_model_client_with_retry(
+                        model_dir_list[-1], max_new_tokens, logger
+                    ),
+                ),
+                "safe": lik_model_clients.get(
+                    model_dir_list[0],
+                    _init_model_client_with_retry(
+                        model_dir_list[0], max_new_tokens, logger
+                    ),
+                ),
+            }
 
     # if betas_list[-1] >= 1:
     if proposal == "unconstrained":
@@ -1301,12 +1322,11 @@ def accept_reject_sample_and_get_likelihoods(
         raise ValueError(f"Unknown proposal name : {proposal}")
 
     # ---- Free pre-loaded models to reclaim GPU memory ----
+    # gen_model_client may be shared with lik_model_clients; clear lik dict
+    # first (releases all references), then delete gen if it was separate.
+    lik_model_clients.clear()
     if gen_model_client is not None:
         del gen_model_client
-    if lik_model_clients:
-        for _mc in lik_model_clients.values():
-            del _mc
-        lik_model_clients.clear()
     torch.cuda.empty_cache()
 
     # ## Save accepted with unconstrained likelihoods
