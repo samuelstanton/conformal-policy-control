@@ -264,7 +264,7 @@ def main(cfg: DictConfig):
             args=training_args,
             train_dataset=train_dataset,
             eval_dataset=eval_dataset,
-            tokenizer=tokenizer,
+            processing_class=tokenizer,
             peft_config=get_peft_config(model_config),
             callbacks=callbacks,
             formatting_func=formatting_fn,

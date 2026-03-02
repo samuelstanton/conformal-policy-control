@@ -83,33 +83,6 @@ class Seq2SeqSFTConfig(SFTConfig):
         return d
 
 
-# class S3Callback(TrainerCallback):
-#     def __init__(self, s3_output_dir: str, logger: logging.Logger = None):
-#         self.s3_output_dir = s3_output_dir
-#         if not self.s3_output_dir.endswith("/"):
-#             self.s3_output_dir += "/"
-#         self.logger = logger
-#         self.s3 = s3fs.S3FileSystem()
-
-#     def on_save(
-#         self,
-#         args: TrainingArguments,
-#         state: TrainerState,
-#         control: TrainerControl,
-#         **kwargs,
-#     ):
-#         """
-#         Copy all local checkpoint files to S3!
-#         """
-#         checkpoint_folder_name = f"{PREFIX_CHECKPOINT_DIR}-{state.global_step}"
-#         checkpoint_dir = os.path.join(args.output_dir, checkpoint_folder_name)
-#         self.s3.put(checkpoint_dir, self.s3_output_dir, recursive=True)
-#         if self.logger is not None:
-#             self.logger.info(
-#                 f"Successfully copied checkpoint in {checkpoint_dir} to {self.s3_output_dir}."
-#             )
-
-
 class S3Callback(TrainerCallback):
     def __init__(self, s3_output_dir: str, logger: logging.Logger = None):
         self.s3_output_dir = s3_output_dir
