@@ -893,7 +893,7 @@ class MargeTrainer(Trainer):
                 rewards,
                 target_num_tokens,
             )
-            metrics[f"{prefix}rewards/target"] = target_rewards.mean().cpu()
+            metrics[f"{prefix}rewards/target"] = target_rewards.mean().cpu().item()
             metrics[f"{prefix}rewards/running_average"] = avg_reward_baseline
         else:
             losses, kl_div_to_target, kl_div_to_ref = self.marge_loss(
@@ -902,15 +902,23 @@ class MargeTrainer(Trainer):
                 rewards,
                 target_num_tokens,
             )
-            metrics[f"{prefix}kl_div/reverse_to_target"] = kl_div_to_target.mean().cpu()
-            metrics[f"{prefix}kl_div/forward_to_ref"] = kl_div_to_ref.mean().cpu()
+            metrics[f"{prefix}kl_div/reverse_to_target"] = (
+                kl_div_to_target.mean().cpu().item()
+            )
+            metrics[f"{prefix}kl_div/forward_to_ref"] = (
+                kl_div_to_ref.mean().cpu().item()
+            )
 
         metrics[f"{prefix}likelihoods/policy_reference_ratio"] = (
-            policy_reference_target_ratios.mean().cpu()
+            policy_reference_target_ratios.mean().cpu().item()
         )
 
-        metrics[f"{prefix}logps/policy"] = policy_target_logps.detach().mean().cpu()
-        metrics[f"{prefix}logits/target"] = policy_target_logits.detach().mean().cpu()
+        metrics[f"{prefix}logps/policy"] = (
+            policy_target_logps.detach().mean().cpu().item()
+        )
+        metrics[f"{prefix}logits/target"] = (
+            policy_target_logits.detach().mean().cpu().item()
+        )
 
         return losses.mean(), metrics
 
