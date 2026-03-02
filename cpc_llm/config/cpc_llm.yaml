@@ -518,7 +518,7 @@ dpo:
       save_strategy: epoch
       torch_compile: true
       max_length: 256 #512
-      max_prompt_length: 128 #512
+      max_prompt_length: 128 #512  # TODO: remove — filtered at runtime by dataclasses.fields(DPOConfig)
       log_level: "info"
       seed: 0
       per_device_train_batch_size: 32

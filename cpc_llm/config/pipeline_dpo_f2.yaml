@@ -159,7 +159,7 @@ dpo:
       self_normalize_weights: True
       reinforce_style: False
       max_length: 512
-      max_prompt_length: 256
+      max_prompt_length: 256  # TODO: remove — filtered at runtime by dataclasses.fields(DPOConfig)
       log_level: "info"
       seed: 0
       per_device_train_batch_size: 1
