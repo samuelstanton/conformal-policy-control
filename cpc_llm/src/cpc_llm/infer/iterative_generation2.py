@@ -14,7 +14,7 @@ from ..test_functions.finetune_utils import (
     formatting_texts_func_edit_pairs,
     parse_particle_and_score,
     parse_particle_and_score_permissive,
-    truncate_after_right_bracket_w_logps,
+    truncate_after_right_bracket,
 )
 from holo.test_functions.closed_form import Ehrlich, RoughMtFuji
 from ..core.model_client import ModelClient
@@ -31,7 +31,11 @@ def run_iterative_generation_inmemory(
     cfg: DictConfig,
     logger: logging.Logger | None = None,
 ) -> pd.DataFrame:
-    """Core generation loop that operates entirely in memory.
+    """Generate samples over max_iterations rounds, accumulating results.
+
+    This is the looping wrapper used by the subprocess entry point. For
+    in-memory callers that want single-batch control, use
+    ``generate_single_batch`` directly.
 
     Args:
         input_ds: datasets.Dataset with seed sequences for generation.
@@ -44,76 +48,103 @@ def run_iterative_generation_inmemory(
         logger: Logger instance.
 
     Returns:
-        DataFrame with columns: particle, score, loglikelihood, num_particles_generated.
+        DataFrame with columns: particle, score, num_particles_generated.
     """
     if logger is None:
         logger = logging.getLogger(__name__)
 
-    num_particles_generated = 0
-    all_outputs = []
+    all_dfs = []
     logger.info(f"cfg.max_iterations : {cfg.max_iterations}")
-    for iter in tqdm(range(1, cfg.max_iterations + 1), desc="Generation iterations..."):
-        ## Formatting text inputs
-        input_texts = formatting_texts_func_edit_pairs(
-            input_ds,
-            include_target=False,
-            higher_score_particle_field=cfg.higher_score_particle_field,
-            lower_score_particle_field=cfg.lower_score_particle_field,
+    for _iter in tqdm(
+        range(1, cfg.max_iterations + 1), desc="Generation iterations..."
+    ):
+        batch_df = generate_single_batch(
+            input_ds, model_client, test_fn, gen_config, cfg, logger
         )
-        logger.info(
-            f"Generating texts with cfg.subsample_seeds={cfg.subsample_seeds}, len(input_texts)={len(input_texts)}, len(set(input_texts))={len(set(input_texts))}"
+        if len(batch_df) > 0:
+            all_dfs.append(batch_df)
+
+    if all_dfs:
+        return pd.concat(all_dfs, ignore_index=True)
+    return pd.DataFrame(columns=["particle", "score", "num_particles_generated"])
+
+
+def generate_single_batch(
+    input_ds: datasets.Dataset,
+    model_client: ModelClient,
+    test_fn: Ehrlich | RoughMtFuji,
+    gen_config: GenerationConfig,
+    cfg: DictConfig,
+    logger: logging.Logger | None = None,
+) -> pd.DataFrame:
+    """Generate one batch of samples from a model.
+
+    Formats seed inputs, runs one forward generation pass, truncates outputs
+    at the closing bracket, and parses valid particles with scores.
+
+    Args:
+        input_ds: datasets.Dataset with seed sequences for generation.
+        model_client: Pre-initialized ModelClient instance.
+        test_fn: Ehrlich or RoughMtFuji test function for scoring.
+        gen_config: HuggingFace generation config (instantiated).
+        cfg: Hydra config (needs batch_size, subsample_seeds,
+             permissive_parsing, higher_score_particle_field,
+             lower_score_particle_field).
+        logger: Logger instance.
+
+    Returns:
+        DataFrame with columns: particle, score, num_particles_generated.
+        May be empty if no outputs parsed successfully.
+    """
+    if logger is None:
+        logger = logging.getLogger(__name__)
+
+    ## Format text inputs from seeds
+    input_texts = formatting_texts_func_edit_pairs(
+        input_ds,
+        include_target=False,
+        higher_score_particle_field=cfg.higher_score_particle_field,
+        lower_score_particle_field=cfg.lower_score_particle_field,
+    )
+    logger.info(
+        f"Generating texts with cfg.subsample_seeds={cfg.subsample_seeds}, "
+        f"len(input_texts)={len(input_texts)}, "
+        f"len(set(input_texts))={len(set(input_texts))}"
+    )
+
+    ## Generate and decode
+    output_strs = model_client.generate_texts_batched(
+        input_texts,
+        batch_size=cfg.batch_size,
+        generation_config=gen_config,
+        return_likelihoods=False,
+        subsample_seeds=cfg.subsample_seeds,
+    )
+
+    ## Truncate after closing bracket and parse
+    outputs = []
+    num_particles_generated = 0
+    for output_str in output_strs:
+        truncated = truncate_after_right_bracket(output_str)
+
+        if cfg.permissive_parsing:
+            result = parse_particle_and_score_permissive(truncated, test_fn)
+        else:
+            result = parse_particle_and_score(truncated, test_fn)
+
+        num_particles_generated += 1
+        if result is None:
+            continue
+
+        outputs.append(
+            {
+                "particle": result[0],
+                "score": result[1],
+                "num_particles_generated": num_particles_generated,
+            }
         )
 
-        ## Generate raw output texts
-        _, output_token_ids, output_token_logps = model_client.generate_texts_batched(
-            input_texts,
-            batch_size=cfg.batch_size,
-            generation_config=gen_config,
-            return_likelihoods=True,
-            subsample_seeds=cfg.subsample_seeds,
-        )
-
-        ## Truncated outputs
-        trunc_outputs = []
-        trunc_output_logps = []
-        for token_ids, token_logps in tqdm(
-            zip(output_token_ids, output_token_logps), desc="Truncating outputs.."
-        ):
-            trunc_output, logps = truncate_after_right_bracket_w_logps(
-                token_ids,
-                token_logps,
-                model_client.tokenizer,
-                length_normalized=False,  # True
-            )
-            trunc_outputs.append(trunc_output)
-            trunc_output_logps.append(logps)
-
-        # store outputs and create inputs for the next iteration
-        for output_idx in range(len(trunc_outputs)):
-            output = trunc_outputs[output_idx]
-            output_logp = trunc_output_logps[output_idx]
-
-            if cfg.permissive_parsing:
-                output_particle_and_score = parse_particle_and_score_permissive(
-                    output, test_fn
-                )
-            else:
-                output_particle_and_score = parse_particle_and_score(output, test_fn)
-
-            num_particles_generated += 1
-            if output_particle_and_score is None:
-                continue
-
-            all_outputs.append(
-                {
-                    "particle": output_particle_and_score[0],
-                    "score": output_particle_and_score[1],
-                    "loglikelihood": output_logp,
-                    "num_particles_generated": num_particles_generated,
-                }
-            )
-
-    return pd.DataFrame(all_outputs)
+    return pd.DataFrame(outputs)
 
 
 def run_iterative_generation(cfg: DictConfig, logger: logging.Logger = None):

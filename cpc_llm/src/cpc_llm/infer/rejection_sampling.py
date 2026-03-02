@@ -25,7 +25,7 @@ from ..core.model_loading import (
     cleanup_model_clients,
 )
 from ..core.compute_liks_all_models_one_target import compute_likelihoods_inmemory
-from .iterative_generation2 import run_iterative_generation_inmemory
+from .iterative_generation2 import generate_single_batch
 from holo.test_functions.closed_form import Ehrlich, RoughMtFuji
 
 
@@ -101,12 +101,15 @@ def generate_sample_batch(
     random_seed: int = 0,
     call_idx: int = 0,
     global_random_seed: int = 0,
+    n_target: int | None = None,
     _model_client: ModelClient | None = None,
     _test_fn: Ehrlich | RoughMtFuji | None = None,
 ) -> pd.DataFrame | None:
-    """Generate a batch of samples from a model.
+    """Generate samples from a model, with optional early stopping.
 
-    Handles both in-memory (direct) and subprocess (SLURM) execution modes.
+    In in-memory mode, generates one batch at a time via generate_single_batch,
+    looping up to max_iterations and stopping early when n_target valid samples
+    have been collected. In subprocess mode, delegates to run_iterative_generation.
 
     Args:
         cfg: Pipeline config.
@@ -123,12 +126,14 @@ def generate_sample_batch(
         random_seed: Random seed for reproducible seed selection.
         call_idx: Call index for subprocess filename construction.
         global_random_seed: Global random seed for subprocess mode.
+        n_target: If provided, stop generation early once this many valid
+            samples have been collected (in-memory mode only).
         _model_client: Pre-loaded ModelClient (required for in-memory mode).
         _test_fn: Pre-loaded test function (required for in-memory mode).
 
     Returns:
-        DataFrame with columns: particle, score, loglikelihood,
-        num_particles_generated. Returns None if generation produced no samples.
+        DataFrame with columns: particle, score, num_particles_generated.
+        Returns None if generation produced no samples.
     """
     if _is_direct_mode(cfg):
         gen_df = _generate_inmemory(
@@ -142,6 +147,7 @@ def generate_sample_batch(
             higher_score_field,
             lower_score_field,
             random_seed,
+            n_target=n_target,
         )
     else:
         _, iter_gen_outputs_list, _hd = run_iterative_generation(
@@ -232,8 +238,13 @@ def _generate_inmemory(
     higher_score_field: str,
     lower_score_field: str,
     random_seed: int,
+    n_target: int | None = None,
 ) -> pd.DataFrame:
-    """Read seeds, select, and generate proposals entirely in memory."""
+    """Read seeds, select, and generate samples entirely in memory.
+
+    Calls generate_single_batch in a loop up to max_iterations times,
+    stopping early if n_target valid samples have been collected.
+    """
     df = _read_jsonl_cached(seeds_fp)
 
     if cfg.sanity_check:
@@ -285,10 +296,8 @@ def _generate_inmemory(
         max_new_tokens=cfg.iterative_generation.args.generation_config.max_new_tokens,
     )
 
-    # Build a minimal config for run_iterative_generation_inmemory
     gen_cfg = OmegaConf.create(
         {
-            "max_iterations": cfg.iterative_generation.args.max_iterations,
             "batch_size": cfg.sampling_gen_batch_size,
             "subsample_seeds": cfg.iterative_generation.args.subsample_seeds,
             "permissive_parsing": cfg.iterative_generation.permissive_parsing,
@@ -297,9 +306,27 @@ def _generate_inmemory(
         }
     )
 
-    return run_iterative_generation_inmemory(
-        input_ds, model_client, test_fn, gen_config, gen_cfg, logger
-    )
+    max_iterations = cfg.iterative_generation.args.max_iterations
+    all_dfs = []
+    n_collected = 0
+    for _iter in range(max_iterations):
+        batch_df = generate_single_batch(
+            input_ds, model_client, test_fn, gen_config, gen_cfg, logger
+        )
+        if len(batch_df) > 0:
+            all_dfs.append(batch_df)
+            n_collected += len(batch_df)
+
+        if n_target is not None and n_collected >= n_target:
+            logger.info(
+                f"Early exit at iteration {_iter + 1}/{max_iterations}: "
+                f"{n_collected} >= {n_target} target samples"
+            )
+            break
+
+    if all_dfs:
+        return pd.concat(all_dfs, ignore_index=True)
+    return pd.DataFrame(columns=["particle", "score", "num_particles_generated"])
 
 
 def _compute_liks_all_models_inmemory(

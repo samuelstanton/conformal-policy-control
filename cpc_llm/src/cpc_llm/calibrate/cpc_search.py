@@ -268,6 +268,7 @@ def cpc_beta_search(
                 higher_score_field=higher_score_field,
                 lower_score_field=lower_score_field,
                 random_seed=global_random_seed * 10000,
+                n_target=cfg.conformal_policy_control.accept_reject.n_target_pre_cpc,
                 _model_client=gen_model_client,
                 _test_fn=test_fn,
             )
