@@ -378,7 +378,7 @@ class DPOTrainerWithLogging(DPOTrainer):
                         passed_validity_check = False
                         break
                 if passed_validity_check:
-                    self.state.best_metric = metric_value
+                    self.state.best_metric = float(metric_value)
                     self.state.best_model_checkpoint = output_dir
 
         # Save the Trainer state
