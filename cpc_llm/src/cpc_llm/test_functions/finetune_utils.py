@@ -558,7 +558,7 @@ class EvaluatorPlainPairs:
                     if int(x) != x:
                         continue
                     particle.append(int(x))
-            except Exception:
+            except (json.JSONDecodeError, ValueError, TypeError, AssertionError):
                 # not parsable
                 maybe_log(
                     self.logger,
@@ -814,7 +814,7 @@ class EvaluatorEditPairs:
                     if int(x) != x:
                         continue
                     particle.append(int(x))
-            except Exception:
+            except (json.JSONDecodeError, ValueError, TypeError, AssertionError):
                 # not parsable
                 maybe_log(
                     self.logger,
@@ -962,7 +962,7 @@ def get_ehrlich_metrics_for_outputs(
             assert isinstance(o_list, list)
             assert all([int(x) == x for x in o_list])
             particle = [int(x) for x in o_list]
-        except Exception:
+        except (json.JSONDecodeError, ValueError, TypeError, AssertionError):
             logging.warning(f"Prediction is not parsable. Continuing. Prediction:\n{o}")
             all_scores_including_nulls.append(None)
             continue

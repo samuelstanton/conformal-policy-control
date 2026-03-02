@@ -96,7 +96,7 @@ class DPOTrainerWithLogging(DPOTrainer):
                 assert isinstance(o_list, list)
                 assert all([int(x) == x for x in o_list])
                 particle = [int(x) for x in o_list]
-            except Exception:
+            except (json.JSONDecodeError, ValueError, TypeError, AssertionError):
                 logger.warning(
                     f"Prediction is not parsable. Continuing. Prediction:\n{o}"
                 )
