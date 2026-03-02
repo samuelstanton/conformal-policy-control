@@ -4,9 +4,15 @@ import numpy as np
 import pytest
 from omegaconf import OmegaConf
 
+import pandas as pd
+
 from cpc_llm.calibrate.grid import prepare_grid
-from cpc_llm.calibrate.normalization import importance_weighted_monte_carlo_integration
+from cpc_llm.calibrate.normalization import (
+    importance_weighted_monte_carlo_integration,
+    iwmci_overlap_est,
+)
 from cpc_llm.calibrate.process_likelihoods import (
+    check_col_names,
     constrain_likelihoods,
     mixture_pdf_from_densities_mat,
 )
@@ -128,3 +134,45 @@ class TestMixturePdf:
 
         # All weight on second column
         np.testing.assert_array_almost_equal(result, [3.0, 4.0])
+
+
+class TestCheckColNames:
+    def test_valid_lik_columns(self):
+        df = pd.DataFrame(columns=["particle", "score", "lik_r0", "lik_r1", "lik_r2"])
+        check_col_names(df)  # should not raise
+
+    def test_valid_constrained_lik_columns(self):
+        df = pd.DataFrame(
+            columns=["particle", "score", "con_lik_r0", "con_lik_r1", "con_lik_r2"]
+        )
+        check_col_names(df)  # should not raise
+
+    def test_non_sequential_raises(self):
+        df = pd.DataFrame(columns=["particle", "score", "lik_r0", "lik_r2"])
+        with pytest.raises(ValueError, match="col indices not increasing"):
+            check_col_names(df)
+
+
+class TestIWMCIOverlapEst:
+    def test_safe_proposal_returns_valid(self):
+        LRs = np.array([0.5, 1.5, 2.0, 3.0])
+        unconstrained = np.array([1.0, 2.0, 3.0, 4.0])
+        safe = np.array([2.0, 1.0, 1.5, 1.0])
+        result = iwmci_overlap_est(
+            LRs, unconstrained, safe, beta_t=2.0, psi_t=1.0, proposal="safe"
+        )
+        assert 0 <= result <= 1.0
+
+    def test_unconstrained_proposal_returns_valid(self):
+        LRs = np.array([0.5, 1.5, 2.0, 3.0])
+        unconstrained = np.array([1.0, 2.0, 3.0, 4.0])
+        safe = np.array([2.0, 1.0, 1.5, 1.0])
+        result = iwmci_overlap_est(
+            LRs, unconstrained, safe, beta_t=2.0, psi_t=1.0, proposal="unconstrained"
+        )
+        assert 0 <= result <= 1.0
+
+    def test_invalid_proposal_raises(self):
+        LRs = np.array([1.0])
+        with pytest.raises(ValueError, match="proposal name not recognized"):
+            iwmci_overlap_est(LRs, LRs, LRs, 1.0, 1.0, proposal="invalid")
