@@ -86,6 +86,141 @@ def _load_test_fn(ga_data_dir: str) -> Ehrlich | RoughMtFuji:
 _init_model_client_with_retry = init_model_client_with_retry
 
 
+def generate_sample_batch(
+    cfg: DictConfig,
+    fs: LocalOrS3Client,
+    seeds_fp: str,
+    ga_data_dir: str,
+    model_dir: str,
+    output_dir: str,
+    temp: float,
+    higher_score_particle_field: str = "higher_score_particle",
+    lower_score_particle_field: str = "lower_score_particle",
+    higher_score_field: str = "higher_score",
+    lower_score_field: str = "lower_score",
+    random_seed: int = 0,
+    call_idx: int = 0,
+    global_random_seed: int = 0,
+    _model_client: ModelClient | None = None,
+    _test_fn: Ehrlich | RoughMtFuji | None = None,
+) -> pd.DataFrame | None:
+    """Generate a batch of samples from a model.
+
+    Handles both in-memory (direct) and subprocess (SLURM) execution modes.
+
+    Args:
+        cfg: Pipeline config.
+        fs: File handler (local or S3).
+        seeds_fp: Path to the JSONL seeds file.
+        ga_data_dir: Directory containing test function parameters.
+        model_dir: Path to the model to generate from.
+        output_dir: Output directory for subprocess mode.
+        temp: Generation temperature.
+        higher_score_particle_field: Column name for higher-score particles.
+        lower_score_particle_field: Column name for lower-score particles.
+        higher_score_field: Column name for higher scores.
+        lower_score_field: Column name for lower scores.
+        random_seed: Random seed for reproducible seed selection.
+        call_idx: Call index for subprocess filename construction.
+        global_random_seed: Global random seed for subprocess mode.
+        _model_client: Pre-loaded ModelClient (required for in-memory mode).
+        _test_fn: Pre-loaded test function (required for in-memory mode).
+
+    Returns:
+        DataFrame with columns: particle, score, loglikelihood,
+        num_particles_generated. Returns None if generation produced no samples.
+    """
+    if _is_direct_mode(cfg):
+        gen_df = _generate_inmemory(
+            cfg,
+            seeds_fp,
+            _model_client,
+            _test_fn,
+            temp,
+            higher_score_particle_field,
+            lower_score_particle_field,
+            higher_score_field,
+            lower_score_field,
+            random_seed,
+        )
+    else:
+        _, iter_gen_outputs_list, _hd = run_iterative_generation(
+            cfg,
+            fs,
+            seeds_fp,
+            ga_data_dir,
+            model_dir,
+            output_dir,
+            higher_score_particle_field=higher_score_particle_field,
+            lower_score_particle_field=lower_score_particle_field,
+            higher_score_field=higher_score_field,
+            lower_score_field=lower_score_field,
+            temps=[temp],
+            model_idx=0,
+            call_idx=call_idx,
+            global_random_seed=global_random_seed,
+        )
+        gen_df = pd.read_json(iter_gen_outputs_list[-1], orient="records", lines=True)
+
+    if len(gen_df) == 0:
+        return None
+    return gen_df
+
+
+def compute_batch_likelihoods(
+    cfg: DictConfig,
+    fs: LocalOrS3Client,
+    target_df: pd.DataFrame,
+    seeds_fp_list: List[str],
+    model_dir_list: List[str],
+    model_indices: List[int] | None = None,
+    target_fp: str | None = None,
+    _lik_model_clients: dict[str, ModelClient] | None = None,
+) -> pd.DataFrame:
+    """Compute likelihoods for a batch of samples under all models.
+
+    Handles both in-memory (direct) and subprocess (SLURM) execution modes.
+
+    Args:
+        cfg: Pipeline config.
+        fs: File handler (local or S3).
+        target_df: DataFrame of generated samples (particle, score, ...).
+        seeds_fp_list: List of seed filepaths, one per model.
+        model_dir_list: List of model directory paths.
+        model_indices: Indices for likelihood column naming (lik_r0, lik_r1, ...).
+            Defaults to range(len(model_dir_list)).
+        target_fp: Filepath of target data on disk (required for subprocess mode).
+        _lik_model_clients: Pre-loaded model clients for in-memory mode.
+
+    Returns:
+        DataFrame with lik_r0, lik_r1, ... columns appended.
+    """
+    if model_indices is None:
+        model_indices = list(range(len(model_dir_list)))
+
+    if _is_direct_mode(cfg):
+        return _compute_liks_all_models_inmemory(
+            cfg,
+            target_df,
+            seeds_fp_list,
+            model_dir_list,
+            model_indices,
+            _lik_model_clients=_lik_model_clients,
+        )
+    else:
+        gen_liks_fp_list, _hd = run_compute_liks_all_models_and_cal_data(
+            cfg,
+            fs,
+            seeds_fp_list=seeds_fp_list,
+            prev_cal_data_fp_list=[],
+            model_dir_list=model_dir_list,
+            target_fp=target_fp,
+            model_indices=model_indices,
+            temps=[cfg.temperature],
+        )
+        return pd.read_json(gen_liks_fp_list[-1], orient="records", lines=True)
+
+
 def _generate_inmemory(
     cfg: DictConfig,
     seeds_fp: str,
@@ -98,23 +233,7 @@ def _generate_inmemory(
     lower_score_field: str,
     random_seed: int,
 ) -> pd.DataFrame:
-    """Read seeds, select, and generate proposals entirely in memory.
-
-    Args:
-        cfg: Pipeline config with iterative_generation settings.
-        seeds_fp: Path to the JSONL seeds file.
-        model_client: Pre-initialized ModelClient for generation.
-        test_fn: Test function for scoring generated particles.
-        temp: Generation temperature.
-        higher_score_particle_field: Column name for higher-score particles.
-        lower_score_particle_field: Column name for lower-score particles.
-        higher_score_field: Column name for higher scores.
-        lower_score_field: Column name for lower scores.
-        random_seed: Random seed for reproducible seed selection.
-
-    Returns:
-        DataFrame with columns: particle, score, loglikelihood, num_particles_generated.
-    """
+    """Read seeds, select, and generate proposals entirely in memory."""
     df = _read_jsonl_cached(seeds_fp)
 
     if cfg.sanity_check:
