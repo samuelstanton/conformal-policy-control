@@ -147,6 +147,11 @@ class TestCheckColNames:
         )
         check_col_names(df)  # should not raise
 
+    def test_ignores_non_likelihood_columns(self):
+        # Columns like "chosen" or "count_r0" should not be treated as likelihood columns
+        df = pd.DataFrame(columns=["chosen", "count_r0", "lik_r0", "lik_r1"])
+        check_col_names(df)  # should not raise
+
     def test_non_sequential_raises(self):
         df = pd.DataFrame(columns=["particle", "score", "lik_r0", "lik_r2"])
         with pytest.raises(ValueError, match="col indices not increasing"):
