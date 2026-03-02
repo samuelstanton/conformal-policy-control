@@ -259,6 +259,9 @@ class MargeTrainer(Trainer):
         else:
             self.use_marge_data_collator = False
 
+        # Set args early so tokenize_row can access self.args before super().__init__()
+        self.args = args
+
         # Tokenize dataset if not pretokenized
         with PartialState().local_main_process_first():
             self.pretokenized = pretokenized

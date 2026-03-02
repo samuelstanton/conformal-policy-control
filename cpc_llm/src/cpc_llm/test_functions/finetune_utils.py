@@ -978,7 +978,7 @@ def get_ehrlich_metrics_for_outputs(
             num_values_in_range += 1
         if particle == input_particles[i]:
             num_repeated_input += 1
-        particle = torch.FloatTensor(particle)
+        particle = torch.FloatTensor(particle).unsqueeze(0)
         score = test_fn(particle).item()
         reward = get_ehrlich_rewards([input_scores[i]], [score])[0].item()
         rewards.append(reward)
