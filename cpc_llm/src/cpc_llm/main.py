@@ -180,7 +180,10 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
             all_model_paths.append(sft_dir)
 
             if on_round_complete is not None:
-                on_round_complete()
+                try:
+                    on_round_complete()
+                except Exception:  # callback is opaque; don't abort pipeline on failure
+                    logger.warning("on_round_complete callback failed", exc_info=True)
 
         if pi_optimizer_name == "dpo":
             higher_score_particle_field = "prompt"
@@ -564,7 +567,10 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
             cal_data_constrained_fp_list.append(cal_constrained_output_path)
 
             if on_round_complete is not None:
-                on_round_complete()
+                try:
+                    on_round_complete()
+                except Exception:  # callback is opaque; don't abort pipeline on failure
+                    logger.warning("on_round_complete callback failed", exc_info=True)
 
         all_prev_dpo_datasets = []
         """DPO Policy Improvement Outer Loop, with Policy Control Inner Loop"""
@@ -871,7 +877,10 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
             cal_data_constrained_fp_list.append(cal_constrained_output_path)
 
             if on_round_complete is not None:
-                on_round_complete()
+                try:
+                    on_round_complete()
+                except Exception:  # callback is opaque; don't abort pipeline on failure
+                    logger.warning("on_round_complete callback failed", exc_info=True)
 
         all_prev_marge_datasets = []
         """MARGE Policy Improvement Outer Loop, with Policy Control Inner Loop"""
@@ -1173,7 +1182,10 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
             cal_data_constrained_fp_list.append(cal_constrained_output_path)
 
             if on_round_complete is not None:
-                on_round_complete()
+                try:
+                    on_round_complete()
+                except Exception:  # callback is opaque; don't abort pipeline on failure
+                    logger.warning("on_round_complete callback failed", exc_info=True)
 
 
 @hydra.main(config_path="../../config", config_name="pipeline")
