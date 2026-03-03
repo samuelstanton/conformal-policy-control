@@ -1,127 +1,26 @@
-"""Compute the likelihood scores that an LLM assigns to particular sequences, averaged over a set of input seeds, for all models in a list."""
+"""Backward-compatible entry point. Use core.likelihoods instead."""
 
 import hydra
 import logging
-import numpy as np
-import pandas as pd
 import pprint
-import torch
 
-from ..test_functions.finetune_utils import formatting_texts_func_single_seq
-from ..core.model_loading import init_model_client_with_retry
 from omegaconf import DictConfig, OmegaConf
 
+from .likelihoods import compute_likelihoods_one_model_all_data
 
-CUDA_ERROR = getattr(torch.cuda, "CudaError", RuntimeError)
-
-
-def compute_likelihoods_one_model_all_data(
-    cfg: DictConfig, logger: logging.Logger = None
-):
-
-    if len(cfg.prev_target_data_path_list) == 0:
-        logger.info(
-            "No previous calibration data given (expected if is first iteration), skipping 'compute_likelihoods_one_model_all_data'"
-        )
-        return
-
-    logger.info(f"torch.cuda.is_available()   : {torch.cuda.is_available()}")
-    try:
-        logger.info(f"torch.cuda.device_count()   : {torch.cuda.device_count()}")
-        logger.info(f"torch.cuda.current_device() : {torch.cuda.current_device()}")
-    except (RuntimeError, CUDA_ERROR) as e:
-        logger.warning(f"Could not get CUDA device info: {e}")
-
-    # # GPU memory management
-    try:
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-    except (RuntimeError, CUDA_ERROR) as e:
-        logger.warning(f"Could not clear CUDA cache: {e}")
-
-    model_client = init_model_client_with_retry(
-        cfg.model_name_or_path_list[-1],  # Use most recent model
-        cfg.generation_config.max_new_tokens,
-        logger,
-        temperature=cfg.generation_config.temperature,
-    )
-    # logger.info(f"model_client.device() : {model_client.device()}")
-
-    # model_client.to('cuda')
-    # except torch.cuda.OutOfMemoryError:
-    #     logger.warning("CUDA OOM, falling back to CPU")
-    #     self.device = "cpu"
-    #     self.model = self.model.to(self.device)
-    # except torch.cuda.Error as e:
-    #     logger.warning(f"CUDA error: {e}, falling back to CPU")
-    #     self.device = "cpu"
-    #     self.model = self.model.to(self.device)
-
-    ## Load most recent input prompt seeds
-    input_fp = cfg.input_data_path_list[-1]
-    input_df = pd.read_json(input_fp, orient="records", lines=True)
-    # input_ds = datasets.Dataset.from_pandas(input_df)
-    input_data = input_df.to_dict("list")
-    formatted_inputs = formatting_texts_func_single_seq(input_data)
-
-    # last_timestep_idx = len(cfg.prev_target_data_path_list) - 1
-
-    ## This will also be model idx; eg, if 3 prev cal sets {0, 1, 2}, then current model idx is 3
-    num_prev_cal = len(cfg.prev_target_data_path_list)
-
-    for i, target_data_path in enumerate(cfg.prev_target_data_path_list):
-        ## Load target data
-        target_df = pd.read_json(target_data_path, orient="records", lines=True)
-
-        ## Ensure that only get previous target data with
-        lik_col_names_prev = [f"lik_r{c}" for c in range(num_prev_cal)]
-        if "score" in target_df.columns:
-            target_df = target_df[["particle", "score"] + lik_col_names_prev]
-        else:
-            ## Handles case where want to compute likelihoods for contrastive-generation particle
-            target_df = target_df[target_df.columns[0:2] + lik_col_names_prev]
-
-        target_data = target_df.to_dict("list")
-        formatted_targets = formatting_texts_func_single_seq(target_data)
-
-        ## Compute likelihoods
-        target_likelihoods = model_client.compute_likelihoods_avg(
-            formatted_inputs,
-            formatted_targets,
-            batch_size=min(cfg.batch_size, len(formatted_targets)),
-            logger=logger,
-        )
-
-        # output_fp = os.path.join(cfg.output_dir, cfg.output_filename)
-        # logger.info()
-        lik_col_name = [f"lik_r{num_prev_cal}"]
-
-        logger.info(f"target_df.columns : {target_df.columns}")
-        logger.info(f"lik_col_name      : {lik_col_name}")
-
-        target_all_likelihoods_df = pd.DataFrame(
-            np.c_[target_df, np.array(target_likelihoods).T],
-            columns=np.concatenate((target_df.columns, lik_col_name)),
-        )
-        target_all_likelihoods_df.to_json(
-            target_data_path, orient="records", lines=True
-        )
+__all__ = ["compute_likelihoods_one_model_all_data"]
 
 
 @hydra.main(
     config_path="../../../config", config_name="compute_liks_all_models_and_cal_data"
 )
-def main(cfg: DictConfig):
+def main(cfg: DictConfig) -> None:
     logging.basicConfig(level=cfg.log_level.upper(), force=True)
     logging.info(
         f"Running {__file__} with the following arguments:\n{pprint.pformat(OmegaConf.to_container(cfg))}"
     )
     logger = logging.getLogger(__file__)
-
-    ## Compute all model likelihoods on most recently drawn calibration data
-    # compute_likelihoods_all_models_one_cal(cfg, logger)
     logger.info("Running compute_likelihoods_one_model_all_data")
-    ## Compute most recent model likelihoods on all historically drawn calibration data
     compute_likelihoods_one_model_all_data(cfg, logger)
 
 

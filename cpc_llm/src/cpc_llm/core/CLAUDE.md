@@ -5,9 +5,9 @@ Model inference and likelihood computation. Wraps HuggingFace transformers for s
 ## Key files
 
 - **model_client.py** — `ModelClient` class: loads a HuggingFace causal LM, handles CUDA initialization with exponential backoff, computes log-likelihoods via `compute_likelihoods_avg()`, and generates sequences via `generate()`.
-- **compute_likelihoods_one_model_all_data.py** — Computes likelihoods from the latest model across all historical calibration datasets. Backfills likelihood columns for previously sampled data.
-- **compute_liks_all_models_one_target.py** — `compute_likelihoods_inmemory()`: core function that accepts DataFrames and returns a DataFrame with likelihood columns appended. `compute_likelihoods_all_models_one_target()`: file-I/O wrapper for subprocess execution. Builds up the (n_particles x n_models) likelihood matrix needed by CPC.
-- **score.py / score2.py** — Standalone scoring utilities for evaluating model outputs on input-target pairs.
+- **likelihoods.py** — Consolidated likelihood computation module. `compute_likelihoods_inmemory()`: core in-memory function that accepts DataFrames and returns a DataFrame with `lik_r{i}` columns appended. Used directly by `rejection_sampling.py`. `compute_likelihoods_all_models_one_target()` and `compute_likelihoods_one_model_all_data()`: file I/O wrappers for subprocess execution.
+- **compute_liks_all_models_one_target.py** — Backward-compatible shim, re-exports from `likelihoods.py`. Preserves `python -m` entry point for subprocess invocation.
+- **compute_likelihoods_one_model_all_data.py** — Backward-compatible shim, re-exports from `likelihoods.py`. Preserves `python -m` entry point for subprocess invocation.
 
 ## Data structures
 
