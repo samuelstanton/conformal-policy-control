@@ -13,7 +13,18 @@ def prepare_grid(
     n_grid: int = 50,
     proposal: str = "unconstrained",
 ) -> np.ndarray:
-    """Sort and coarsen grid of lik-ratio values to search over"""
+    """Sort and coarsen grid of lik-ratio values to search over.
+
+    Args:
+        cfg: Hydra configuration object.
+        V: 1-D array of likelihood-ratio values (unsorted).
+        n_grid: Approximate number of values in the resulting grid.
+        proposal: Proposal distribution type — ``"unconstrained"``,
+            ``"safe"``, or ``"mixed"``.
+
+    Returns:
+        Sorted, coarsened grid with appropriate boundary values appended.
+    """
 
     G = np.sort(
         np.unique(V)
