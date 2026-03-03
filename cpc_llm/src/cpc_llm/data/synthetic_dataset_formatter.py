@@ -430,7 +430,9 @@ def find_preference_pairs(cfg: DictConfig, df: pd.DataFrame) -> List[Dict[str, A
                 idx_triples.add((i, pair_idx[1], pair_idx[0]))
     idx_triples = list(idx_triples)
     outputs = []
-    for x_idx, yw_idx, yl_idx in idx_triples:
+    for x_idx, yw_idx, yl_idx in tqdm(
+        idx_triples, desc="Creating preference output records"
+    ):
         output_dict = {
             "prompt": filtered[x_idx].tolist(),
             "prompt_score": f"{filtered_scores[x_idx]:.3f}",
