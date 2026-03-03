@@ -130,37 +130,19 @@ def compute_likelihoods_inmemory(
             del model_client
             torch.cuda.empty_cache()
 
-    # Assemble result DataFrame
+    # Assemble result DataFrame — use pandas column assignment instead of np.c_
+    # to preserve column dtypes (np.c_ coerces mixed str/float to object)
     if "score" in target_df.columns:
-        if len(lik_col_names_new) > 0 and len(all_timestep_likelihoods) > 0:
-            target_all_likelihoods_df = pd.DataFrame(
-                np.c_[
-                    target_df[["particle", "score"] + lik_col_names_old],
-                    np.array(all_timestep_likelihoods).T,
-                ],
-                columns=["particle", "score"] + lik_col_names_old + lik_col_names_new,
-            )
-        else:
-            logger.info("No new likelihoods to compute, using existing data")
-            target_all_likelihoods_df = target_df[
-                ["particle", "score"] + lik_col_names_old
-            ].copy()
+        keep_cols = ["particle", "score"] + lik_col_names_old
     else:
-        if len(lik_col_names_new) > 0 and len(all_timestep_likelihoods) > 0:
-            target_all_likelihoods_df = pd.DataFrame(
-                np.c_[
-                    target_df[target_df.columns[0:2].tolist() + lik_col_names_old],
-                    np.array(all_timestep_likelihoods).T,
-                ],
-                columns=target_df.columns[0:2].tolist()
-                + lik_col_names_old
-                + lik_col_names_new,
-            )
-        else:
-            logger.info("No new likelihoods to compute, using existing data")
-            target_all_likelihoods_df = target_df[
-                target_df.columns[0:2].tolist() + lik_col_names_old
-            ].copy()
+        keep_cols = target_df.columns[0:2].tolist() + lik_col_names_old
+    target_all_likelihoods_df = target_df[keep_cols].copy()
+
+    if len(lik_col_names_new) > 0 and len(all_timestep_likelihoods) > 0:
+        for col_name, liks in zip(lik_col_names_new, all_timestep_likelihoods):
+            target_all_likelihoods_df[col_name] = liks
+    else:
+        logger.info("No new likelihoods to compute, using existing data")
 
     logger.info(
         f"target_all_likelihoods_df.columns : {target_all_likelihoods_df.columns}"
@@ -302,10 +284,8 @@ def compute_likelihoods_one_model_all_data(
         logger.info(f"target_df.columns : {target_df.columns}")
         logger.info(f"lik_col_name      : {lik_col_name}")
 
-        target_all_likelihoods_df = pd.DataFrame(
-            np.c_[target_df, np.array(target_likelihoods).T],
-            columns=np.concatenate((target_df.columns, lik_col_name)),
-        )
+        target_all_likelihoods_df = target_df.copy()
+        target_all_likelihoods_df[lik_col_name[0]] = target_likelihoods
         target_all_likelihoods_df.to_json(
             target_data_path, orient="records", lines=True
         )
