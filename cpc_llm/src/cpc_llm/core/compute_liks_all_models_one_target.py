@@ -6,7 +6,6 @@ import os
 import numpy as np
 import pandas as pd
 import pprint
-import time
 import torch
 
 from typing import List
@@ -14,6 +13,7 @@ from typing import List
 from ..test_functions.finetune_utils import formatting_texts_func_single_seq
 
 from ..core.model_client import ModelClient
+from ..core.model_loading import init_model_client_with_retry
 from omegaconf import DictConfig, OmegaConf
 
 
@@ -89,58 +89,14 @@ def compute_likelihoods_inmemory(
             model_client = model_clients[model_name_or_path]
             logger.info(f"Using cached ModelClient for {model_name_or_path}")
         else:
-            # GPU memory management
             torch.cuda.empty_cache()
-
             logger.info(f"torch.cuda.is_available() : {torch.cuda.is_available()}")
-
-            # Retry ModelClient initialization with exponential backoff
-            max_retries = 5
-            retry_delay_base = 1.0
-            model_client = None
-            fallback_to_cpu = False
-            for attempt in range(max_retries):
-                try:
-                    model_client = ModelClient(
-                        model_name_or_path=model_name_or_path,
-                        logger=logger,
-                        temperature=cfg.generation_config.temperature,
-                        max_generate_length=cfg.generation_config.max_new_tokens,
-                        device="cuda",
-                    )
-                    break
-                except Exception as e:
-                    error_str = str(e)
-                    is_cuda_error = (
-                        "CUDA" in error_str
-                        or "busy" in error_str.lower()
-                        or "unavailable" in error_str.lower()
-                        or "AcceleratorError" in type(e).__name__
-                    )
-                    if is_cuda_error and attempt < max_retries - 1:
-                        wait_time = retry_delay_base * (2**attempt)
-                        logger.warning(
-                            f"CUDA initialization failed (attempt {attempt + 1}/{max_retries}): {e}. "
-                            f"Retrying in {wait_time:.1f} seconds..."
-                        )
-                        time.sleep(wait_time)
-                    elif is_cuda_error:
-                        fallback_to_cpu = True
-                        logger.error(
-                            f"CUDA initialization failed after {max_retries} attempts for model {model_name_or_path}: {e}. "
-                            "Falling back to CPU."
-                        )
-                        break
-                    else:
-                        raise
-            if model_client is None and fallback_to_cpu:
-                model_client = ModelClient(
-                    model_name_or_path=model_name_or_path,
-                    logger=logger,
-                    temperature=cfg.generation_config.temperature,
-                    max_generate_length=cfg.generation_config.max_new_tokens,
-                    device="cpu",
-                )
+            model_client = init_model_client_with_retry(
+                model_name_or_path,
+                cfg.generation_config.max_new_tokens,
+                logger,
+                temperature=cfg.generation_config.temperature,
+            )
 
         ## Format input seeds
         input_df = input_data_list[i]

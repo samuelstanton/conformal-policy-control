@@ -4,13 +4,12 @@ import json
 import logging
 import os
 import pandas as pd
-import random
 import sys
-import time
 import torch
 from contextlib import nullcontext
 from datasets import Dataset
 from ..infrastructure.file_handler import LocalOrS3Client
+from ..infrastructure.retry import cuda_retry
 from ..test_functions.finetune_utils import (
     formatting_texts_func_edit_pairs,
     load_test_fn_from_file,
@@ -71,46 +70,11 @@ def main(cfg: DictConfig):
     if removed:
         logging.info(f"Dropped unsupported DPOConfig fields: {list(removed)}")
 
-    # Add a small random delay to stagger CUDA initialization across distributed processes
-    # This helps avoid race conditions when multiple processes try to set CUDA devices simultaneously
-    if torch.cuda.is_available():
-        delay = random.uniform(0.1, 0.5)  # Random delay between 0.1-0.5 seconds
-        time.sleep(delay)
-
-    # Retry DPOConfig initialization with exponential backoff to handle CUDA busy errors
-    # This addresses race conditions when multiple distributed processes initialize CUDA simultaneously
-    max_retries = 5
-    retry_delay = 1.0
-    training_args = None
-    for attempt in range(max_retries):
-        try:
-            training_args = DPOConfig(**dpo_cfg)
-            break
-        except Exception as e:
-            # Check if it's a CUDA-related error (could be RuntimeError, AcceleratorError, etc.)
-            error_str = str(e)
-            is_cuda_error = (
-                "CUDA" in error_str
-                or "busy" in error_str.lower()
-                or "unavailable" in error_str.lower()
-                or "AcceleratorError" in type(e).__name__
-            )
-
-            if is_cuda_error and attempt < max_retries - 1:
-                wait_time = retry_delay * (2**attempt)  # Exponential backoff
-                logging.warning(
-                    f"CUDA initialization failed (attempt {attempt + 1}/{max_retries}): {e}. "
-                    f"Retrying in {wait_time:.1f} seconds..."
-                )
-                time.sleep(wait_time)
-            elif is_cuda_error:
-                logging.error(
-                    f"CUDA initialization failed after {max_retries} attempts: {e}"
-                )
-                raise
-            else:
-                # Re-raise if it's not a CUDA-related error
-                raise
+    training_args = cuda_retry(
+        lambda: DPOConfig(**dpo_cfg),
+        logger=logging.getLogger(__name__),
+        operation="DPOConfig init",
+    )
 
     model_config = ModelConfig(**cfg_dict["model_config"])
 
