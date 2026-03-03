@@ -23,6 +23,15 @@ Usage:
     # With overrides
     modal run modal_runner.py --config-name pipeline_sanity_check_no_s3 \
         --overrides "num_marge_rounds=1"
+
+Headless / deploy mode (survives laptop sleep or terminal close):
+    # One-time setup — redeploy whenever modal_runner.py changes
+    modal deploy modal_runner.py
+
+    # Trigger a run that continues even if the local client disconnects
+    modal run modal_runner.py --deploy
+    modal run modal_runner.py --deploy --smoke --cache
+    modal run modal_runner.py --deploy --config-name pipeline_sanity_check_no_s3
 """
 
 from pathlib import Path
@@ -318,6 +327,7 @@ def main_entrypoint(
     smoke: bool = False,
     cache: bool = False,
     check_progress: bool = False,
+    deploy: bool = False,
     overrides: str = None,
 ):
     """
@@ -345,6 +355,11 @@ def main_entrypoint(
         # With overrides
         modal run modal_runner.py --config-name pipeline_sanity_check_no_s3 \
             --overrides "num_marge_rounds=1"
+
+        # Headless run (survives laptop sleep / terminal close)
+        # Requires: modal deploy modal_runner.py  (run once first)
+        modal run modal_runner.py --deploy
+        modal run modal_runner.py --deploy --smoke --cache
     """
     if test:
         print("Running environment test...")
@@ -365,5 +380,13 @@ def main_entrypoint(
             print(f"Running CPC-LLM with config: {config_name}")
         if cache:
             print("Using cached outputs volume")
-        result = run_experiment_remote.remote(config_name, override_list, cache=cache)
-        print(f"Result: {result}")
+        if deploy:
+            fn = modal.Function.from_name("cpc-llm", "run_experiment_remote")
+            fn.spawn(config_name, override_list, cache=cache)
+            print("Job launched headlessly. Safe to close terminal.")
+            print("Monitor at: https://modal.com/apps/samuelstanton/cpc-llm")
+        else:
+            result = run_experiment_remote.remote(
+                config_name, override_list, cache=cache
+            )
+            print(f"Result: {result}")

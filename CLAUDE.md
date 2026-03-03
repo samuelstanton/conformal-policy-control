@@ -37,6 +37,15 @@ uv run modal run modal_runner.py --check-progress  # tail latest subprocess log
 uv run modal run modal_runner.py              # full run (default config)
 ```
 
+Headless runs (survive laptop sleep / terminal close):
+
+```bash
+uv run modal deploy modal_runner.py          # one-time deploy (redo after code changes)
+uv run modal run modal_runner.py --deploy    # trigger headless full run
+uv run modal run modal_runner.py --deploy --smoke --cache  # headless smoke test
+# Monitor at: https://modal.com/apps/samuelstanton/cpc-llm
+```
+
 Modal automatically forces `job_submission_system=direct` and `parent_output_dir=null`.
 
 ## Project layout
