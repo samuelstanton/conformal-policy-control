@@ -543,22 +543,23 @@ marge:
       alpha: 1.0
       beta: 10.0
       gradient_accumulation_steps: 1
-      num_train_epochs: 5
+      num_train_epochs: 1
       eval_strategy: epoch
       save_strategy: epoch
       torch_compile: false
       self_normalize_weights: True
       reinforce_style: False
-      max_length: 512 #1024
-      max_prompt_length: 128 #512
+      max_length: 256
+      max_prompt_length: 128
       log_level: "info"
       seed: 0
       per_device_train_batch_size: 32
+      per_device_eval_batch_size: 256
     test_fn_type: "ehrlich"
     train_size: 0.95
     max_eval_size: 100
     generation_config:
-      max_new_tokens: 256 #512
+      max_new_tokens: 256
   slurm_args:
     nodes: 1
     cpus_per_task: 2
