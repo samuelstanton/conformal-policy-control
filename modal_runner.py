@@ -125,7 +125,7 @@ def _setup_env():
     gpu="A100",
     cpu=8,
     memory=65536,
-    timeout=14400,  # 4 hours
+    timeout=43200,  # 12 hours
     secrets=[modal.Secret.from_name("wandb")],
     volumes={HF_CACHE_PATH: hf_cache_volume, OUTPUTS_PATH: outputs_volume},
 )
