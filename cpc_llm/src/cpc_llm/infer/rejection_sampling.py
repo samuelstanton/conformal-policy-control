@@ -24,7 +24,7 @@ from ..core.model_loading import (
     preload_model_clients,
     cleanup_model_clients,
 )
-from ..core.compute_liks_all_models_one_target import compute_likelihoods_inmemory
+from ..core.likelihoods import compute_likelihoods_inmemory
 from .iterative_generation2 import generate_single_batch
 from holo.test_functions.closed_form import Ehrlich, RoughMtFuji
 
