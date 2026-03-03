@@ -464,7 +464,6 @@ compute_likelihooods_all_models:
     gres: "gpu:b200:1"
 
 
-## NOTE: DPO config taken from pipeline_dpo_f2.yaml
 dpo:
   args:
     dpo_config:
