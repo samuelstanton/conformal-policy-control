@@ -32,7 +32,33 @@ def get_seeds_from_training_data(
     random_seed: int = 0,
     first_iter: bool = False,
 ) -> str:
+    """Select seed sequences from training data for the next CPC round.
 
+    Mixes best-scoring or uniformly sampled sequences from the current
+    training data with historical seeds (controlled by
+    ``cfg.proportion_of_old_seeds``).
+
+    Args:
+        cfg: Hydra config with ``overwrite_seeds_flag`` and
+            ``proportion_of_old_seeds``.
+        fs: File system client (local or S3).
+        prev_seeds_fp: Path to seeds from the previous iteration.
+        curr_training_data_fp: Path to current round's training JSONL.
+        output_dir: Directory to write the selected seeds file.
+        sample_size: Total number of seeds to select.
+        sampling_method: ``"best_scoring"`` or ``"uniform"``.
+        higher_score_particle_field: Column name for the higher-score particle.
+        lower_score_particle_field: Column name for the lower-score particle.
+        lower_score_field: Column name for the lower score value.
+        higher_score_field: Column name for the higher score value.
+        pi_optimizer_name: Optimizer type (``"sft"``, ``"dpo"``, etc.).
+        setting: Optional setting string for output filename.
+        random_seed: Random seed for reproducibility.
+        first_iter: Whether this is the first iteration (no historical data).
+
+    Returns:
+        Path to the output seeds JSONL file.
+    """
     output_fp = os.path.join(
         output_dir, f"seeds_from_{os.path.basename(curr_training_data_fp)}"
     )

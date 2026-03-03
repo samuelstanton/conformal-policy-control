@@ -16,12 +16,26 @@ CON_LIK_PREFIX = "con_lik_r"
 
 
 def lik_col(step: int) -> str:
-    """Column name for unconstrained likelihood at a given calibration step."""
+    """Column name for unconstrained likelihood at a given calibration step.
+
+    Args:
+        step: Zero-based calibration step index.
+
+    Returns:
+        Column name string, e.g. ``"lik_r0"`` for step 0.
+    """
     return f"{LIK_PREFIX}{step}"
 
 
 def con_lik_col(step: int) -> str:
-    """Column name for constrained likelihood at a given calibration step."""
+    """Column name for constrained likelihood at a given calibration step.
+
+    Args:
+        step: Zero-based calibration step index.
+
+    Returns:
+        Column name string, e.g. ``"con_lik_r0"`` for step 0.
+    """
     return f"{CON_LIK_PREFIX}{step}"
 
 

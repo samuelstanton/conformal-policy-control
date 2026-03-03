@@ -9,7 +9,16 @@ from holo.test_functions.closed_form import Ehrlich
 from tqdm import tqdm
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
-from ..data_contracts import CHOSEN, INPUT, PARTICLE, REJECTED, SCORE, TARGET
+from ..data_contracts import (
+    CHOSEN,
+    CHOSEN_SCORE,
+    INPUT,
+    PARTICLE,
+    REJECTED,
+    REJECTED_SCORE,
+    SCORE,
+    TARGET,
+)
 
 
 def format_instruction_tuning(
@@ -165,9 +174,9 @@ def format_preference_pairs(
         ex_dict = {
             INPUT: f"Constraints:\n{test_fn_str}\nSolution:\n",
             CHOSEN: y_pair[0].tolist(),
-            "chosen_score": y_scores[0].item(),
+            CHOSEN_SCORE: y_scores[0].item(),
             REJECTED: y_pair[1].tolist(),
-            "rejected_score": y_scores[1].item(),
+            REJECTED_SCORE: y_scores[1].item(),
         }
         output_examples.append(ex_dict)
     return output_examples
