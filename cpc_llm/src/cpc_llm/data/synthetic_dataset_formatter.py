@@ -35,16 +35,6 @@ def find_minimal_edit_pairs(cfg: DictConfig, df: pd.DataFrame) -> List[Dict[str,
     ).fit(X)
     transformed = pynn_transformer.transform(X)
 
-    # # take a smaller sample if necessary
-    # if cfg.n is not None:
-    #     random.seed(cfg.seed)
-    #     transformed = transformed[
-    #         random.sample(
-    #             range(transformed.shape[0]), k=min(2 * cfg.n, transformed.shape[0])
-    #         ),
-    #         :,
-    #     ]
-
     # loop through rows instead of doing matrix computation to save memory
     idx_pairs = []
     for i in tqdm(range(transformed.shape[0])):

@@ -59,7 +59,6 @@ def combine_new_with_old_datasets(
     combined_datasets = [curr]
     num_curr_rows = len(curr)
     num_old_datasets = len(old_fps)
-    # if cfg.proportion_of_old_data < 1.0:
     num_rows_per_old_fp = int(
         math.ceil(
             max(num_curr_rows * cfg.proportion_of_old_data, cfg.min_num_data_old)
@@ -69,7 +68,6 @@ def combine_new_with_old_datasets(
     )
     for old_fp in old_fps:
         df = pd.read_json(old_fp, orient="records", lines=True)
-        # if cfg.proportion_of_old_data < 1.0:
         df = df.sample(n=min(len(df), num_rows_per_old_fp), random_state=random_seed)
         combined_datasets.append(df)
     combined_datasets = pd.concat(combined_datasets)

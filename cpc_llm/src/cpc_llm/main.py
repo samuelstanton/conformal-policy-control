@@ -800,9 +800,6 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
             else:
                 safe_prop_mix_weight = 1 / (1 + beta_t)
 
-            # if cfg.conformal_policy_control.mixture_proposal and cfg.conformal_policy_control.alpha < 1.0:
-            #     proposal = "mixture"
-
             if (
                 cfg.conformal_policy_control.mixture_proposal
                 and cfg.conformal_policy_control.mixture_proposal_factor
@@ -1106,9 +1103,6 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                 )
             else:
                 safe_prop_mix_weight = 1 / (1 + beta_t)
-
-            # if cfg.conformal_policy_control.mixture_proposal and cfg.conformal_policy_control.alpha < 1.0:
-            #     proposal = "mixture"
 
             if (
                 cfg.conformal_policy_control.mixture_proposal

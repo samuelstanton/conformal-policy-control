@@ -373,18 +373,15 @@ def parse_particle_and_score_permissive(
     )  ## Will use this one for scoring (permissive score function)
 
     if len(particle) != test_fn.dim:
-        # print(f"particle_for_scoring : {particle_for_scoring}")
         particle_for_scoring = np.pad(
             particle_for_scoring,
             (0, max(0, test_fn.dim - len(particle_for_scoring))),
             mode="wrap",
         )[: test_fn.dim].tolist()
-        # score = test_fn(torch.LongTensor([particle_for_scoring])).item()
         if len(particle) < test_fn.dim:
             particle.extend([-1 for i in range(test_fn.dim - len(particle))])
         else:
             particle = particle[: test_fn.dim]
-        # return particle, score
 
     if hasattr(test_fn, "num_states"):
         if any([x >= test_fn.num_states or x < 0 for x in particle_for_scoring]):
@@ -393,9 +390,6 @@ def parse_particle_and_score_permissive(
                 (0, max(0, test_fn.dim - len(particle_for_scoring))),
                 mode="wrap",
             )[: test_fn.dim].tolist()
-            # score = test_fn(torch.LongTensor([particle_for_scoring])).item()
-            # return particle, score
-    # print(f"particle_for_scoring: {particle_for_scoring}")
     particle_for_scoring = np.clip(particle_for_scoring, a_min=0, a_max=test_fn.dim - 1)
     score = test_fn(torch.LongTensor([particle_for_scoring])).item()
     return particle, score

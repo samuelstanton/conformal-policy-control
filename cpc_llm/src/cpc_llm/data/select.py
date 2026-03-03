@@ -38,7 +38,6 @@ def get_seeds_from_training_data(
         if not first_iter:
             ## If not first iteration: read, prepare, and get new sample sizes for historical data
             prev_seeds_df = pd.read_json(prev_seeds_fp, orient="records", lines=True)
-            # hist_train_df = hist_train_df.loc[hist_train_df[lower_score_particle_field].astype(str).drop_duplicates().index]
             hist_sample_size = int(sample_size * cfg.proportion_of_old_seeds)
             curr_sample_size = sample_size - hist_sample_size
         else:
@@ -105,8 +104,6 @@ def get_seeds_from_training_data(
                     lower_score_field: "chosen_score",
                 }
             )
-            # if not first_iter:
-            #     prev_seeds_df = prev_seeds_df.rename(columns={higher_score_particle_field : 'prompt', lower_score_particle_field: 'chosen', higher_score_field : 'prompt_score', lower_score_field: 'chosen_score'})
 
         if not first_iter:
             train_df_selected = pd.concat([prev_seeds_df, curr_train_df_selected])

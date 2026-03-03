@@ -462,12 +462,10 @@ def run_compute_liks_all_models_and_cal_data(
         all_python_commands = []
 
         for gen_args, output_fn in zip(all_gen_args, output_filenames):
-            # for gen_args in all_gen_args:
             if len(target_fp) > 0:
                 ## In this condition, run compute_liks_all_models_one_target
                 all_args_one_target = []
 
-                # file_exists = fs.exists(f"{model_dir_list[-1]}/{output_fn}")
                 file_exists = fs.exists(target_fp)
                 target_df = pd.read_json(target_fp, orient="records", lines=True)
 

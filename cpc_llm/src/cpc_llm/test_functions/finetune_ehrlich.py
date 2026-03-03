@@ -5,7 +5,6 @@ import numpy as np
 import pandas as pd
 import pprint
 
-# import s3fs
 import sys
 import torch
 from contextlib import nullcontext
@@ -334,18 +333,6 @@ def main(cfg: DictConfig):
 
     with save_context:
         trainer.save_model(training_args.output_dir)
-        # Now loop through files in the directory and move to S3 (excluding the checkpoint directories)
-        # if cfg.s3_output_dir is not None:
-        #     if not cfg.s3_output_dir.endswith("/"):
-        #         cfg.s3_output_dir += "/"
-        #     s3 = s3fs.S3FileSystem()
-        #     for fn in os.listdir(training_args.output_dir):
-        #         if fn.startswith(PREFIX_CHECKPOINT_DIR):
-        #             continue
-        #         fp = os.path.join(training_args.output_dir, fn)
-        #         recursive = os.path.isdir(fp)
-        #         transformers_logger.info(f"Copying {fp} to {cfg.s3_output_dir}...")
-        #         s3.put(fp, cfg.s3_output_dir, recursive=recursive)
         if cfg.s3_output_dir is not None:
             transformers_logger.info("Copy output files to s3_output_dir")
 
