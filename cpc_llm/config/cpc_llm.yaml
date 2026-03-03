@@ -73,8 +73,8 @@ seed: 0
 greedy_decoding: False ## For initial and iterative
 temperature_scaling: False #True
 job_submission_system: slurm
-greedy_gen_batch_size: 64
-sampling_gen_batch_size: 32
+greedy_gen_batch_size: 256
+sampling_gen_batch_size: 256
 initial_model: "EleutherAI/pythia-14m" # "EleutherAI/pythia-2.8b"
 sanity_check: False  # will be propagated to all training + generation jobs
 path_to_repo: null # /scratch/ac5968/llome
@@ -253,7 +253,7 @@ initial_sft:
       save_strategy: epoch
       learning_rate: 1e-6
       per_device_train_batch_size: 32 #16 #2
-      per_device_eval_batch_size: 64
+      per_device_eval_batch_size: 256
       eval_accumulation_steps: 2
       gradient_accumulation_steps: 1 #16 #32
       max_length: 256 #512
@@ -308,7 +308,7 @@ sft:
       save_strategy: epoch
       learning_rate: 1e-4 #1e-6
       per_device_train_batch_size: 16 #2
-      per_device_eval_batch_size: 64
+      per_device_eval_batch_size: 256
       eval_accumulation_steps: 2
       gradient_accumulation_steps: 2 #16 #32
       max_length: 256 #512
@@ -481,16 +481,10 @@ compute_likelihooods_all_models:
   num_jobs: 6  # number of generation jobs to parallelize this over
   score_field: "score"
   args:
-    # subsample_seeds: True ## Whether to subsample input seeds (with replacement), or to iterate through all of them
+    batch_size: 256
     sanity_check: False
-    # sample_size: 100 #200  # initial number of seeds to use for contrastive generation, should be same as in initial_generation & iterative_generation
-    # max_iterations: 1
-    # log_level: info
-    # seed: 0
-    # test_fn_type: "ehrlich"  # [ehrlich, mt_fuji]
-    # init_sampling_method: "uniform" ## Method for selecting seeds # "uniform", "combination", "best_scoring"
     generation_config:
-      max_new_tokens: 256 #512
+      max_new_tokens: 256
   slurm_args:
     nodes: 1
     cpus_per_task: 1
@@ -517,17 +511,16 @@ dpo:
       eval_strategy: epoch
       save_strategy: epoch
       torch_compile: true
-      max_length: 256 #512
-      max_prompt_length: 128 #512  # TODO: remove — filtered at runtime by dataclasses.fields(DPOConfig)
+      max_length: 256
       log_level: "info"
       seed: 0
       per_device_train_batch_size: 32
-      per_device_eval_batch_size: 64
+      per_device_eval_batch_size: 256
     test_fn_type: "ehrlich"
     train_size: 0.95
     max_eval_size: 100
     generation_config:
-      max_new_tokens: 256 #512
+      max_new_tokens: 256
   slurm_args:
     nodes: 1
     cpus_per_task: 1 #2
