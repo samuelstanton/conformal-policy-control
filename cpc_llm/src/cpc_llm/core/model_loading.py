@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import logging
-import random
-import time
 
 import torch
 from omegaconf import DictConfig
 
+from ..infrastructure.retry import cuda_retry, is_cuda_error
 from .model_client import ModelClient
 
 
@@ -36,44 +35,26 @@ def init_model_client_with_retry(
         An initialized ModelClient on CUDA (or CPU as fallback).
     """
     _logger = _logger or logger
-    max_retries = 5
-    retry_delay = 1.0
 
-    if torch.cuda.is_available():
-        time.sleep(random.uniform(0.1, 0.5))
-
-    for attempt in range(max_retries):
-        try:
-            return ModelClient(
+    try:
+        # stagger=False because ModelClient.__init__ already adds its own
+        # stagger delay and calls wait_for_gpu_availability internally.
+        return cuda_retry(
+            lambda: ModelClient(
                 model_name_or_path=model_name_or_path,
                 logger=_logger,
                 max_generate_length=max_new_tokens,
                 temperature=temperature,
                 device="cuda",
-            )
-        except Exception as e:
-            error_str = str(e)
-            is_cuda_error = (
-                "CUDA" in error_str
-                or "busy" in error_str.lower()
-                or "unavailable" in error_str.lower()
-                or "AcceleratorError" in type(e).__name__
-            )
-            if is_cuda_error and attempt < max_retries - 1:
-                wait_time = retry_delay * (2**attempt)
-                _logger.warning(
-                    f"CUDA init failed (attempt {attempt + 1}/{max_retries}): {e}. "
-                    f"Retrying in {wait_time:.1f}s..."
-                )
-                time.sleep(wait_time)
-            elif is_cuda_error:
-                _logger.warning(
-                    f"CUDA init failed after {max_retries} attempts: {e}. "
-                    "Falling back to CPU."
-                )
-                break
-            else:
-                raise
+            ),
+            stagger=False,
+            logger=_logger,
+            operation="ModelClient CUDA init",
+        )
+    except Exception as e:
+        if not is_cuda_error(e):
+            raise
+        _logger.warning(f"CUDA init failed, falling back to CPU: {e}")
 
     # All CUDA attempts exhausted — fall back to CPU.
     # If CPU init also fails, ModelClient.__init__ raises naturally.

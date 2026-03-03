@@ -6,9 +6,6 @@ import logging
 import os
 import pandas as pd
 import pprint
-import random
-import time
-import torch
 
 from ..test_functions.finetune_utils import (
     formatting_texts_func_edit_pairs,
@@ -18,6 +15,7 @@ from ..test_functions.finetune_utils import (
 )
 from holo.test_functions.closed_form import Ehrlich, RoughMtFuji
 from ..core.model_client import ModelClient
+from ..core.model_loading import init_model_client_with_retry
 from omegaconf import DictConfig, OmegaConf
 from transformers import GenerationConfig
 from tqdm import tqdm
@@ -175,67 +173,9 @@ def run_iterative_generation(
         )
     gen_config = hydra.utils.instantiate(cfg.generation_config)
 
-    # Add a small random delay to stagger CUDA initialization across processes
-    # This helps avoid race conditions when multiple processes try to set CUDA devices simultaneously
-    if torch.cuda.is_available():
-        delay = random.uniform(0.1, 0.5)  # Random delay between 0.1-0.5 seconds
-        time.sleep(delay)
-
-    # Retry ModelClient initialization with exponential backoff to handle CUDA busy errors
-    # This addresses race conditions when multiple processes initialize CUDA simultaneously
-    # Always try CUDA first, only fall back to CPU after all retries are exhausted
-    max_retries = 5
-    retry_delay = 1.0
-    model_client = None
-    fallback_to_cpu = False
-    for attempt in range(max_retries):
-        try:
-            model_client = ModelClient(
-                model_name_or_path=cfg.model_name_or_path,
-                logger=logger,
-                max_generate_length=gen_config.max_new_tokens,
-                device="cuda",  # Always try CUDA first
-            )
-            break
-        except Exception as e:
-            # Check if it's a CUDA-related error (could be RuntimeError, AcceleratorError, etc.)
-            error_str = str(e)
-            is_cuda_error = (
-                "CUDA" in error_str
-                or "busy" in error_str.lower()
-                or "unavailable" in error_str.lower()
-                or "AcceleratorError" in type(e).__name__
-            )
-
-            if is_cuda_error and attempt < max_retries - 1:
-                wait_time = retry_delay * (2**attempt)  # Exponential backoff
-                logger.warning(
-                    f"CUDA initialization failed (attempt {attempt + 1}/{max_retries}): {e}. "
-                    f"Retrying in {wait_time:.1f} seconds..."
-                )
-                time.sleep(wait_time)
-            elif is_cuda_error:
-                logger.warning(
-                    f"CUDA initialization failed after {max_retries} attempts: {e}. "
-                    f"Falling back to CPU."
-                )
-                fallback_to_cpu = True
-                break
-            else:
-                # Re-raise if it's not a CUDA-related error
-                raise
-
-    # Only fall back to CPU if all CUDA attempts failed
-    if model_client is None and fallback_to_cpu:
-        logger.info("Attempting to initialize ModelClient on CPU as fallback...")
-        model_client = ModelClient(
-            model_name_or_path=cfg.model_name_or_path,
-            logger=logger,
-            max_generate_length=gen_config.max_new_tokens,
-            device="cpu",
-        )
-    elif model_client is None:
-        raise RuntimeError("Failed to initialize ModelClient after all retry attempts.")
+    model_client = init_model_client_with_retry(
+        cfg.model_name_or_path, gen_config.max_new_tokens, logger
+    )
     df = pd.read_json(cfg.data_path, orient="records", lines=True)
     if cfg.sanity_check:
         logger.info(
