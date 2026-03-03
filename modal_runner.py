@@ -32,6 +32,12 @@ Headless / deploy mode (survives laptop sleep or terminal close):
     modal run modal_runner.py --deploy
     modal run modal_runner.py --deploy --smoke --cache
     modal run modal_runner.py --deploy --config-name pipeline_sanity_check_no_s3
+
+    # Check status of a headless job (prints call ID after --deploy)
+    modal run modal_runner.py --status <call_id>
+
+    # Cancel a running headless job
+    modal run modal_runner.py --cancel <call_id>
 """
 
 from pathlib import Path
@@ -320,6 +326,50 @@ def check_progress_remote() -> str:
     return str(latest)
 
 
+def _show_status(call_id: str) -> None:
+    """Show status and result of a spawned job. Pure local operation."""
+    from modal.call_graph import InputStatus
+
+    call = modal.FunctionCall.from_id(call_id)
+    graph = call.get_call_graph()
+    root = graph[0]
+    status = root.status
+
+    print(f"Call ID:  {call_id}")
+    print(f"Status:  {status.name}")
+
+    if status == InputStatus.SUCCESS:
+        try:
+            result = call.get(timeout=0)
+            print(f"Result:  {result}")
+        except TimeoutError:
+            print("Result:  (not yet available)")
+    elif status in (InputStatus.FAILURE, InputStatus.INIT_FAILURE):
+        try:
+            call.get(timeout=0)
+        except TimeoutError:
+            print("Result:  (not yet available)")
+        except Exception as exc:
+            print(f"Error:   {exc}")
+    elif status == InputStatus.TERMINATED:
+        print("(Job was cancelled)")
+    elif status == InputStatus.TIMEOUT:
+        print("(Job timed out)")
+    elif status == InputStatus.PENDING:
+        print("(Job is still running)")
+        print()
+        print("Tail logs:")
+        print("  modal run modal_runner.py --check-progress")
+
+
+def _cancel_job(call_id: str) -> None:
+    """Cancel a running spawned job. Pure local operation."""
+    call = modal.FunctionCall.from_id(call_id)
+    call.cancel()
+    print(f"Cancellation requested for call: {call_id}")
+    print("The job may take a few seconds to terminate.")
+
+
 @app.local_entrypoint()
 def main_entrypoint(
     config_name: str = "pipeline_sanity_check_no_s3",
@@ -328,6 +378,8 @@ def main_entrypoint(
     cache: bool = False,
     check_progress: bool = False,
     deploy: bool = False,
+    status: str = "",
+    cancel: str = "",
     overrides: str = None,
 ):
     """
@@ -360,6 +412,12 @@ def main_entrypoint(
         # Requires: modal deploy modal_runner.py  (run once first)
         modal run modal_runner.py --deploy
         modal run modal_runner.py --deploy --smoke --cache
+
+        # Check status of a headless job (call ID printed after --deploy)
+        modal run modal_runner.py --status <call_id>
+
+        # Cancel a running headless job
+        modal run modal_runner.py --cancel <call_id>
     """
     if test:
         print("Running environment test...")
@@ -369,6 +427,10 @@ def main_entrypoint(
         print("Checking progress...")
         result = check_progress_remote.remote()
         print(f"Result: {result}")
+    elif status:
+        _show_status(status)
+    elif cancel:
+        _cancel_job(cancel)
     else:
         override_list = []
         if overrides:
@@ -382,9 +444,20 @@ def main_entrypoint(
             print("Using cached outputs volume")
         if deploy:
             fn = modal.Function.from_name("cpc-llm", "run_experiment_remote")
-            fn.spawn(config_name, override_list, cache=cache)
-            print("Job launched headlessly. Safe to close terminal.")
-            print("Monitor at: https://modal.com/apps/samuelstanton/cpc-llm")
+            call = fn.spawn(config_name, override_list, cache=cache)
+            call_id = call.object_id
+            print(f"Job spawned. Call ID: {call_id}")
+            print()
+            print("Check status:")
+            print(f"  modal run modal_runner.py --status {call_id}")
+            print()
+            print("Tail logs (most recent subprocess):")
+            print("  modal run modal_runner.py --check-progress")
+            print()
+            print("Cancel:")
+            print(f"  modal run modal_runner.py --cancel {call_id}")
+            print()
+            print("Dashboard: https://modal.com/apps/samuelstanton/cpc-llm")
         else:
             result = run_experiment_remote.remote(
                 config_name, override_list, cache=cache
