@@ -123,6 +123,7 @@ def _setup_env():
 @app.function(
     image=image,
     gpu="A100",
+    cpu=8,
     memory=65536,
     timeout=14400,  # 4 hours
     secrets=[modal.Secret.from_name("wandb")],
