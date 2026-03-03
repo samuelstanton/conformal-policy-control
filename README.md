@@ -29,11 +29,11 @@ This installs all dependencies (including the `cpc-llm` package in editable mode
 The pipeline is configured via [Hydra](https://hydra.cc/). Configs live in `cpc_llm/config/`.
 
 ```bash
-# Sanity check (MARGE variant, local storage only)
-cpc-llm --config-name=pipeline_sanity_check_no_s3 local_output_dir=/path/to/output
+# Smoke test (~5 min, tiny model)
+cpc-llm --config-name=smoke local_output_dir=/path/to/output
 
 # Full run with S3 storage
-cpc-llm --config-name=pipeline_marge_f2 \
+cpc-llm --config-name=cpc_llm \
   local_output_dir=/path/to/local \
   parent_output_dir=s3://bucket/path
 ```

@@ -14,14 +14,14 @@ Usage:
     # Check progress (tail latest subprocess log from outputs volume)
     modal run modal_runner.py --check-progress
 
-    # Sanity check (MARGE, local storage, ~30 min)
-    modal run modal_runner.py --config-name pipeline_sanity_check_no_s3
+    # Custom config
+    modal run modal_runner.py --config-name cpc_llm
 
     # With cached outputs (skips completed stages on re-run)
-    modal run modal_runner.py --config-name pipeline_sanity_check_no_s3 --cache
+    modal run modal_runner.py --config-name cpc_llm --cache
 
     # With overrides
-    modal run modal_runner.py --config-name pipeline_sanity_check_no_s3 \
+    modal run modal_runner.py --config-name cpc_llm \
         --overrides "num_marge_rounds=1"
 
 Headless / deploy mode (survives laptop sleep or terminal close):
@@ -31,7 +31,7 @@ Headless / deploy mode (survives laptop sleep or terminal close):
     # Trigger a run that continues even if the local client disconnects
     modal run modal_runner.py --deploy
     modal run modal_runner.py --deploy --smoke --cache
-    modal run modal_runner.py --deploy --config-name pipeline_sanity_check_no_s3
+    modal run modal_runner.py --deploy --config-name cpc_llm
 
     # Check status of a headless job (prints call ID after --deploy)
     modal run modal_runner.py --status <call_id>
@@ -145,7 +145,7 @@ def _setup_env():
     volumes={HF_CACHE_PATH: hf_cache_volume, OUTPUTS_PATH: outputs_volume},
 )
 def run_experiment_remote(
-    config_name: str = "pipeline_sanity_check_no_s3",
+    config_name: str = "cpc_llm",
     overrides: list | None = None,
     cache: bool = False,
 ):
@@ -374,7 +374,7 @@ def _cancel_job(call_id: str) -> None:
 
 @app.local_entrypoint()
 def main_entrypoint(
-    config_name: str = "pipeline_sanity_check_no_s3",
+    config_name: str = "cpc_llm",
     test: bool = False,
     smoke: bool = False,
     cache: bool = False,
@@ -400,14 +400,14 @@ def main_entrypoint(
         # Check progress (tail latest subprocess log)
         modal run modal_runner.py --check-progress
 
-        # Sanity check run
-        modal run modal_runner.py --config-name pipeline_sanity_check_no_s3
+        # Custom config
+        modal run modal_runner.py --config-name cpc_llm
 
         # With cached outputs (skips completed stages)
-        modal run modal_runner.py --config-name pipeline_sanity_check_no_s3 --cache
+        modal run modal_runner.py --config-name cpc_llm --cache
 
         # With overrides
-        modal run modal_runner.py --config-name pipeline_sanity_check_no_s3 \
+        modal run modal_runner.py --config-name cpc_llm \
             --overrides "num_marge_rounds=1"
 
         # Headless run (survives laptop sleep / terminal close)
