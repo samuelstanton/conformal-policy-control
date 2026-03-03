@@ -99,6 +99,12 @@ def wait_for_gpu_availability(
 
 
 class ModelClient:
+    """HuggingFace causal LM wrapper for generation and likelihood computation.
+
+    Handles CUDA initialization with retry/backoff, supports loading from
+    local paths, S3 URIs, and sharded FSDP checkpoints.
+    """
+
     def __init__(
         self,
         model_name_or_path: str = "gpt2",
@@ -436,6 +442,15 @@ class ModelClient:
         return {"output_strs": self.tokenizer.batch_decode(outputs)}
 
     def chat_single_turn(self, msgs: List[Dict[str, str]], **kwargs) -> Dict[str, Any]:
+        """Generate a completion from a list of chat messages.
+
+        Args:
+            msgs: List of message dicts with "role" and "content" keys.
+            **kwargs: Additional arguments passed to ``model.generate()``.
+
+        Returns:
+            Dict with "output_strs" containing the decoded output sequences.
+        """
         return self._chat_hf_model(msgs, **kwargs)
 
     def chat_raw_logits(
@@ -445,6 +460,17 @@ class ModelClient:
         return self.model(input_ids, attention_mask=attention_mask).logits
 
     def chat_single_turn_text(self, text: str, **kwargs) -> Dict[str, Any]:
+        """Generate a completion from a raw text prompt.
+
+        Wraps the text in a user message and delegates to ``_chat_hf_model``.
+
+        Args:
+            text: Raw text prompt.
+            **kwargs: Additional arguments passed to ``model.generate()``.
+
+        Returns:
+            Dict with "output_strs" containing the decoded output sequences.
+        """
         msgs = [{"role": "user", "content": text}]
         return self._chat_hf_model(msgs, **kwargs)
 
@@ -531,8 +557,21 @@ class ModelClient:
         # add_start_token: bool = True,
         logger: logging.Logger = None,
     ) -> List[float]:
-        # Compute length-normalized likelihoods of target tokens given the input
-        # TODO: write test to check that the logprobs match what model.generate and compute_transition_scores gives!
+        """Compute length-normalized log-likelihoods of targets given inputs.
+
+        Concatenates each (input, target) pair, runs a forward pass, and
+        extracts the mean log-probability over target tokens.
+
+        Args:
+            inputs: List of input prompt strings.
+            targets: List of target sequences to evaluate.
+            batch_size: Number of (input, target) pairs per forward pass.
+            device: Device for computation ("cuda", "cpu", or "gpu").
+            logger: Optional logger (currently unused).
+
+        Returns:
+            List of length-normalized log-likelihoods, one per target.
+        """
         if device is not None:
             assert device in [
                 "gpu",

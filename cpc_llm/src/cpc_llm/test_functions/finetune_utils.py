@@ -39,6 +39,13 @@ torch.set_printoptions(threshold=10_000)
 
 
 def maybe_log(logger: logging.Logger, msg: str, level: str = "info"):
+    """Log a message if a logger is provided, otherwise do nothing.
+
+    Args:
+        logger: Logger instance, or None to skip logging.
+        msg: Message to log.
+        level: Log level name (e.g. "info", "warning", "error").
+    """
     if logger is None:
         return
     log_fn = getattr(logger, level)
@@ -105,6 +112,24 @@ def check_if_checkpoint_complete(
     num_shards: int = 3,
     logger: logging.Logger = None,
 ) -> bool:
+    """Check that a training checkpoint has all required files.
+
+    Syncs missing files between local and S3 storage in both directions:
+    downloads from S3 if a local file is missing, uploads to S3 if only
+    the local copy exists.
+
+    Args:
+        fs: S3 filesystem client.
+        local_checkpoint_dir: Local path to the checkpoint directory.
+        s3_checkpoint_dir: S3 path to the checkpoint directory.
+        num_gpus: Number of GPUs (determines expected rng_state files).
+        num_shards: Number of model weight shards.
+        logger: Optional logger for status messages.
+
+    Returns:
+        True if all required files are present (or were successfully synced),
+        False if any file is missing from both local and S3.
+    """
     os.makedirs(local_checkpoint_dir, exist_ok=True)
     files_to_check_for = [
         "config.json",
@@ -289,6 +314,15 @@ def starts_with_other_tensor(x: torch.Tensor, y: torch.Tensor) -> bool:
 
 
 def load_test_fn_from_file(test_fn_fp: str, test_fn_type: str) -> SyntheticTestFunction:
+    """Load a test function from a JSON file of saved hyperparameters.
+
+    Args:
+        test_fn_fp: Path to JSONL file containing test function parameters.
+        test_fn_type: Either "ehrlich" or "rough_mt_fuji".
+
+    Returns:
+        Initialized SyntheticTestFunction instance.
+    """
     test_fn_params = pd.read_json(test_fn_fp, orient="records", lines=True).to_dict(
         "records"
     )[0]
@@ -486,6 +520,12 @@ def postprocess_generations(
 
 
 class EvaluatorPlainPairs:
+    """Evaluator for plain score-particle pair generations.
+
+    Scores generated particles against the test function, tracking parsability,
+    feasibility, and accuracy metrics across evaluation batches.
+    """
+
     def __init__(
         self,
         cfg: DictConfig,
@@ -634,6 +674,14 @@ class EvaluatorPlainPairs:
 
 
 def get_response_template_plain_pairs(tokenizer: PreTrainedTokenizer):
+    """Return token IDs for the plain-pairs response template "\\nParticle:".
+
+    Args:
+        tokenizer: Tokenizer to encode the template string.
+
+    Returns:
+        List of token IDs for the response template.
+    """
     response_template_with_context = "\nParticle:"
     response_template_ids = tokenizer.encode(
         response_template_with_context, add_special_tokens=False
@@ -644,6 +692,14 @@ def get_response_template_plain_pairs(tokenizer: PreTrainedTokenizer):
 def formatting_texts_func_plain_pairs(
     examples: Mapping[str, Iterable[Any]],
 ) -> List[str]:
+    """Format examples as "Score: {score}\\nParticle: {json_list}" strings.
+
+    Args:
+        examples: Batch of examples with "score" and "particle" fields.
+
+    Returns:
+        List of formatted training strings.
+    """
     output_texts = []
     for i in range(len(examples["score"])):
         score = examples["score"][i]
@@ -653,11 +709,20 @@ def formatting_texts_func_plain_pairs(
     return output_texts
 
 
-## Same as 'formatting_texts_func_plain_pairs', except calling for "higher_score_particle"
 def formatting_texts_func_single_seq(
     examples: Mapping[str, Iterable[Any]],
 ) -> List[str]:
+    """Format examples as plain pairs, auto-detecting particle and score field names.
 
+    Supports multiple field naming conventions (e.g. "higher_score_particle",
+    "chosen", "prompt", "particle") and their corresponding score fields.
+
+    Args:
+        examples: Batch of examples with auto-detected particle and score fields.
+
+    Returns:
+        List of formatted "Score: {score}\\nParticle: {json_list}" strings.
+    """
     ## Get particle_field and score_field
     if "higher_score_particle" in examples:
         particle_field = "higher_score_particle"
@@ -692,6 +757,14 @@ def formatting_texts_func_single_seq(
 
 
 def get_response_template_edit_pairs(tokenizer: PreTrainedTokenizer):
+    """Return token IDs for the edit-pairs response template "\\n".
+
+    Args:
+        tokenizer: Tokenizer to encode the template string.
+
+    Returns:
+        List of token IDs for the response template.
+    """
     response_template_with_context = "\n"
     response_template_ids = tokenizer.encode(
         response_template_with_context, add_special_tokens=False
@@ -706,6 +779,18 @@ def formatting_texts_func_edit_pairs(
     lower_score_particle_field: str = "lower_score_particle",
     prefix: str = "<inc>",
 ) -> List[str]:
+    """Format edit pairs as "{prefix} {input}\\n{target}" strings for DPO training.
+
+    Args:
+        examples: Batch of examples with particle pair fields.
+        include_target: Whether to include the target particle in the output.
+        higher_score_particle_field: Field name for the input (higher-score) particle.
+        lower_score_particle_field: Field name for the target (lower-score) particle.
+        prefix: Control code prefix (e.g. "<inc>"). Empty string to omit.
+
+    Returns:
+        List of formatted training strings.
+    """
     # lower score is better!
     output_texts = []
     if prefix:
@@ -725,6 +810,12 @@ def formatting_texts_func_edit_pairs(
 
 
 class EvaluatorEditPairs:
+    """Evaluator for edit-pair (particle improvement) generations.
+
+    Scores generated particles against the test function, tracking improvement
+    rewards, parsability, and quality metrics across evaluation batches.
+    """
+
     def __init__(
         self,
         cfg: DictConfig,
@@ -911,6 +1002,17 @@ class EvaluatorEditPairs:
 def get_ehrlich_rewards(
     input_scores: List[float], target_scores: List[float]
 ) -> torch.Tensor:
+    """Compute margin-based rewards: max(input_score - target_score, 0).
+
+    Infeasible scores (None, inf, NaN) are treated as 0.
+
+    Args:
+        input_scores: Scores of the input (higher-score) particles.
+        target_scores: Scores of the target (lower-score) particles.
+
+    Returns:
+        FloatTensor of non-negative rewards, one per pair.
+    """
     rewards = []
     for i, t in zip(input_scores, target_scores):
         if i is None or np.isinf(i) or np.isnan(i):
