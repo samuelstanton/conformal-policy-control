@@ -9,6 +9,17 @@ from holo.test_functions.closed_form import Ehrlich
 from tqdm import tqdm
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
+from ..data_contracts import (
+    CHOSEN,
+    CHOSEN_SCORE,
+    INPUT,
+    PARTICLE,
+    REJECTED,
+    REJECTED_SCORE,
+    SCORE,
+    TARGET,
+)
+
 
 def format_instruction_tuning(
     X: torch.Tensor,
@@ -25,8 +36,8 @@ def format_instruction_tuning(
         constraints_str = ""
     for x, score in zip(X, scores):
         ex_dict = {
-            "input": f"{constraints_str}Score: {score.item():.2f}\nSolution:\n",
-            "target": f"{x.tolist()}",
+            INPUT: f"{constraints_str}Score: {score.item():.2f}\nSolution:\n",
+            TARGET: f"{x.tolist()}",
         }
         output_examples.append(ex_dict)
     return output_examples
@@ -38,19 +49,19 @@ def format_plain(input_dicts: Dict[str, Any]) -> List[Dict[str, str]]:
     """
     output_examples = []
     for d in input_dicts:
-        ex_dict = {k: v for k, v in d.items() if k not in ["particle", "score"]}
-        if isinstance(d["particle"], torch.Tensor):
-            ex_dict["particle"] = f"{json.dumps(d['particle'].tolist())}"
-        elif isinstance(d["particle"], Iterable):
-            ex_dict["particle"] = f"{json.dumps(list(d['particle']))}"
+        ex_dict = {k: v for k, v in d.items() if k not in [PARTICLE, SCORE]}
+        if isinstance(d[PARTICLE], torch.Tensor):
+            ex_dict[PARTICLE] = f"{json.dumps(d[PARTICLE].tolist())}"
+        elif isinstance(d[PARTICLE], Iterable):
+            ex_dict[PARTICLE] = f"{json.dumps(list(d[PARTICLE]))}"
         else:
-            raise ValueError(f"Unrecognized particle type: {type(d['particle'])}")
-        if isinstance(d["score"], torch.Tensor):
-            ex_dict["score"] = f"{d['score'].item():.3f}"
-        elif isinstance(d["score"], float):
-            ex_dict["score"] = f"{d['score']:.3f}"
+            raise ValueError(f"Unrecognized particle type: {type(d[PARTICLE])}")
+        if isinstance(d[SCORE], torch.Tensor):
+            ex_dict[SCORE] = f"{d[SCORE].item():.3f}"
+        elif isinstance(d[SCORE], float):
+            ex_dict[SCORE] = f"{d[SCORE]:.3f}"
         else:
-            raise ValueError(f"Unrecognized score type: {type(d['score'])}")
+            raise ValueError(f"Unrecognized score type: {type(d[SCORE])}")
         output_examples.append(ex_dict)
     return output_examples
 
@@ -99,8 +110,8 @@ def format_fewshot(
         input_str = f"{few_shot_examples_str}Score: {score.item():.3f}\nParticle: "
         output_examples.append(
             {
-                "input": input_str,
-                "target": f"{json.dumps([int(x) for x in particle.tolist()])}",
+                INPUT: input_str,
+                TARGET: f"{json.dumps([int(x) for x in particle.tolist()])}",
             }
         )
     return output_examples
@@ -135,9 +146,9 @@ def format_edit_pairs(
             edited = x
             orig_score = x_prime_score
         ex_dict = {
-            "input": f"{EDIT_INSTRUCTION}\nConstraints:\n{test_fn_str}\n"
+            INPUT: f"{EDIT_INSTRUCTION}\nConstraints:\n{test_fn_str}\n"
             + f"Original input:\n{orig.tolist()}\nScore: {orig_score.item():.2f}\nEdited:\n",
-            "target": f"{edited.tolist()}",
+            TARGET: f"{edited.tolist()}",
         }
         output_examples.append(ex_dict)
     return output_examples
@@ -161,11 +172,11 @@ def format_preference_pairs(
             y_pair = (x_prime, x)
             y_scores = (x_prime_score, x_score)
         ex_dict = {
-            "input": f"Constraints:\n{test_fn_str}\nSolution:\n",
-            "chosen": y_pair[0].tolist(),
-            "chosen_score": y_scores[0].item(),
-            "rejected": y_pair[1].tolist(),
-            "rejected_score": y_scores[1].item(),
+            INPUT: f"Constraints:\n{test_fn_str}\nSolution:\n",
+            CHOSEN: y_pair[0].tolist(),
+            CHOSEN_SCORE: y_scores[0].item(),
+            REJECTED: y_pair[1].tolist(),
+            REJECTED_SCORE: y_scores[1].item(),
         }
         output_examples.append(ex_dict)
     return output_examples

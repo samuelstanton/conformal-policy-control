@@ -18,6 +18,8 @@ from .synthetic_dataset_lib import ranked_fft
 from tqdm import tqdm
 from typing import Any, Dict, List, Set, Tuple
 
+from ..data_contracts import PARTICLE, SCORE
+
 logger = logging.getLogger(__name__)
 
 
@@ -39,10 +41,8 @@ def init_test_fns(
 def filter_sequences(
     particles_and_scores: List[Tuple[Tuple[int], float]], num_sequences: int
 ) -> List[Dict[str, Any]]:
-    library = torch.stack(
-        [torch.LongTensor(d["particle"]) for d in particles_and_scores]
-    )
-    ranking_scores = torch.tensor([d["score"] for d in particles_and_scores])
+    library = torch.stack([torch.LongTensor(d[PARTICLE]) for d in particles_and_scores])
+    ranking_scores = torch.tensor([d[SCORE] for d in particles_and_scores])
     filtered_idx = ranked_fft(
         library, ranking_scores, n=num_sequences, descending=False
     )
@@ -123,7 +123,7 @@ def train_optimizer(
             if particle_tuple not in all_particles_and_scores:
                 all_particles_and_scores[particle_tuple] = {
                     "step": t_idx,
-                    "score": score.item(),
+                    SCORE: score.item(),
                     "num_particles_seen": num_particles_seen,
                 }
             num_particles_seen += 1
@@ -219,7 +219,7 @@ def main(cfg: DictConfig):
             logging.info(f"{len(all_particles_and_scores)} particle and score pairs.")
 
     all_particles_and_scores = [
-        {"particle": list(particle), **particle_dict}
+        {PARTICLE: list(particle), **particle_dict}
         for particle, particle_dict in all_particles_and_scores.items()
     ]
     if cfg.max_sequences is not None:

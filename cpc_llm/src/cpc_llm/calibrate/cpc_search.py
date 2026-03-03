@@ -22,6 +22,16 @@ from .process_likelihoods import (
     constrain_likelihoods,
     check_col_names,
 )
+from ..data_contracts import (
+    HIGHER_SCORE,
+    HIGHER_SCORE_PARTICLE,
+    LOWER_SCORE,
+    LOWER_SCORE_PARTICLE,
+    PARTICLE,
+    SCORE,
+    con_lik_col,
+    lik_col,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -40,10 +50,10 @@ def cpc_beta_search(
     betas_list: List[float],
     psis_list: List[float],  ## Normalization constants
     ga_data_dir: str,
-    higher_score_particle_field: str = "higher_score_particle",
-    lower_score_particle_field: str = "lower_score_particle",
-    higher_score_field: str = "higher_score",
-    lower_score_field: str = "lower_score",
+    higher_score_particle_field: str = HIGHER_SCORE_PARTICLE,
+    lower_score_particle_field: str = LOWER_SCORE_PARTICLE,
+    higher_score_field: str = HIGHER_SCORE,
+    lower_score_field: str = LOWER_SCORE,
     global_random_seed: int = 0,
 ) -> str:
     """
@@ -59,8 +69,8 @@ def cpc_beta_search(
             "Number of unconstrained and constrained cal sets must be the same"
         )
 
-    unconstrained_lik_cols = [f"lik_r{i}" for i in range(n_cal_sets)]
-    constrained_lik_cols = [f"con_lik_r{i}" for i in range(n_cal_sets)]
+    unconstrained_lik_cols = [lik_col(i) for i in range(n_cal_sets)]
+    constrained_lik_cols = [con_lik_col(i) for i in range(n_cal_sets)]
 
     cal_data_constrained_all = pd.read_json(
         prev_cal_data_constrained_liks_fp_list[0], orient="records", lines=True
@@ -272,10 +282,10 @@ def cpc_beta_search(
                 _lik_model_clients=lik_model_clients or None,
             )
 
-            unconstrained_lik_cols_prop = [f"lik_r{j}" for j in range(n_models)]
+            unconstrained_lik_cols_prop = [lik_col(j) for j in range(n_models)]
             unconstrained_col_names_prop = [
-                "particle",
-                "score",
+                PARTICLE,
+                SCORE,
             ] + unconstrained_lik_cols_prop
             unconstrained_df = unconstrained_df[unconstrained_col_names_prop]
 
@@ -305,10 +315,10 @@ def cpc_beta_search(
             unconstrained_liks = gen_liks_mat[:, -1]
             lik_ratios_unconstrained_over_safe = unconstrained_liks / safe_liks
 
-            constrained_lik_cols_prop = [f"con_lik_r{j}" for j in range(n_models)]
+            constrained_lik_cols_prop = [con_lik_col(j) for j in range(n_models)]
             constrained_liks_df = pd.concat(
                 [
-                    unconstrained_df[["particle", "score"]],
+                    unconstrained_df[[PARTICLE, SCORE]],
                     pd.DataFrame(
                         constrained_liks_mat, columns=constrained_lik_cols_prop
                     ),
@@ -344,7 +354,7 @@ def cpc_beta_search(
                         np.array(lik_ratios_unconstrained_over_safe),
                         np.array(
                             cal_data_unconstrained_all.iloc[:, -1]
-                            / cal_data_constrained_all["con_lik_r0"]
+                            / cal_data_constrained_all[con_lik_col(0)]
                         ),
                     )
                 )
@@ -468,7 +478,7 @@ def cpc_beta_search(
         ]
 
         ## Get infeasibility indicators for calibration data
-        cal_scores = cal_data_constrained_all["score"].to_numpy()
+        cal_scores = cal_data_constrained_all[SCORE].to_numpy()
         cal_infeasible_indicators = np.isnan(cal_scores) | np.isinf(cal_scores)
 
         for b, beta_t in enumerate(G):
@@ -756,11 +766,7 @@ def cpc_beta_search(
                     [
                         constrained_liks_df.iloc[:, :-1],
                         pd.DataFrame(
-                            {
-                                f"con_lik_r{n_cal_sets}": prop_constrained_liks_curr[
-                                    :, -1
-                                ]
-                            }
+                            {con_lik_col(n_cal_sets): prop_constrained_liks_curr[:, -1]}
                         ),
                     ],
                     axis=1,
@@ -855,7 +861,7 @@ def cpc_beta_search(
     constrained_liks_df_beta_hat = pd.concat(
         [
             constrained_liks_df.iloc[:, :-1],
-            pd.DataFrame({f"con_lik_r{n_cal_sets}": prop_constrained_liks_curr[:, -1]}),
+            pd.DataFrame({con_lik_col(n_cal_sets): prop_constrained_liks_curr[:, -1]}),
         ],
         axis=1,
     )

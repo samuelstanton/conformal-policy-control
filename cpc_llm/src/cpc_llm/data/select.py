@@ -2,6 +2,17 @@ import os
 import pandas as pd
 from omegaconf import DictConfig
 from ..infrastructure.file_handler import LocalOrS3Client
+from ..data_contracts import (
+    CHOSEN,
+    CHOSEN_SCORE,
+    HIGHER_SCORE,
+    HIGHER_SCORE_PARTICLE,
+    LOWER_SCORE,
+    LOWER_SCORE_PARTICLE,
+    PROMPT,
+    PROMPT_SCORE,
+    SCORE,
+)
 
 
 def get_seeds_from_training_data(
@@ -12,16 +23,42 @@ def get_seeds_from_training_data(
     output_dir: str,
     sample_size: int,
     sampling_method: str = "best_scoring",
-    higher_score_particle_field: str = "higher_score_particle",
-    lower_score_particle_field: str = "lower_score_particle",
-    lower_score_field: str = "lower_score",
-    higher_score_field: str = "higher_score",
+    higher_score_particle_field: str = HIGHER_SCORE_PARTICLE,
+    lower_score_particle_field: str = LOWER_SCORE_PARTICLE,
+    lower_score_field: str = LOWER_SCORE,
+    higher_score_field: str = HIGHER_SCORE,
     pi_optimizer_name: str = "sft",
     setting: str = "",
     random_seed: int = 0,
     first_iter: bool = False,
 ) -> str:
+    """Select seed sequences from training data for the next CPC round.
 
+    Mixes best-scoring or uniformly sampled sequences from the current
+    training data with historical seeds (controlled by
+    ``cfg.proportion_of_old_seeds``).
+
+    Args:
+        cfg: Hydra config with ``overwrite_seeds_flag`` and
+            ``proportion_of_old_seeds``.
+        fs: File system client (local or S3).
+        prev_seeds_fp: Path to seeds from the previous iteration.
+        curr_training_data_fp: Path to current round's training JSONL.
+        output_dir: Directory to write the selected seeds file.
+        sample_size: Total number of seeds to select.
+        sampling_method: ``"best_scoring"`` or ``"uniform"``.
+        higher_score_particle_field: Column name for the higher-score particle.
+        lower_score_particle_field: Column name for the lower-score particle.
+        lower_score_field: Column name for the lower score value.
+        higher_score_field: Column name for the higher score value.
+        pi_optimizer_name: Optimizer type (``"sft"``, ``"dpo"``, etc.).
+        setting: Optional setting string for output filename.
+        random_seed: Random seed for reproducibility.
+        first_iter: Whether this is the first iteration (no historical data).
+
+    Returns:
+        Path to the output seeds JSONL file.
+    """
     output_fp = os.path.join(
         output_dir, f"seeds_from_{os.path.basename(curr_training_data_fp)}"
     )
@@ -64,7 +101,7 @@ def get_seeds_from_training_data(
 
         if sampling_method == "best_scoring":
             if not first_iter:
-                prev_seeds_df = prev_seeds_df.sort_values(by=["score"], ascending=True)[
+                prev_seeds_df = prev_seeds_df.sort_values(by=[SCORE], ascending=True)[
                     :hist_sample_size
                 ]
             curr_train_df = curr_train_df.sort_values(
@@ -91,17 +128,17 @@ def get_seeds_from_training_data(
         curr_train_df_selected = curr_train_df_selected.rename(
             columns={
                 lower_score_particle_field: higher_score_particle_field,
-                lower_score_field: "score",
+                lower_score_field: SCORE,
             }
         )
 
         if pi_optimizer_name == "dpo":
             curr_train_df_selected = curr_train_df_selected.rename(
                 columns={
-                    higher_score_particle_field: "prompt",
-                    lower_score_particle_field: "chosen",
-                    higher_score_field: "prompt_score",
-                    lower_score_field: "chosen_score",
+                    higher_score_particle_field: PROMPT,
+                    lower_score_particle_field: CHOSEN,
+                    higher_score_field: PROMPT_SCORE,
+                    lower_score_field: CHOSEN_SCORE,
                 }
             )
 

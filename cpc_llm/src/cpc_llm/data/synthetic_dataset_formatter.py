@@ -16,6 +16,28 @@ from pynndescent import PyNNDescentTransformer
 from tqdm import tqdm
 from typing import Any, Dict, List, Optional, Tuple
 
+from ..data_contracts import (
+    CHOSEN,
+    CHOSEN_LOGLIKELIHOOD,
+    CHOSEN_SCORE,
+    HIGHER_PARTICLE_LOGLIKELIHOOD,
+    HIGHER_SCORE,
+    HIGHER_SCORE_PARTICLE,
+    LIKELIHOOD,
+    LOGLIKELIHOOD,
+    LOWER_PARTICLE_LOGLIKELIHOOD,
+    LOWER_SCORE,
+    LOWER_SCORE_PARTICLE,
+    PARTICLE,
+    PROMPT,
+    PROMPT_LOGLIKELIHOOD,
+    PROMPT_SCORE,
+    REJECTED,
+    REJECTED_LOGLIKELIHOOD,
+    REJECTED_SCORE,
+    SCORE,
+)
+
 logging.basicConfig(level="INFO", force=True)
 
 
@@ -24,10 +46,10 @@ def find_minimal_edit_pairs(cfg: DictConfig, df: pd.DataFrame) -> List[Dict[str,
     Given a dataset of particles and scores, find minimal pairs that have different scores.
     """
     logging.info(f"Length of original df: {len(df)}")
-    df = df.drop_duplicates(subset=["particle"])
+    df = df.drop_duplicates(subset=[PARTICLE])
     logging.info(f"Length of df after removing duplicates: {len(df)}")
-    X = np.array([p for p in df["particle"]])
-    scores = np.array([s for s in df["score"]])
+    X = np.array([p for p in df[PARTICLE]])
+    scores = np.array([s for s in df[SCORE]])
     if cfg.score_lower_threshold is not None:
         X, scores = filter_by_score(X, scores, cfg.score_lower_threshold)
     pynn_transformer = PyNNDescentTransformer(
@@ -77,7 +99,7 @@ def filter_by_score(
 
 
 def filter_by_score_df(df: pd.DataFrame, score_threshold: float) -> pd.DataFrame:
-    return df[df["score"] > score_threshold]
+    return df[df[SCORE] > score_threshold]
 
 
 def abs_subtract_replace_infs(x: float, y: float) -> float:
@@ -93,16 +115,16 @@ def filter_by_likelihood_range(
     df: pd.DataFrame, likelihood_quantile_range: Tuple[float, float]
 ) -> pd.DataFrame:
     orig_size = len(df)
-    if "likelihood" not in df.columns and "loglikelihood" not in df.columns:
+    if LIKELIHOOD not in df.columns and LOGLIKELIHOOD not in df.columns:
         logging.error(
-            "Neither 'likelihood' nor 'loglikelihood' are in DF columns. Not filtering by likelihood range."
+            f"Neither '{LIKELIHOOD}' nor '{LOGLIKELIHOOD}' are in DF columns. Not filtering by likelihood range."
         )
         return df
-    elif "likelihood" not in df.columns:
-        df["likelihood"] = df["loglikelihood"].map(lambda x: np.exp(x))
-    lower_ll_bound = df["likelihood"].quantile(likelihood_quantile_range[0])
-    upper_ll_bound = df["likelihood"].quantile(likelihood_quantile_range[1])
-    df = df[(df["likelihood"] >= lower_ll_bound) & (df["likelihood"] <= upper_ll_bound)]
+    elif LIKELIHOOD not in df.columns:
+        df[LIKELIHOOD] = df[LOGLIKELIHOOD].map(lambda x: np.exp(x))
+    lower_ll_bound = df[LIKELIHOOD].quantile(likelihood_quantile_range[0])
+    upper_ll_bound = df[LIKELIHOOD].quantile(likelihood_quantile_range[1])
+    df = df[(df[LIKELIHOOD] >= lower_ll_bound) & (df[LIKELIHOOD] <= upper_ll_bound)]
     logging.info(
         f"Filtered dataset from {orig_size} down to {len(df)} examples after filtering by likelihood range."
     )
@@ -113,17 +135,15 @@ def filter_by_likelihood_lower_threshold(
     df: pd.DataFrame, likelihood_quantile_threshold: float
 ) -> pd.DataFrame:
     orig_size = len(df)
-    if "likelihood" not in df.columns and "loglikelihood" not in df.columns:
+    if LIKELIHOOD not in df.columns and LOGLIKELIHOOD not in df.columns:
         logging.error(
-            "Neither 'likelihood' nor 'loglikelihood' are in DF columns. Not filtering by likelihood range."
+            f"Neither '{LIKELIHOOD}' nor '{LOGLIKELIHOOD}' are in DF columns. Not filtering by likelihood range."
         )
         return df
-    elif "likelihood" not in df.columns:
-        df["likelihood"] = df["loglikelihood"].map(lambda x: np.exp(x))
-    likelihood_lower_threshold = df["likelihood"].quantile(
-        likelihood_quantile_threshold
-    )
-    df = df[(df["likelihood"] >= likelihood_lower_threshold)]
+    elif LIKELIHOOD not in df.columns:
+        df[LIKELIHOOD] = df[LOGLIKELIHOOD].map(lambda x: np.exp(x))
+    likelihood_lower_threshold = df[LIKELIHOOD].quantile(likelihood_quantile_threshold)
+    df = df[(df[LIKELIHOOD] >= likelihood_lower_threshold)]
     logging.info(
         f"Filtered dataset from {orig_size} down to {len(df)} examples after filtering by lower likelihood threshold."
     )
@@ -134,7 +154,7 @@ def find_dense_pairs(
     cfg: DictConfig, df: pd.DataFrame, allow_same_score_pair: bool = False
 ) -> List[Dict[str, Any]]:
     """Adapted from PropEn -- find all pairs within a specific edit distance of each other"""
-    df = df.drop_duplicates(subset=["particle"])
+    df = df.drop_duplicates(subset=[PARTICLE])
     if cfg.n is not None:
         if cfg.filter_by_likelihood and len(df) > cfg.n:
             df = filter_by_likelihood_lower_threshold(
@@ -145,8 +165,8 @@ def find_dense_pairs(
         df = df.sample(n=min(len(df), cfg.n), random_state=cfg.seed)
     if cfg.score_lower_threshold is not None:
         df = filter_by_score_df(df, cfg.score_lower_threshold)
-    library = torch.stack([torch.LongTensor(p) for p in df["particle"]])
-    ranking_scores = torch.FloatTensor([x for x in df["score"]])
+    library = torch.stack([torch.LongTensor(p) for p in df[PARTICLE]])
+    ranking_scores = torch.FloatTensor([x for x in df[SCORE]])
     filtered = library
     filtered_scores = ranking_scores
     filtered = filtered.numpy()
@@ -248,18 +268,14 @@ def get_score_pairs_df(
         lower_idx = j
 
     output_dict = {
-        "lower_score_particle": lower_score_p.tolist(),
-        "lower_score": f"{lower_score:.3f}",
-        "higher_score_particle": higher_score_p.tolist(),
-        "higher_score": f"{higher_score:.3f}",  # higher score is worse! can be inf
+        LOWER_SCORE_PARTICLE: lower_score_p.tolist(),
+        LOWER_SCORE: f"{lower_score:.3f}",
+        HIGHER_SCORE_PARTICLE: higher_score_p.tolist(),
+        HIGHER_SCORE: f"{higher_score:.3f}",  # higher score is worse! can be inf
     }
-    if "loglikelihood" in df.columns:
-        output_dict["lower_particle_loglikelihood"] = df.iloc[lower_idx][
-            "loglikelihood"
-        ]
-        output_dict["higher_particle_loglikelihood"] = df.iloc[higher_idx][
-            "loglikelihood"
-        ]
+    if LOGLIKELIHOOD in df.columns:
+        output_dict[LOWER_PARTICLE_LOGLIKELIHOOD] = df.iloc[lower_idx][LOGLIKELIHOOD]
+        output_dict[HIGHER_PARTICLE_LOGLIKELIHOOD] = df.iloc[higher_idx][LOGLIKELIHOOD]
     return output_dict
 
 
@@ -296,10 +312,10 @@ def get_score_pairs(
         lower_score_p = particle_j
 
     output_dict = {
-        "lower_score_particle": lower_score_p.tolist(),
-        "lower_score": f"{lower_score:.3f}",
-        "higher_score_particle": higher_score_p.tolist(),
-        "higher_score": f"{higher_score:.3f}",  # higher score is worse! can be inf
+        LOWER_SCORE_PARTICLE: lower_score_p.tolist(),
+        LOWER_SCORE: f"{lower_score:.3f}",
+        HIGHER_SCORE_PARTICLE: higher_score_p.tolist(),
+        HIGHER_SCORE: f"{higher_score:.3f}",  # higher score is worse! can be inf
     }
     return output_dict
 
@@ -325,7 +341,7 @@ def get_outputs_from_idx_pairs(
 def filter_infeasible_examples(
     cfg: DictConfig,
     curr_examples: List[Dict[str, Any]],
-    score_field: str = "higher_score",
+    score_field: str = HIGHER_SCORE,
 ) -> List[Dict[str, Any]]:
     no_infeasible_seq = [
         i for i, ex in enumerate(curr_examples) if ex[score_field] != "inf"
@@ -355,7 +371,7 @@ def filter_infeasible_examples(
 
 def find_preference_pairs(cfg: DictConfig, df: pd.DataFrame) -> List[Dict[str, Any]]:
     random.seed(cfg.seed)
-    df = df.drop_duplicates(subset=["particle"])
+    df = df.drop_duplicates(subset=[PARTICLE])
     if cfg.n is not None:
         if cfg.filter_by_likelihood and len(df) > cfg.n:
             df = filter_by_likelihood_lower_threshold(
@@ -368,13 +384,11 @@ def find_preference_pairs(cfg: DictConfig, df: pd.DataFrame) -> List[Dict[str, A
     if cfg.score_lower_threshold is not None:
         df = filter_by_score_df(df, cfg.score_lower_threshold)
     if cfg.max_proportion_infeasible is not None:
-        data = filter_infeasible_examples(
-            cfg, df.to_dict("records"), score_field="score"
-        )
+        data = filter_infeasible_examples(cfg, df.to_dict("records"), score_field=SCORE)
     else:
         data = df.to_dict("records")
-    library = torch.stack([torch.LongTensor(p["particle"]) for p in data])
-    ranking_scores = torch.FloatTensor([x["score"] for x in data])
+    library = torch.stack([torch.LongTensor(p[PARTICLE]) for p in data])
+    ranking_scores = torch.FloatTensor([x[SCORE] for x in data])
     filtered = library
     filtered_scores = ranking_scores
     filtered = filtered.numpy()
@@ -424,17 +438,17 @@ def find_preference_pairs(cfg: DictConfig, df: pd.DataFrame) -> List[Dict[str, A
         idx_triples, desc="Creating preference output records"
     ):
         output_dict = {
-            "prompt": filtered[x_idx].tolist(),
-            "prompt_score": f"{filtered_scores[x_idx]:.3f}",
-            "chosen": filtered[yw_idx].tolist(),
-            "chosen_score": f"{filtered_scores[yw_idx]:.3f}",
-            "rejected": filtered[yl_idx].tolist(),
-            "rejected_score": f"{filtered_scores[yl_idx]:.3f}",
+            PROMPT: filtered[x_idx].tolist(),
+            PROMPT_SCORE: f"{filtered_scores[x_idx]:.3f}",
+            CHOSEN: filtered[yw_idx].tolist(),
+            CHOSEN_SCORE: f"{filtered_scores[yw_idx]:.3f}",
+            REJECTED: filtered[yl_idx].tolist(),
+            REJECTED_SCORE: f"{filtered_scores[yl_idx]:.3f}",
         }
-        if "loglikelihood" in data[0].keys():
-            output_dict["prompt_loglikelihood"] = data[x_idx]["loglikelihood"]
-            output_dict["chosen_loglikelihood"] = data[yw_idx]["loglikelihood"]
-            output_dict["rejected_loglikelihood"] = data[yl_idx]["loglikelihood"]
+        if LOGLIKELIHOOD in data[0].keys():
+            output_dict[PROMPT_LOGLIKELIHOOD] = data[x_idx][LOGLIKELIHOOD]
+            output_dict[CHOSEN_LOGLIKELIHOOD] = data[yw_idx][LOGLIKELIHOOD]
+            output_dict[REJECTED_LOGLIKELIHOOD] = data[yl_idx][LOGLIKELIHOOD]
         outputs.append(output_dict)
     return outputs
 
@@ -444,7 +458,7 @@ def main(cfg: DictConfig):
     logging.basicConfig(level=cfg.log_level.upper(), force=True)
     logging.info(f"Config:\n{pprint.pformat(OmegaConf.to_container(cfg))}")
     df = pd.read_json(cfg.source_dataset_path, orient="records", lines=True)
-    df["particle"] = df["particle"].map(
+    df[PARTICLE] = df[PARTICLE].map(
         lambda input_str: (
             [int(x) for x in json.loads(input_str)]
             if isinstance(input_str, str)

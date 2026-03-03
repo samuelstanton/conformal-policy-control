@@ -17,6 +17,7 @@ from ..test_functions.finetune_utils import (
     wandb_setup,
 )
 from ..core.model_client import ModelClient
+from ..data_contracts import CHOSEN, PROMPT, REJECTED
 from omegaconf import DictConfig, OmegaConf
 from .pref_tuning_trainer import DPOTrainerWithLogging
 from .seq2seq_sft_trainer import S3Callback
@@ -177,13 +178,13 @@ def main(cfg: DictConfig):
 
         # TODO change processing function once data format is determined
         def process(row):
-            row["prompt"] = formatting_texts_func_edit_pairs(
-                {"prompt": [row["prompt"]]},
+            row[PROMPT] = formatting_texts_func_edit_pairs(
+                {PROMPT: [row[PROMPT]]},
                 include_target=False,
-                higher_score_particle_field="prompt",
+                higher_score_particle_field=PROMPT,
             )[0]
-            row["chosen"] = json.dumps([int(x) for x in row["chosen"]])
-            row["rejected"] = json.dumps([int(x) for x in row["rejected"]])
+            row[CHOSEN] = json.dumps([int(x) for x in row[CHOSEN]])
+            row[REJECTED] = json.dumps([int(x) for x in row[REJECTED]])
             return row
 
         ds = ds.map(

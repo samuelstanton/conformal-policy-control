@@ -16,6 +16,7 @@ from ..test_functions.finetune_utils import (
 from holo.test_functions.closed_form import Ehrlich, RoughMtFuji
 from ..core.model_client import ModelClient
 from ..core.model_loading import init_model_client_with_retry
+from ..data_contracts import NUM_PARTICLES_GENERATED, PARTICLE, SCORE
 from omegaconf import DictConfig, OmegaConf
 from transformers import GenerationConfig
 from tqdm import tqdm
@@ -64,7 +65,7 @@ def run_iterative_generation_inmemory(
 
     if all_dfs:
         return pd.concat(all_dfs, ignore_index=True)
-    return pd.DataFrame(columns=["particle", "score", "num_particles_generated"])
+    return pd.DataFrame(columns=[PARTICLE, SCORE, NUM_PARTICLES_GENERATED])
 
 
 def generate_single_batch(
@@ -136,9 +137,9 @@ def generate_single_batch(
 
         outputs.append(
             {
-                "particle": result[0],
-                "score": result[1],
-                "num_particles_generated": num_particles_generated,
+                PARTICLE: result[0],
+                SCORE: result[1],
+                NUM_PARTICLES_GENERATED: num_particles_generated,
             }
         )
 
@@ -227,7 +228,7 @@ def run_iterative_generation(
             [
                 {
                     cfg.higher_score_particle_field: ex[cfg.lower_score_particle_field],
-                    "score": ex[cfg.lower_score_field],
+                    SCORE: ex[cfg.lower_score_field],
                 }
                 for ex in ds
             ]
