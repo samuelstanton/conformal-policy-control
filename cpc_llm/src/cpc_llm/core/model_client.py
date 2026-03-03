@@ -462,7 +462,7 @@ class ModelClient:
     def chat_single_turn_text(self, text: str, **kwargs) -> Dict[str, Any]:
         """Generate a completion from a raw text prompt.
 
-        Wraps the text in a user message and delegates to ``chat_single_turn``.
+        Wraps the text in a user message and delegates to ``_chat_hf_model``.
 
         Args:
             text: Raw text prompt.
