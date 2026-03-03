@@ -4,6 +4,7 @@ dpo_script_args:  # trl.DpoScriptArguments
 dpo_config:  # trl.DPOConfig
   beta: 0.1
   loss_type: ["sigmoid"]
+  generate_during_eval: True
   max_length: 512
   output_dir: ???
   run_name: ???
