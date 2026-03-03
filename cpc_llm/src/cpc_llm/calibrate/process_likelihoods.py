@@ -1,14 +1,14 @@
-from typing import Any
-from omegaconf import DictConfig
 import numpy as np
+import pandas as pd
+from omegaconf import DictConfig
 
 
 def constrain_likelihoods(
     cfg: DictConfig,
-    likelihoods_mat: Any,  ## 2-D np array, shape (n_prop, *); flexible num columns, equal to n_models total from safe model to curr
-    betas: Any,  ## 1-D np array or list of lik-ratio bounds
-    psis: Any,  ## 1-D np array or list of normalization constants
-) -> Any:
+    likelihoods_mat: np.ndarray,
+    betas: np.ndarray | list[float],
+    psis: np.ndarray | list[float],
+) -> np.ndarray:
     """Process matrix of unconstrained likelihoods into constrained likelihoods"""
     n_prop, n_models = np.shape(likelihoods_mat)
 
@@ -43,8 +43,8 @@ def constrain_likelihoods(
 
 
 def mixture_pdf_from_densities_mat(
-    constrained_densities_all_steps: Any, mixture_weights: Any
-) -> Any:
+    constrained_densities_all_steps: np.ndarray, mixture_weights: np.ndarray
+) -> np.ndarray:
     """
     constrained_densities_cal_test_all_steps : dim (n_samples, n_models) Note: columns correspond to t=0, ..., T-1
     mixture_weights         : dim (T), array of relative weights to put on each of *prior* distributions, from t=0, ..., T-1
@@ -57,7 +57,7 @@ def mixture_pdf_from_densities_mat(
     return mixture_pdfs
 
 
-def check_col_names(df: Any):
+def check_col_names(df: pd.DataFrame) -> None:
     """
     Sanity check that likelihood column names are increasing in pandas likelihoods dataframe.
     """

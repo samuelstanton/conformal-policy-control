@@ -1,9 +1,7 @@
-import numpy as np
-
 import logging
 import sys
 
-from typing import Any
+import numpy as np
 from omegaconf import DictConfig
 
 logger = logging.getLogger(__name__)
@@ -11,11 +9,22 @@ logger = logging.getLogger(__name__)
 
 def prepare_grid(
     cfg: DictConfig,
-    V: Any,  ## 1-D np array, lik-ratio values (unsorted) to process into grid
-    n_grid: int = 50,  ## int, approximately how many values want to have in resulting grid
-    proposal: str = "unconstrained",  ## str, 'unconstrained' or 'safe' to indicate prop dist
-) -> Any:
-    """Sort and coarsen grid of lik-ratio values to search over"""
+    V: np.ndarray,
+    n_grid: int = 50,
+    proposal: str = "unconstrained",
+) -> np.ndarray:
+    """Sort and coarsen grid of lik-ratio values to search over.
+
+    Args:
+        cfg: Hydra configuration object.
+        V: 1-D array of likelihood-ratio values (unsorted).
+        n_grid: Approximate number of values in the resulting grid.
+        proposal: Proposal distribution type — ``"unconstrained"``,
+            ``"safe"``, or ``"mixed"``.
+
+    Returns:
+        Sorted, coarsened grid with appropriate boundary values appended.
+    """
 
     G = np.sort(
         np.unique(V)
