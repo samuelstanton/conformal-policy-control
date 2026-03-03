@@ -47,10 +47,17 @@ def constrain_likelihoods(
 def mixture_pdf_from_densities_mat(
     constrained_densities_all_steps: np.ndarray, mixture_weights: np.ndarray
 ) -> np.ndarray:
-    """
-    constrained_densities_cal_test_all_steps : dim (n_samples, n_models) Note: columns correspond to t=0, ..., T-1
-    mixture_weights         : dim (T), array of relative weights to put on each of *prior* distributions, from t=0, ..., T-1
-                       Note : mixture_weights[i] = n_cal_model_i
+    """Compute a mixture PDF from per-model constrained densities.
+
+    Args:
+        constrained_densities_all_steps: Constrained density values of shape
+            (n_samples, n_models), where columns correspond to models t=0, ..., T-1.
+        mixture_weights: Relative weight for each model's distribution, of shape
+            (T,). Typically the calibration dataset size for each model
+            (mixture_weights[i] = n_cal_model_i). Normalized to sum to 1 internally.
+
+    Returns:
+        Mixture PDF values of shape (n_samples,).
     """
     mixture_weights_normed = mixture_weights / np.sum(mixture_weights)
 
@@ -60,8 +67,15 @@ def mixture_pdf_from_densities_mat(
 
 
 def check_col_names(df: pd.DataFrame) -> None:
-    """
-    Sanity check that likelihood column names are increasing in pandas likelihoods dataframe.
+    """Validate that likelihood column indices are monotonically increasing.
+
+    Args:
+        df: DataFrame with likelihood columns named ``lik_r{i}`` or
+            ``constrained_lik_r{i}``.
+
+    Raises:
+        ValueError: If the numeric indices extracted from column names are not
+            consecutive (incrementing by 1).
     """
     lik_cols = []
     for c in df.columns:
