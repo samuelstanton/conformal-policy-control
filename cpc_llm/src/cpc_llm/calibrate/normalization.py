@@ -1,16 +1,15 @@
-import numpy as np
-
 import logging
 
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
 
 def importance_weighted_monte_carlo_integration(
-    LRs_unconstrained_over_safe,  ## 1D numpy array
-    beta_t,  ## float
-    proposal: str = "safe",  ## "unconstrained"
-):
+    LRs_unconstrained_over_safe: np.ndarray,
+    beta_t: float,
+    proposal: str = "safe",
+) -> float:
 
     if proposal == "unconstrained":
         ## If beta_t >= 1: Assume proposal is unconstrained
@@ -24,14 +23,13 @@ def importance_weighted_monte_carlo_integration(
 
 
 def iwmci_overlap_est(
-    LRs_unconstrained_over_safe,  ## 1D numpy array
-    unconstrained_liks,
-    safe_liks,
-    beta_t,  ## float
-    psi_t,
-    # intersection_target: str = "safe", ## The policy that want to compute intersection (w constrained policy) for
+    LRs_unconstrained_over_safe: np.ndarray,
+    unconstrained_liks: np.ndarray,
+    safe_liks: np.ndarray,
+    beta_t: float,
+    psi_t: float,
     proposal: str = "safe",
-):
+) -> float:
 
     if proposal not in ["safe", "unconstrained"]:
         raise ValueError(f"proposal name not recognized : {proposal}")
