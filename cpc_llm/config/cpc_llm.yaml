@@ -510,7 +510,7 @@ dpo:
       num_train_epochs: 1 #1 #2 #2 #1
       eval_strategy: epoch
       save_strategy: epoch
-      torch_compile: true
+      torch_compile: false
       max_length: 256
       log_level: "info"
       seed: 0
@@ -546,7 +546,7 @@ marge:
       num_train_epochs: 5
       eval_strategy: epoch
       save_strategy: epoch
-      torch_compile: true
+      torch_compile: false
       self_normalize_weights: True
       reinforce_style: False
       max_length: 512 #1024
