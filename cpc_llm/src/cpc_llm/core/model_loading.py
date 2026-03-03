@@ -37,6 +37,8 @@ def init_model_client_with_retry(
     _logger = _logger or logger
 
     try:
+        # stagger=False because ModelClient.__init__ already adds its own
+        # stagger delay and calls wait_for_gpu_availability internally.
         return cuda_retry(
             lambda: ModelClient(
                 model_name_or_path=model_name_or_path,
@@ -45,6 +47,7 @@ def init_model_client_with_retry(
                 temperature=temperature,
                 device="cuda",
             ),
+            stagger=False,
             logger=_logger,
             operation="ModelClient CUDA init",
         )

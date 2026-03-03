@@ -123,3 +123,7 @@ class TestCudaRetry:
 
         log.warning.assert_called_once()
         assert "test op" in log.warning.call_args.args[0]
+
+    def test_max_retries_zero_raises_value_error(self) -> None:
+        with pytest.raises(ValueError, match="max_retries must be >= 1"):
+            cuda_retry(lambda: 42, max_retries=0)

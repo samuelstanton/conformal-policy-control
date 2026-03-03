@@ -10,7 +10,7 @@ from typing import TypeVar
 
 T = TypeVar("T")
 
-logger = logging.getLogger(__name__)
+_module_logger = logging.getLogger(__name__)
 
 
 def is_cuda_error(exc: Exception) -> bool:
@@ -65,10 +65,14 @@ def cuda_retry(
         The return value of *fn* on success.
 
     Raises:
+        ValueError: If *max_retries* < 1.
         Exception: Re-raises the last CUDA error after *max_retries*
             attempts, or immediately for non-CUDA errors.
     """
-    _logger = logger or globals()["logger"]
+    if max_retries < 1:
+        raise ValueError(f"max_retries must be >= 1, got {max_retries}")
+
+    _logger = logger or _module_logger
 
     if stagger:
         time.sleep(random.uniform(0.1, 0.5))
