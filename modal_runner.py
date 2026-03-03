@@ -343,12 +343,12 @@ def _show_status(call_id: str) -> None:
             result = call.get(timeout=0)
             print(f"Result:  {result}")
         except TimeoutError:
-            print("Result:  (not yet available)")
+            print("Result:  (retry in a moment)")
     elif status in (InputStatus.FAILURE, InputStatus.INIT_FAILURE):
         try:
             call.get(timeout=0)
         except TimeoutError:
-            print("Result:  (not yet available)")
+            print("Error:   (details not yet cached — retry in a moment)")
         except Exception as exc:
             print(f"Error:   {exc}")
     elif status == InputStatus.TERMINATED:
@@ -356,10 +356,12 @@ def _show_status(call_id: str) -> None:
     elif status == InputStatus.TIMEOUT:
         print("(Job timed out)")
     elif status == InputStatus.PENDING:
-        print("(Job is still running)")
+        print("(Job is queued or running)")
         print()
-        print("Tail logs:")
+        print("Tail logs (if the job has started):")
         print("  modal run modal_runner.py --check-progress")
+    else:
+        print("(Unrecognised status — check Modal dashboard)")
 
 
 def _cancel_job(call_id: str) -> None:
