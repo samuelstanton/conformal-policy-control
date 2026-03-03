@@ -284,7 +284,7 @@ def compute_likelihoods_one_model_all_data(
         if "score" in target_df.columns:
             target_df = target_df[["particle", "score"] + lik_col_names_prev]
         else:
-            target_df = target_df[target_df.columns[0:2] + lik_col_names_prev]
+            target_df = target_df[target_df.columns[0:2].tolist() + lik_col_names_prev]
 
         target_data = target_df.to_dict("list")
         formatted_targets = formatting_texts_func_single_seq(target_data)
