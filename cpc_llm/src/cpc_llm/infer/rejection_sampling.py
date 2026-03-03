@@ -421,12 +421,9 @@ def accept_reject_sample_and_get_likelihoods(
             cfg, model_dir_list, proposal
         )
 
-    # if betas_list[-1] >= 1:
     if proposal == "unconstrained":
         ## If beta_t >= 1, then using unconstrained policy as proposal
 
-        ## If pre conformal policy control, running constrained model (ie, not alpha>=1.0), also check that number of calls has not yet exceeded max number
-        # unconstrained_pre_cpc_call_num_check = call_idx < cfg.conformal_policy_control.accept_reject.max_unconstrained_proposal_calls_pre_cpc if not post_policy_control else True
         unconstrained_pre_cpc_call_num_check = True
 
         if cfg.conformal_policy_control.alpha >= 1.0:
@@ -564,7 +561,6 @@ def accept_reject_sample_and_get_likelihoods(
                         1, betas_list[-1] / lik_ratios_unconstrained_over_safe[i]
                     )
 
-                # betas_list[-1]/lik_ratios_unconstrained_over_safe[i]:
                 if u < acc_prob:
                     ## Update target and proposal likelihoods for last accepted sample
                     prev_target_lik = target_lik
@@ -789,7 +785,6 @@ def accept_reject_sample_and_get_likelihoods(
                         1, lik_ratios_unconstrained_over_safe[i] / betas_list[-1]
                     )
 
-                # betas_list[-1]/lik_ratios_unconstrained_over_safe[i]:
                 if u < acc_prob:
                     ## Update target and proposal likelihoods for last accepted sample
                     prev_target_lik = target_lik
@@ -1030,8 +1025,6 @@ def accept_reject_sample_and_get_likelihoods(
                     + (1 - safe_prop_mix_weight) * unconstrained_liks[i_curr]
                 )
 
-                # if call_idx > cfg.conformal_policy_control.num_AR_before_MH:
-
                 if post_policy_control and (
                     cfg.conformal_policy_control.ind_metropolis_hastings
                     or call_idx > cfg.conformal_policy_control.num_AR_before_MH
@@ -1047,13 +1040,11 @@ def accept_reject_sample_and_get_likelihoods(
 
                 n_proposed_dict[proposal_curr] += 1
 
-                # betas_list[-1]/lik_ratios_unconstrained_over_safe[i]:
                 if u < acc_prob:
                     ## Update states for MH
                     prev_target_lik = target_lik
                     prev_prop_lik = prop_lik
 
-                    # if u < acc_prob:
                     accepted_curr_dict[proposal_curr].append(True)
                     n_accepted += 1
 

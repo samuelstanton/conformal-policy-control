@@ -9,20 +9,6 @@ overwrite_init_sft_formatter: False
 overwrite_initg: False #False ## If False, will only run initial generation when output file does not already exist.
 
 
-# overwrite_seeds_flag: True
-# overwrite_split_init: True
-# overwrite_sft: True ## If False, will only run SFT when output file does not already exist.
-# overwrite_ig: True ## If False, will only run iterative generation when output file does not already exist.
-# overwrite_split: True
-# overwrite_cg: False ## If False, will only run contrastive generation when output file does not already exist.
-# overwrite_cmp_lik_all: True #False #True ## If False, will only run compute_likelihoods_all_models when output file doesn't exist.
-# overwrite_sft_formatter: True
-# overwrite_marge: True # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
-# overwrite: True #True # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
-# overwrite_dpo_formatter: True #True
-# overwrite_dpo: True #True # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
-
-
 overwrite_seeds_flag: False
 overwrite_split_init: False
 overwrite_sft: False ## If False, will only run SFT when output file does not already exist.
@@ -57,7 +43,6 @@ run_iter_gen: True
 run_compute_liks_all_models_and_cal_data: True ## Whether to run likelihood computation for all models (for policy control)
 run_contrast_gen: True #False ## Whether to run contrastive generation
 
-# run_uncon_gen: True ## Whether to run unconditional generation from initial density model
 run_propen_dpo_dataset_formatting: True
 init_generation_sampling_num_return_sequences: 10 #10 ## Number of sequences to sample at each intialization generation stage
 generation_sampling_num_return_sequences: 10 #20 #10 ## Number of sequences to sample at each iterative generation (policy improvement) stage
@@ -85,8 +70,6 @@ random_seed: 0 ## For train/cal set splits
 
 ## For how to split cal vs train sets
 split:
-  # num_cal_init: 500 ## Num of calibration samples to draw from original "safe" policy (if available)
-  # num_train_pi_sft0: 500 ## Num of training samples to use in first policy improvement (if available)
   cal_frac: 0.3333 #0.05 ## Fraction of generated outputs to place in calibration data (rather than training) at each time
   train_frac_from_non_cal: 1.0 ## Fraction of *non-cal, deduplicated* generated outputs to place in training data (rather than calibration) at each time
   train_sampling_method: "best_scoring" # "best_scoring", "uniform"
@@ -96,22 +79,6 @@ split:
 
 temperature_init: 1.0 #1.0 #0.8 #1.0
 temperature: 1.0 #1.0
-
-# # Only include this section if the initial model should be trained from scratch!
-# initial_model_config:
-#   num_hidden_layers: 6
-#   num_attention_heads: 4
-#   intermediate_size: 128
-#   hidden_size: 64
-#   vocab_size: 512
-
-# # Only include this section if the initial model should be trained from scratch!
-# initial_model_config:
-#   num_hidden_layers: 6
-#   num_attention_heads: 4
-#   intermediate_size: 128
-#   hidden_size: 64
-#   vocab_size: 512
 
 num_dpo_rounds: 10
 num_init_sft_rounds: 1 #5 #10
@@ -280,7 +247,6 @@ initial_sft:
 
     # instrumentation
     log_level: "info"
-    # wandb_mode: "online" ### 20250808 Tried commenting this out
     wandb_mode: "offline"
     project_name: "finetune_ehrlich"
     exp_name: "sft_smaller_pythia"
@@ -335,7 +301,6 @@ sft:
 
     # instrumentation
     log_level: "info"
-    # wandb_mode: "online" ### 20250808 Tried commenting this out
     wandb_mode: "offline"
     project_name: "finetune_ehrlich"
     exp_name: "sft_smaller_pythia"
@@ -471,7 +436,6 @@ conformal_policy_control:
     n_target_pre_cpc: 500 # 1000
     n_target_post_cpc: 200 # 1000
     iwmci_intersect_thresh: 0.5
-    # max_unconstrained_proposal_calls_pre_cpc: 10 #10
     n_opt_prop_calls_pre_cpc_quarter_check: 5
     env_const_scale_emp_max: 1.0 #1.05 ## Factor by which to scale the empirical maximum likelihood ratio for estimating envelope constant
 

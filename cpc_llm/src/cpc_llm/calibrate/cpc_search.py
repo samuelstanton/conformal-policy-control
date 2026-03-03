@@ -69,12 +69,6 @@ def cpc_beta_search(
         prev_cal_data_unconstrained_liks_fp_list[0], orient="records", lines=True
     )
 
-    ## Subset to currently relevant likelihood columns (relevant for rerunning from checkpoint)
-    # cal_data_constrained_all = cal_data_constrained_all[list(cal_data_constrained_all.columns[0:2]) + constrained_lik_cols]
-    # cal_data_unconstrained_all = cal_data_unconstrained_all[list(cal_data_unconstrained_all.columns[0:2]) + unconstrained_lik_cols]
-
-    # pd.read_json(prev_cal_data_unconstrained_liks_fp_list[2], orient="records", lines=True)
-
     n_cal_per_model = [len(cal_data_constrained_all)]
 
     for i in range(1, n_cal_sets):
@@ -84,11 +78,6 @@ def cpc_beta_search(
         cal_data_unconstrained_curr = pd.read_json(
             prev_cal_data_unconstrained_liks_fp_list[i], orient="records", lines=True
         )
-
-        ## Subset to currently relevant likelihood columns (relevant for rerunning from checkpoint)
-
-        # cal_data_constrained_curr = cal_data_constrained_curr[list(cal_data_constrained_curr.columns[0:2]) + constrained_lik_cols]
-        # cal_data_unconstrained_curr = cal_data_unconstrained_curr[list(cal_data_unconstrained_curr.columns[0:2]) + unconstrained_lik_cols]
 
         if len(cal_data_constrained_curr) != len(cal_data_unconstrained_curr):
             raise ValueError(
@@ -168,8 +157,6 @@ def cpc_beta_search(
     cal_data_unconstrained_all = cal_data_unconstrained_all.iloc[:, :num_cols_to_keep]
 
     ## Prep cal data safe & unconstrained liks: Need most recent safe likelihoods (safe at t-1) and current unconstrained likelihoods (unconstrained at t) in loop
-    # cal_data_tmin1_safe_and_t_unconstrained_liks = pd.concat([cal_data_constrained_all[constrained_lik_cols[-2]], cal_data_unconstrained_all[unconstrained_lik_cols[-1]]], axis=1).to_numpy()
-    # cal_data_tmin1_safe_and_t_unconstrained_liks = pd.concat([cal_data_constrained_all.iloc[:,-2], cal_data_unconstrained_all.iloc[:,-1]], axis=1).to_numpy()
     cal_data_t0_safe_and_t_unconstrained_liks = pd.concat(
         [
             cal_data_constrained_all[constrained_lik_cols[0]],
@@ -196,10 +183,6 @@ def cpc_beta_search(
             cfg.conformal_policy_control.alpha / 2
         )  ## Multistart correction
 
-    # elif cfg.conformal_policy_control.mixture_proposal:
-    #     policy_names = ['mixture']
-    #     adjusted_alpha = 1.0
-
     else:
         policy_names = ["safe", "unconstrained"]
         adjusted_alpha = (
@@ -209,7 +192,6 @@ def cpc_beta_search(
     lik_ratios_unconstrained_over_safe_cal_and_prop_dict = {}
     lik_ratios_unconstrained_over_safe_dict = {}
 
-    # unconstrained_liks_dict, safe_liks_dict, constrained_liks_dict = {}, {}, {}
     unconstrained_liks_dict, safe_liks_dict = {}, {}
     prop_mixture_constrained_density_dict = {}
 
@@ -220,7 +202,6 @@ def cpc_beta_search(
         constrained_gen_liks_fp_dict,
     ) = {}, {}, {}, {}
     prop_data_t0_safe_and_t_unconstrained_liks_dict = {}
-    # betas_list_tmp_dict, psis_list_tmp_dict = {}, {}
 
     ## Pre-load models for in-memory mode
     use_inmemory = _is_direct_mode(cfg)
@@ -390,7 +371,6 @@ def cpc_beta_search(
 
             unconstrained_liks_dict[proposal] = unconstrained_liks
             safe_liks_dict[proposal] = safe_liks
-            # constrained_liks_dict[proposal] = constrained_liks
 
             ## Compute mixture weights for past data
             prop_data_constrained_all = constrained_liks_df
@@ -470,8 +450,6 @@ def cpc_beta_search(
         unconstrained_gen_liks_fp = unconstrained_gen_liks_fp_dict[proposal]
         constrained_liks_df = constrained_liks_df_dict[proposal]
         constrained_gen_liks_fp = constrained_gen_liks_fp_dict[proposal]
-        # betas_list_tmp = betas_list_tmp_dict[proposal]
-        # psis_list_tmp = psis_list_tmp_dict[proposal]
 
         prop_data_t0_safe_and_t_unconstrained_liks = (
             prop_data_t0_safe_and_t_unconstrained_liks_dict[proposal]
@@ -540,8 +518,6 @@ def cpc_beta_search(
             else:
                 psi_hat_intersection_safe = 0.0  # None
                 psi_hat_t_safe = sys.float_info.min
-
-            # switch_to_mixture_proposal = cfg.conformal_policy_control.mixture_proposal and cfg.conformal_policy_control.alpha < 1.0
 
             ## If using mixture proposal, flag for when to swtich to it (from safe proposal)
             switch_to_mixture_proposal = (
@@ -752,15 +728,11 @@ def cpc_beta_search(
             if cfg.conformal_policy_control.randomized_cpc:
                 w_infeasible_normalized *= np.random.uniform()
 
-            ## If (Accepting null & either searching through unconstrained with previously rejected or is the last proposal):
-            # if (np.sum(w_cal_normalized[cal_infeasible_indicators]) + w_test_normalized > adjusted_alpha or adjusted_alpha == 1.0): #  and ((proposal == 'unconstrained' and b > 0) or i > 0)
             if (
                 w_infeasible_normalized > adjusted_alpha
                 or (w_infeasible_normalized <= adjusted_alpha and beta_t == np.inf)
                 or adjusted_alpha >= 1.0
-            ):  #  and ((proposal == 'unconstrained' and b > 0) or i > 0)
-                # if (w_infeasible_normalized > adjusted_alpha or adjusted_alpha >= 1.0): #  and ((proposal == 'unconstrained' and b > 0) or i > 0)
-
+            ):
                 ## Stopping condition: (1) First uncontrolled risk, return previous beta_t where risk is controlled, (2) Last beta_t (np.inf) and risk is controlled there, (3) Running uncontrolled
 
                 ## If running with risk control, return previous beta_t where risk is controlled
@@ -846,8 +818,6 @@ def cpc_beta_search(
                     * cfg.conformal_policy_control.accept_reject.env_const_scale_emp_max
                 )
 
-                ## Also save proposals with unconstrained likelihoods
-                # unconstrained_liks_df_beta_hat_fp = os.path.join(os.path.dirname(unconstrained_gen_liks_fp), f"cpc_prop_alpha{cfg.conformal_policy_control.alpha}_beta{beta_t:.3g}_{os.path.basename(unconstrained_gen_liks_fp)}")
                 if cfg.overwrite_ig or not fs.exists(unconstrained_gen_liks_fp):
                     unconstrained_df.to_json(
                         unconstrained_gen_liks_fp, orient="records", lines=True
@@ -898,9 +868,6 @@ def cpc_beta_search(
             constrained_liks_df_beta_hat_fp, orient="records", lines=True
         )
 
-    ## Also save proposals with unconstrained likelihoods
-    # unconstrained_liks_df_beta_hat_fp = os.path.join(os.path.dirname(unconstrained_gen_liks_fp), f"prop_alpha{cfg.conformal_policy_control.alpha}_uncontrolled_beta{betas_list[-1]:.3g}_{os.path.basename(unconstrained_gen_liks_fp)}")
-    # unconstrained_df.to_json(unconstrained_liks_df_beta_hat_fp, orient="records", lines=True)
     if cfg.overwrite_ig or not fs.exists(unconstrained_gen_liks_fp):
         unconstrained_df.to_json(
             unconstrained_gen_liks_fp, orient="records", lines=True
