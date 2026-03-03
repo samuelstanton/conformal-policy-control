@@ -1,6 +1,7 @@
 from typing import List
 from omegaconf import DictConfig
 from ..infrastructure.file_handler import LocalOrS3Client
+from ..data_contracts import HAMMING_DISTANCE, PARTICLE, SCORE
 import pandas as pd
 import numpy as np
 import math
@@ -24,9 +25,9 @@ def combine_datasets(
     combined_df = pd.concat(
         [pd.read_json(input_fp, orient="records", lines=True) for input_fp in input_fps]
     )
-    if "hamming_distance" in combined_df.columns:
-        hd_avg = combined_df[~np.isnan(combined_df["hamming_distance"])][
-            "hamming_distance"
+    if HAMMING_DISTANCE in combined_df.columns:
+        hd_avg = combined_df[~np.isnan(combined_df[HAMMING_DISTANCE])][
+            HAMMING_DISTANCE
         ].mean()
         if np.isnan(hd_avg):
             hd_avg = None
@@ -34,7 +35,7 @@ def combine_datasets(
             hd_avg = hd_avg.item()
     else:
         hd_avg = None
-    combined_df = combined_df.drop_duplicates(subset=["particle"])
+    combined_df = combined_df.drop_duplicates(subset=[PARTICLE])
     combined_df.to_json(output_fp, orient="records", lines=True)
     logger.info(f"Datasets combined and written to {output_fp}.")
     return hd_avg
@@ -147,7 +148,7 @@ def train_cal_split_gen_outputs(
         ## Training data (sample exchangeably, w/o replacement, from *non-cal, deduplicated* generated samples)
         non_cal_gen_outputs_df = gen_outputs_df.drop(cal_df.index)  ## non cal
         non_cal_gen_outputs_df_unique = non_cal_gen_outputs_df.drop_duplicates(
-            subset=["particle"]
+            subset=[PARTICLE]
         )  ## de-duplicate
 
         if cfg.split.train_sampling_method == "uniform":
@@ -167,14 +168,14 @@ def train_cal_split_gen_outputs(
             ## Deterministically select top scoring sequences
             if sample_num_train is not None:
                 train_df = non_cal_gen_outputs_df_unique.nlargest(
-                    sample_num_train, "score"
+                    sample_num_train, SCORE
                 )
             elif cfg.split.train_frac_from_non_cal < 1.0:
                 num_train = int(
                     cfg.split.train_frac_from_non_cal
                     * len(non_cal_gen_outputs_df_unique)
                 )
-                train_df = non_cal_gen_outputs_df_unique.nlargest(num_train, "score")
+                train_df = non_cal_gen_outputs_df_unique.nlargest(num_train, SCORE)
             else:
                 train_df = non_cal_gen_outputs_df_unique
         else:

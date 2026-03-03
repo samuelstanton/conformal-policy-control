@@ -18,6 +18,12 @@ from ..test_functions.finetune_utils import (
     wandb_setup,
 )
 from ..core.model_client import ModelClient
+from ..data_contracts import (
+    HIGHER_SCORE,
+    HIGHER_SCORE_PARTICLE,
+    LOWER_SCORE,
+    LOWER_SCORE_PARTICLE,
+)
 from omegaconf import DictConfig, OmegaConf
 from .marge_trainer import MargeTrainer, MargeConfig
 from .seq2seq_sft_trainer import S3Callback
@@ -188,15 +194,15 @@ def main(cfg: DictConfig):
         # TODO change processing function once data format is determined
         def process(row):
             row[cfg.marge_config.input_field_name] = formatting_texts_func_edit_pairs(
-                {"higher_score_particle": [row["higher_score_particle"]]},
+                {HIGHER_SCORE_PARTICLE: [row[HIGHER_SCORE_PARTICLE]]},
                 include_target=False,
-                higher_score_particle_field="higher_score_particle",
+                higher_score_particle_field=HIGHER_SCORE_PARTICLE,
             )[0]
             row[cfg.marge_config.target_field_name] = json.dumps(
-                [int(x) for x in row["lower_score_particle"]]
+                [int(x) for x in row[LOWER_SCORE_PARTICLE]]
             )
-            row[cfg.marge_config.input_score_field_name] = row["higher_score"]
-            row[cfg.marge_config.target_score_field_name] = row["lower_score"]
+            row[cfg.marge_config.input_score_field_name] = row[HIGHER_SCORE]
+            row[cfg.marge_config.target_score_field_name] = row[LOWER_SCORE]
             return row
 
         ds = ds.map(
@@ -204,10 +210,10 @@ def main(cfg: DictConfig):
             load_from_cache_file=False,
         ).remove_columns(
             [
-                "higher_score_particle",
-                "lower_score_particle",
-                "higher_score",
-                "lower_score",
+                HIGHER_SCORE_PARTICLE,
+                LOWER_SCORE_PARTICLE,
+                HIGHER_SCORE,
+                LOWER_SCORE,
             ]
         )
         train_dataset = ds["train"]

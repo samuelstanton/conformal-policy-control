@@ -2,6 +2,8 @@ import numpy as np
 import pandas as pd
 from omegaconf import DictConfig
 
+from ..data_contracts import CON_LIK_PREFIX, LIK_PREFIX
+
 
 def constrain_likelihoods(
     cfg: DictConfig,
@@ -63,7 +65,7 @@ def check_col_names(df: pd.DataFrame) -> None:
     """
     lik_cols = []
     for c in df.columns:
-        if c.startswith("lik_r") or c.startswith("con_lik_r"):
+        if c.startswith(LIK_PREFIX) or c.startswith(CON_LIK_PREFIX):
             lik_cols.append(c)
 
     col_indices = [int(c.split("_")[-1][1:]) for c in lik_cols]

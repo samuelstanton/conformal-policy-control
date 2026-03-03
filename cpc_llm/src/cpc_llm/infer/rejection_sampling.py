@@ -25,6 +25,17 @@ from ..core.model_loading import (
     cleanup_model_clients,
 )
 from ..core.likelihoods import compute_likelihoods_inmemory
+from ..data_contracts import (
+    HIGHER_SCORE,
+    HIGHER_SCORE_PARTICLE,
+    LOWER_SCORE,
+    LOWER_SCORE_PARTICLE,
+    NUM_PARTICLES_GENERATED,
+    PARTICLE,
+    SCORE,
+    con_lik_col,
+    lik_col,
+)
 from .iterative_generation2 import generate_single_batch
 from holo.test_functions.closed_form import Ehrlich, RoughMtFuji
 
@@ -94,10 +105,10 @@ def generate_sample_batch(
     model_dir: str,
     output_dir: str,
     temp: float,
-    higher_score_particle_field: str = "higher_score_particle",
-    lower_score_particle_field: str = "lower_score_particle",
-    higher_score_field: str = "higher_score",
-    lower_score_field: str = "lower_score",
+    higher_score_particle_field: str = HIGHER_SCORE_PARTICLE,
+    lower_score_particle_field: str = LOWER_SCORE_PARTICLE,
+    higher_score_field: str = HIGHER_SCORE,
+    lower_score_field: str = LOWER_SCORE,
     random_seed: int = 0,
     call_idx: int = 0,
     global_random_seed: int = 0,
@@ -280,7 +291,7 @@ def _generate_inmemory(
             [
                 {
                     higher_score_particle_field: ex[lower_score_particle_field],
-                    "score": ex[lower_score_field],
+                    SCORE: ex[lower_score_field],
                 }
                 for ex in ds
             ]
@@ -326,7 +337,7 @@ def _generate_inmemory(
 
     if all_dfs:
         return pd.concat(all_dfs, ignore_index=True)
-    return pd.DataFrame(columns=["particle", "score", "num_particles_generated"])
+    return pd.DataFrame(columns=[PARTICLE, SCORE, NUM_PARTICLES_GENERATED])
 
 
 def _compute_liks_all_models_inmemory(
@@ -383,10 +394,10 @@ def accept_reject_sample_and_get_likelihoods(
     ga_data_dir: str,
     temps: List[float] = [1.0],
     depth: int = 0,  ## Recursion depth
-    higher_score_particle_field: str = "higher_score_particle",
-    lower_score_particle_field: str = "lower_score_particle",
-    higher_score_field: str = "higher_score",
-    lower_score_field: str = "lower_score",
+    higher_score_particle_field: str = HIGHER_SCORE_PARTICLE,
+    lower_score_particle_field: str = LOWER_SCORE_PARTICLE,
+    higher_score_field: str = HIGHER_SCORE,
+    lower_score_field: str = LOWER_SCORE,
     proposal: str = None,  ## Proposal distribution (safe or unconstrained), or None --> means running for filtering
     post_policy_control: bool = False,  ## Whether calling post policy control (True <--> generating risk-controlled actions), or pre control (False <--> Generating proposals)
     safe_prop_mix_weight: float = 1.0,  ## if proposal == "mixture":  weight in (0, 1) to assign to safe proposal
@@ -401,10 +412,10 @@ def accept_reject_sample_and_get_likelihoods(
     n_accepted = 0
 
     ## Initialize data frames for storing data for accepted samples
-    unconstrained_lik_cols = [f"lik_r{i}" for i in range(n_models)]
-    unconstrained_col_names = ["particle", "score"] + unconstrained_lik_cols
-    constrained_lik_cols = [f"con_lik_r{i}" for i in range(n_models)]
-    constrained_col_names = ["particle", "score"] + constrained_lik_cols
+    unconstrained_lik_cols = [lik_col(i) for i in range(n_models)]
+    unconstrained_col_names = [PARTICLE, SCORE] + unconstrained_lik_cols
+    constrained_lik_cols = [con_lik_col(i) for i in range(n_models)]
+    constrained_col_names = [PARTICLE, SCORE] + constrained_lik_cols
 
     accepted_unconstrained_dfs = []
     accepted_constrained_dfs = []
@@ -515,7 +526,7 @@ def accept_reject_sample_and_get_likelihoods(
             lik_ratios_unconstrained_over_safe = unconstrained_liks / safe_liks
             constrained_liks_df = pd.concat(
                 [
-                    gen_liks_df[["particle", "score"]],
+                    gen_liks_df[[PARTICLE, SCORE]],
                     pd.DataFrame(constrained_liks_mat, columns=constrained_lik_cols),
                 ],
                 axis=1,
@@ -650,7 +661,7 @@ def accept_reject_sample_and_get_likelihoods(
                 lik_ratios_unconstrained_over_safe = unconstrained_liks / safe_liks
                 constrained_liks_df = pd.concat(
                     [
-                        gen_liks_df[["particle", "score"]],
+                        gen_liks_df[[PARTICLE, SCORE]],
                         pd.DataFrame(
                             constrained_liks_mat, columns=constrained_lik_cols
                         ),
@@ -922,7 +933,7 @@ def accept_reject_sample_and_get_likelihoods(
                     )
                     constrained_liks_df_dict[proposal_curr] = pd.concat(
                         [
-                            gen_liks_df_dict[proposal_curr][["particle", "score"]],
+                            gen_liks_df_dict[proposal_curr][[PARTICLE, SCORE]],
                             pd.DataFrame(
                                 mix_constrained_mat, columns=constrained_lik_cols
                             ),

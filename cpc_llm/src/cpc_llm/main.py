@@ -34,6 +34,18 @@ from .data.combine_and_split import (
     train_cal_split_gen_outputs,
 )
 from .data.select import get_seeds_from_training_data
+from .data_contracts import (
+    CHOSEN,
+    HIGHER_SCORE,
+    HIGHER_SCORE_PARTICLE,
+    LOWER_SCORE,
+    LOWER_SCORE_PARTICLE,
+    PARTICLE,
+    PROMPT,
+    SCORE,
+    con_lik_col,
+    lik_col,
+)
 from .infer.generation_utils import get_temperatures
 
 logger = logging.getLogger(__name__)
@@ -186,15 +198,15 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                     logger.warning("on_round_complete callback failed", exc_info=True)
 
         if pi_optimizer_name == "dpo":
-            higher_score_particle_field = "prompt"
-            lower_score_particle_field = "chosen"
+            higher_score_particle_field = PROMPT
+            lower_score_particle_field = CHOSEN
             higher_score_field = "prompt_score"
             lower_score_field = "chosen_score"
         else:
-            higher_score_particle_field = "higher_score_particle"
-            lower_score_particle_field = "lower_score_particle"
-            higher_score_field = "higher_score"
-            lower_score_field = "lower_score"
+            higher_score_particle_field = HIGHER_SCORE_PARTICLE
+            lower_score_particle_field = LOWER_SCORE_PARTICLE
+            higher_score_field = HIGHER_SCORE
+            lower_score_field = LOWER_SCORE
 
         ## Generate examples from initial safe policy
         iter_gen_outputs_combined, iter_gen_outputs_list, hd = run_iterative_generation(
@@ -217,14 +229,14 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
         init_gen_outputs_df = pd.read_json(
             iter_gen_outputs_list[0], orient="records", lines=True
         )
-        if "score" not in init_gen_outputs_df.columns or init_gen_outputs_df.empty:
+        if SCORE not in init_gen_outputs_df.columns or init_gen_outputs_df.empty:
             logger.warning(
                 "No parsable outputs from initial generation — the model may be "
                 "too small or untrained to produce valid particles. Skipping "
                 "remaining pipeline stages for this seed."
             )
             continue
-        init_gen_scores = init_gen_outputs_df["score"].to_numpy()
+        init_gen_scores = init_gen_outputs_df[SCORE].to_numpy()
         np.isnan(init_gen_scores) | np.isinf(init_gen_scores)
 
         ## Initialize lists of models and seeds for policy improvement loop
@@ -286,11 +298,9 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
         )
         ## Save initial calibration data with constrained likelihoods
         cal_constrained_liks_df = cal_df.copy(deep=True)
-        cal_constrained_liks_df = cal_constrained_liks_df[
-            ["particle", "score", "lik_r0"]
-        ]
+        cal_constrained_liks_df = cal_constrained_liks_df[[PARTICLE, SCORE, lik_col(0)]]
         cal_constrained_liks_df = cal_constrained_liks_df.rename(
-            columns={"lik_r0": "con_lik_r0"}
+            columns={lik_col(0): con_lik_col(0)}
         )
         cal_constrained_output_path = os.path.join(
             os.path.dirname(cal_unconstrained_output_path),
@@ -473,7 +483,7 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                 if cfg.conformal_policy_control.constrain_against == "init":
                     cal_liks_df_t0_safe_and_t_unconstrained_mat = pd.concat(
                         [
-                            cal_data_constrained_curr["con_lik_r0"],
+                            cal_data_constrained_curr[con_lik_col(0)],
                             cal_data_unconstrained_curr.iloc[:, -1],
                         ],
                         axis=1,
@@ -503,7 +513,7 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                 constrained_liks_df_beta_hat = pd.concat(
                     [
                         cal_data_constrained_curr,
-                        pd.DataFrame({f"con_lik_r{i}": cal_constrained_t_curr[:, -1]}),
+                        pd.DataFrame({con_lik_col(i): cal_constrained_t_curr[:, -1]}),
                     ],
                     axis=1,
                 )
@@ -552,7 +562,7 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
             ## Save new calibration data with constrained likelihoods
             cal_constrained_liks_df = constrained_liks_df_beta_hat.loc[cal_df.index]
             cal_constrained_liks_df = cal_constrained_liks_df.rename(
-                columns={"lik_r0": "con_lik_r0"}
+                columns={lik_col(0): con_lik_col(0)}
             )
             cal_constrained_output_path = os.path.join(
                 os.path.dirname(cal_unconstrained_output_path),
@@ -621,8 +631,8 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                 output_dir=dpo_dir,
                 sample_size=cfg.iterative_generation.args.sample_size,
                 sampling_method=cfg.iterative_generation.args.sampling_method,
-                higher_score_particle_field="prompt",
-                lower_score_particle_field="chosen",
+                higher_score_particle_field=PROMPT,
+                lower_score_particle_field=CHOSEN,
                 higher_score_field="prompt_score",
                 lower_score_field="chosen_score",
                 pi_optimizer_name=pi_optimizer_name,
@@ -681,8 +691,8 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                 betas_list=betas_list,
                 psis_list=psis_list,  ## Normalization constants
                 ga_data_dir=ga_data_dir,
-                higher_score_particle_field="prompt",
-                lower_score_particle_field="chosen",
+                higher_score_particle_field=PROMPT,
+                lower_score_particle_field=CHOSEN,
                 higher_score_field="prompt_score",
                 lower_score_field="chosen_score",
                 global_random_seed=random_seed,
@@ -754,7 +764,7 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                     if cfg.conformal_policy_control.constrain_against == "init":
                         cal_liks_df_t0_safe_and_t_unconstrained_mat = pd.concat(
                             [
-                                cal_data_constrained_curr["con_lik_r0"],
+                                cal_data_constrained_curr[con_lik_col(0)],
                                 cal_data_unconstrained_curr.iloc[:, -1],
                             ],
                             axis=1,
@@ -825,8 +835,8 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                 psis_list,
                 cfg.conformal_policy_control.accept_reject.n_target_post_cpc,
                 ga_data_dir,
-                higher_score_particle_field="prompt",
-                lower_score_particle_field="chosen",
+                higher_score_particle_field=PROMPT,
+                lower_score_particle_field=CHOSEN,
                 higher_score_field="prompt_score",
                 lower_score_field="chosen_score",
                 proposal=proposal,
@@ -859,7 +869,7 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
             # cal_constrained_liks_df = constrained_liks_df_beta_hat.loc[cal_df.index]
             cal_constrained_liks_df = constrained_liks_df.loc[cal_df.index]
             cal_constrained_liks_df = cal_constrained_liks_df.rename(
-                columns={"lik_r0": "con_lik_r0"}
+                columns={lik_col(0): con_lik_col(0)}
             )
             cal_constrained_output_path = os.path.join(
                 os.path.dirname(cal_unconstrained_output_path),
@@ -1051,7 +1061,7 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                     if cfg.conformal_policy_control.constrain_against == "init":
                         cal_liks_df_t0_safe_and_t_unconstrained_mat = pd.concat(
                             [
-                                cal_data_constrained_curr["con_lik_r0"],
+                                cal_data_constrained_curr[con_lik_col(0)],
                                 cal_data_unconstrained_curr.iloc[:, -1],
                             ],
                             axis=1,
@@ -1161,7 +1171,7 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
             # cal_constrained_liks_df = constrained_liks_df_beta_hat.loc[cal_df.index]
             cal_constrained_liks_df = constrained_liks_df.loc[cal_df.index]
             cal_constrained_liks_df = cal_constrained_liks_df.rename(
-                columns={"lik_r0": "con_lik_r0"}
+                columns={lik_col(0): con_lik_col(0)}
             )
             cal_constrained_output_path = os.path.join(
                 os.path.dirname(cal_unconstrained_output_path),

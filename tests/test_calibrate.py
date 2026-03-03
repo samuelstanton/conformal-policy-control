@@ -16,6 +16,7 @@ from cpc_llm.calibrate.process_likelihoods import (
     constrain_likelihoods,
     mixture_pdf_from_densities_mat,
 )
+from cpc_llm.data_contracts import PARTICLE, SCORE, con_lik_col, lik_col
 
 
 class TestPrepareGrid:
@@ -138,22 +139,22 @@ class TestMixturePdf:
 
 class TestCheckColNames:
     def test_valid_lik_columns(self):
-        df = pd.DataFrame(columns=["particle", "score", "lik_r0", "lik_r1", "lik_r2"])
+        df = pd.DataFrame(columns=[PARTICLE, SCORE, lik_col(0), lik_col(1), lik_col(2)])
         check_col_names(df)  # should not raise
 
     def test_valid_constrained_lik_columns(self):
         df = pd.DataFrame(
-            columns=["particle", "score", "con_lik_r0", "con_lik_r1", "con_lik_r2"]
+            columns=[PARTICLE, SCORE, con_lik_col(0), con_lik_col(1), con_lik_col(2)]
         )
         check_col_names(df)  # should not raise
 
     def test_ignores_non_likelihood_columns(self):
         # Columns like "chosen" or "count_r0" should not be treated as likelihood columns
-        df = pd.DataFrame(columns=["chosen", "count_r0", "lik_r0", "lik_r1"])
+        df = pd.DataFrame(columns=["chosen", "count_r0", lik_col(0), lik_col(1)])
         check_col_names(df)  # should not raise
 
     def test_non_sequential_raises(self):
-        df = pd.DataFrame(columns=["particle", "score", "lik_r0", "lik_r2"])
+        df = pd.DataFrame(columns=[PARTICLE, SCORE, lik_col(0), lik_col(2)])
         with pytest.raises(ValueError, match="col indices not increasing"):
             check_col_names(df)
 

@@ -20,6 +20,7 @@ from omegaconf import DictConfig
 
 from ..core.model_client import ModelClient
 from ..core.model_loading import init_model_client_with_retry
+from ..data_contracts import LIK_PREFIX, PARTICLE, SCORE, lik_col
 from ..test_functions.finetune_utils import formatting_texts_func_single_seq
 
 
@@ -54,8 +55,8 @@ def compute_likelihoods_inmemory(
     if logger is None:
         logger = logging.getLogger(__name__)
 
-    lik_col_names_old = [col for col in target_df.columns if "lik_r" in col]
-    lik_col_names_new = [f"lik_r{m}" for m in model_indices]
+    lik_col_names_old = [col for col in target_df.columns if LIK_PREFIX in col]
+    lik_col_names_new = [lik_col(m) for m in model_indices]
 
     logger.info(f"pre selection lik_col_names_old : {lik_col_names_old}")
     logger.info(f"pre selection lik_col_names_new : {lik_col_names_new}")
@@ -64,8 +65,8 @@ def compute_likelihoods_inmemory(
         logger.info("Overwrite")
         old_not_in_new = [c not in lik_col_names_new for c in lik_col_names_old]
         lik_col_names_old = list(np.array(lik_col_names_old)[old_not_in_new])
-        if "score" in target_df.columns:
-            target_df = target_df[["particle", "score"] + lik_col_names_old]
+        if SCORE in target_df.columns:
+            target_df = target_df[[PARTICLE, SCORE] + lik_col_names_old]
         else:
             target_df = target_df[target_df.columns[0:2].tolist() + lik_col_names_old]
     else:
@@ -132,8 +133,8 @@ def compute_likelihoods_inmemory(
 
     # Assemble result DataFrame — use pandas column assignment instead of np.c_
     # to preserve column dtypes (np.c_ coerces mixed str/float to object)
-    if "score" in target_df.columns:
-        keep_cols = ["particle", "score"] + lik_col_names_old
+    if SCORE in target_df.columns:
+        keep_cols = [PARTICLE, SCORE] + lik_col_names_old
     else:
         keep_cols = target_df.columns[0:2].tolist() + lik_col_names_old
     target_all_likelihoods_df = target_df[keep_cols].copy()
@@ -262,9 +263,9 @@ def compute_likelihoods_one_model_all_data(
         target_df = pd.read_json(target_data_path, orient="records", lines=True)
 
         # Keep only particle/score + existing likelihood columns
-        lik_col_names_prev = [f"lik_r{c}" for c in range(num_prev_cal)]
-        if "score" in target_df.columns:
-            target_df = target_df[["particle", "score"] + lik_col_names_prev]
+        lik_col_names_prev = [lik_col(c) for c in range(num_prev_cal)]
+        if SCORE in target_df.columns:
+            target_df = target_df[[PARTICLE, SCORE] + lik_col_names_prev]
         else:
             target_df = target_df[target_df.columns[0:2].tolist() + lik_col_names_prev]
 
@@ -279,7 +280,7 @@ def compute_likelihoods_one_model_all_data(
             logger=logger,
         )
 
-        lik_col_name = [f"lik_r{num_prev_cal}"]
+        lik_col_name = [lik_col(num_prev_cal)]
 
         logger.info(f"target_df.columns : {target_df.columns}")
         logger.info(f"lik_col_name      : {lik_col_name}")

@@ -6,6 +6,20 @@ from cpc_llm.data.synthetic_dataset_formatter import (
     find_preference_pairs,
     filter_infeasible_examples,
 )
+from cpc_llm.data_contracts import (
+    CHOSEN,
+    CHOSEN_SCORE,
+    HIGHER_SCORE,
+    HIGHER_SCORE_PARTICLE,
+    LOWER_SCORE,
+    LOWER_SCORE_PARTICLE,
+    PARTICLE,
+    PROMPT,
+    PROMPT_SCORE,
+    REJECTED,
+    REJECTED_SCORE,
+    SCORE,
+)
 
 
 class TestFindDensePairs:
@@ -30,21 +44,21 @@ class TestFindDensePairs:
             [5, 5, 5, 5, 5, 7, 5],
         ]
         scores = [0.1, 0.2, 0.3, 0.4, 0.5]
-        df = pd.DataFrame({"particle": library, "score": scores})
+        df = pd.DataFrame({PARTICLE: library, SCORE: scores})
 
         outputs = find_dense_pairs(cfg, df)
         expected_outputs = [
             {
-                "lower_score_particle": [1, 2, 3, 4, 5, 6, 7],
-                "lower_score": "0.100",
-                "higher_score_particle": [1, 3, 3, 4, 5, 6, 7],
-                "higher_score": "0.200",
+                LOWER_SCORE_PARTICLE: [1, 2, 3, 4, 5, 6, 7],
+                LOWER_SCORE: "0.100",
+                HIGHER_SCORE_PARTICLE: [1, 3, 3, 4, 5, 6, 7],
+                HIGHER_SCORE: "0.200",
             },
             {
-                "lower_score_particle": [5, 5, 5, 5, 5, 5, 5],
-                "lower_score": "0.400",
-                "higher_score_particle": [5, 5, 5, 5, 5, 7, 5],
-                "higher_score": "0.500",
+                LOWER_SCORE_PARTICLE: [5, 5, 5, 5, 5, 5, 5],
+                LOWER_SCORE: "0.400",
+                HIGHER_SCORE_PARTICLE: [5, 5, 5, 5, 5, 7, 5],
+                HIGHER_SCORE: "0.500",
             },
         ]
         assert outputs == expected_outputs
@@ -70,15 +84,15 @@ class TestFindDensePairs:
             [5, 5, 5, 5, 5, 7, 5],
         ]
         scores = [0.1, 0.2, 0.3, 0.4, 0.55]
-        df = pd.DataFrame({"particle": library, "score": scores})
+        df = pd.DataFrame({PARTICLE: library, SCORE: scores})
 
         outputs = find_dense_pairs(cfg, df)
         expected_outputs = [
             {
-                "lower_score_particle": [1, 2, 3, 4, 5, 6, 7],
-                "lower_score": "0.100",
-                "higher_score_particle": [1, 3, 3, 4, 5, 6, 7],
-                "higher_score": "0.200",
+                LOWER_SCORE_PARTICLE: [1, 2, 3, 4, 5, 6, 7],
+                LOWER_SCORE: "0.100",
+                HIGHER_SCORE_PARTICLE: [1, 3, 3, 4, 5, 6, 7],
+                HIGHER_SCORE: "0.200",
             },
         ]
         assert outputs == expected_outputs
@@ -104,15 +118,15 @@ class TestFindDensePairs:
             [5, 5, 5, 5, 5, 7, 5],
         ]
         scores = [0.1, 0.2, 0.3, 0.4, 0.5]
-        df = pd.DataFrame({"particle": library, "score": scores})
+        df = pd.DataFrame({PARTICLE: library, SCORE: scores})
 
         outputs = find_dense_pairs(cfg, df)
         expected_outputs = [
             {
-                "lower_score_particle": [5, 5, 5, 5, 5, 5, 5],
-                "lower_score": "0.400",
-                "higher_score_particle": [5, 5, 5, 5, 5, 7, 5],
-                "higher_score": "0.500",
+                LOWER_SCORE_PARTICLE: [5, 5, 5, 5, 5, 5, 5],
+                LOWER_SCORE: "0.400",
+                HIGHER_SCORE_PARTICLE: [5, 5, 5, 5, 5, 7, 5],
+                HIGHER_SCORE: "0.500",
             },
         ]
         assert outputs == expected_outputs
@@ -121,13 +135,13 @@ class TestFindDensePairs:
 class TestFilterInfeasibleExamples:
     def test_downsample_infeasible(self):
         ds = [
-            {"higher_score": "inf"},
-            {"higher_score": "inf"},
-            {"higher_score": "inf"},
-            {"higher_score": "inf"},
-            {"higher_score": "inf"},
-            {"higher_score": "0.25"},
-            {"higher_score": "0.25"},
+            {HIGHER_SCORE: "inf"},
+            {HIGHER_SCORE: "inf"},
+            {HIGHER_SCORE: "inf"},
+            {HIGHER_SCORE: "inf"},
+            {HIGHER_SCORE: "inf"},
+            {HIGHER_SCORE: "0.25"},
+            {HIGHER_SCORE: "0.25"},
         ]
         cfg = OmegaConf.create(
             {
@@ -136,14 +150,14 @@ class TestFilterInfeasibleExamples:
             }
         )
         out_ds = filter_infeasible_examples(cfg, ds)
-        out_num_infs = len([d for d in out_ds if d["higher_score"] == "inf"])
+        out_num_infs = len([d for d in out_ds if d[HIGHER_SCORE] == "inf"])
         assert out_num_infs == 4
 
     def test_no_filter_needed(self):
         ds = [
-            {"higher_score": "inf"},
-            {"higher_score": "0.25"},
-            {"higher_score": "0.25"},
+            {HIGHER_SCORE: "inf"},
+            {HIGHER_SCORE: "0.25"},
+            {HIGHER_SCORE: "0.25"},
         ]
         cfg = OmegaConf.create(
             {
@@ -152,7 +166,7 @@ class TestFilterInfeasibleExamples:
             }
         )
         out_ds = filter_infeasible_examples(cfg, ds)
-        out_num_infs = len([d for d in out_ds if d["higher_score"] == "inf"])
+        out_num_infs = len([d for d in out_ds if d[HIGHER_SCORE] == "inf"])
         assert out_num_infs == 1
 
 
@@ -177,80 +191,80 @@ class TestFindPreferencePairs:
             [5, 5, 5, 5, 5, 5, 5],
         ]
         scores = [0.1, 0.2, 0.2, 0.4]
-        df = pd.DataFrame({"particle": library, "score": scores})
+        df = pd.DataFrame({PARTICLE: library, SCORE: scores})
         outputs = find_preference_pairs(cfg, df)
         expected_outputs = [
             {
-                "prompt": [1, 3, 3, 4, 5, 6, 7],
-                "prompt_score": "0.200",
-                "chosen": [1, 2, 3, 4, 5, 6, 7],
-                "chosen_score": "0.100",
-                "rejected": [1, 3, 3, 4, 5, 6, 7],
-                "rejected_score": "0.200",
+                PROMPT: [1, 3, 3, 4, 5, 6, 7],
+                PROMPT_SCORE: "0.200",
+                CHOSEN: [1, 2, 3, 4, 5, 6, 7],
+                CHOSEN_SCORE: "0.100",
+                REJECTED: [1, 3, 3, 4, 5, 6, 7],
+                REJECTED_SCORE: "0.200",
             },
             {
-                "prompt": [1, 3, 3, 4, 5, 6, 7],
-                "prompt_score": "0.200",
-                "chosen": [1, 2, 3, 4, 5, 6, 7],
-                "chosen_score": "0.100",
-                "rejected": [1, 3, 3, 4, 7, 7, 8],
-                "rejected_score": "0.200",
+                PROMPT: [1, 3, 3, 4, 5, 6, 7],
+                PROMPT_SCORE: "0.200",
+                CHOSEN: [1, 2, 3, 4, 5, 6, 7],
+                CHOSEN_SCORE: "0.100",
+                REJECTED: [1, 3, 3, 4, 7, 7, 8],
+                REJECTED_SCORE: "0.200",
             },
             {
-                "prompt": [1, 3, 3, 4, 5, 6, 7],
-                "prompt_score": "0.200",
-                "chosen": [1, 2, 3, 4, 5, 6, 7],
-                "chosen_score": "0.100",
-                "rejected": [5, 5, 5, 5, 5, 5, 5],
-                "rejected_score": "0.400",
+                PROMPT: [1, 3, 3, 4, 5, 6, 7],
+                PROMPT_SCORE: "0.200",
+                CHOSEN: [1, 2, 3, 4, 5, 6, 7],
+                CHOSEN_SCORE: "0.100",
+                REJECTED: [5, 5, 5, 5, 5, 5, 5],
+                REJECTED_SCORE: "0.400",
             },
             {
-                "prompt": [1, 3, 3, 4, 7, 7, 8],
-                "prompt_score": "0.200",
-                "chosen": [1, 2, 3, 4, 5, 6, 7],
-                "chosen_score": "0.100",
-                "rejected": [1, 3, 3, 4, 7, 7, 8],
-                "rejected_score": "0.200",
+                PROMPT: [1, 3, 3, 4, 7, 7, 8],
+                PROMPT_SCORE: "0.200",
+                CHOSEN: [1, 2, 3, 4, 5, 6, 7],
+                CHOSEN_SCORE: "0.100",
+                REJECTED: [1, 3, 3, 4, 7, 7, 8],
+                REJECTED_SCORE: "0.200",
             },
             {
-                "prompt": [1, 3, 3, 4, 7, 7, 8],
-                "prompt_score": "0.200",
-                "chosen": [1, 2, 3, 4, 5, 6, 7],
-                "chosen_score": "0.100",
-                "rejected": [1, 3, 3, 4, 5, 6, 7],
-                "rejected_score": "0.200",
+                PROMPT: [1, 3, 3, 4, 7, 7, 8],
+                PROMPT_SCORE: "0.200",
+                CHOSEN: [1, 2, 3, 4, 5, 6, 7],
+                CHOSEN_SCORE: "0.100",
+                REJECTED: [1, 3, 3, 4, 5, 6, 7],
+                REJECTED_SCORE: "0.200",
             },
             {
-                "prompt": [1, 3, 3, 4, 7, 7, 8],
-                "prompt_score": "0.200",
-                "chosen": [1, 2, 3, 4, 5, 6, 7],
-                "chosen_score": "0.100",
-                "rejected": [5, 5, 5, 5, 5, 5, 5],
-                "rejected_score": "0.400",
+                PROMPT: [1, 3, 3, 4, 7, 7, 8],
+                PROMPT_SCORE: "0.200",
+                CHOSEN: [1, 2, 3, 4, 5, 6, 7],
+                CHOSEN_SCORE: "0.100",
+                REJECTED: [5, 5, 5, 5, 5, 5, 5],
+                REJECTED_SCORE: "0.400",
             },
             {
-                "prompt": [5, 5, 5, 5, 5, 5, 5],
-                "prompt_score": "0.400",
-                "chosen": [1, 2, 3, 4, 5, 6, 7],
-                "chosen_score": "0.100",
-                "rejected": [5, 5, 5, 5, 5, 5, 5],
-                "rejected_score": "0.400",
+                PROMPT: [5, 5, 5, 5, 5, 5, 5],
+                PROMPT_SCORE: "0.400",
+                CHOSEN: [1, 2, 3, 4, 5, 6, 7],
+                CHOSEN_SCORE: "0.100",
+                REJECTED: [5, 5, 5, 5, 5, 5, 5],
+                REJECTED_SCORE: "0.400",
             },
             {
-                "prompt": [5, 5, 5, 5, 5, 5, 5],
-                "prompt_score": "0.400",
-                "chosen": [1, 3, 3, 4, 5, 6, 7],
-                "chosen_score": "0.200",
-                "rejected": [5, 5, 5, 5, 5, 5, 5],
-                "rejected_score": "0.400",
+                PROMPT: [5, 5, 5, 5, 5, 5, 5],
+                PROMPT_SCORE: "0.400",
+                CHOSEN: [1, 3, 3, 4, 5, 6, 7],
+                CHOSEN_SCORE: "0.200",
+                REJECTED: [5, 5, 5, 5, 5, 5, 5],
+                REJECTED_SCORE: "0.400",
             },
             {
-                "prompt": [5, 5, 5, 5, 5, 5, 5],
-                "prompt_score": "0.400",
-                "chosen": [1, 3, 3, 4, 7, 7, 8],
-                "chosen_score": "0.200",
-                "rejected": [5, 5, 5, 5, 5, 5, 5],
-                "rejected_score": "0.400",
+                PROMPT: [5, 5, 5, 5, 5, 5, 5],
+                PROMPT_SCORE: "0.400",
+                CHOSEN: [1, 3, 3, 4, 7, 7, 8],
+                CHOSEN_SCORE: "0.200",
+                REJECTED: [5, 5, 5, 5, 5, 5, 5],
+                REJECTED_SCORE: "0.400",
             },
         ]
         assert len(outputs) == len(expected_outputs)
