@@ -66,9 +66,6 @@ def main(cfg: DictConfig):
     # Filter out config keys that were removed from DPOConfig in newer trl
     dpo_cfg = cfg_dict["dpo_config"]
     generate_during_eval = dpo_cfg.pop("generate_during_eval", False)
-    # loss_type changed from str to list[str] in modern trl
-    if isinstance(dpo_cfg.get("loss_type"), str):
-        dpo_cfg["loss_type"] = [dpo_cfg["loss_type"]]
     valid_fields = {f.name for f in dataclasses.fields(DPOConfig)}
     removed = {k: dpo_cfg.pop(k) for k in list(dpo_cfg) if k not in valid_fields}
     if removed:
