@@ -11,10 +11,13 @@ import pprint
 import random
 import torch
 
+from itertools import chain, product
+
+import scipy.sparse
 from omegaconf import DictConfig, OmegaConf
 from pynndescent import PyNNDescentTransformer
 from tqdm import tqdm
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 from ..data_contracts import (
     CHOSEN,
@@ -150,6 +153,25 @@ def filter_by_likelihood_lower_threshold(
     return df
 
 
+def _get_neighbors_within_threshold(
+    transformed: scipy.sparse.spmatrix,
+    row_idx: int,
+    threshold: float,
+) -> np.ndarray:
+    """Return column indices of neighbors within distance threshold.
+
+    Args:
+        transformed: Sparse distance matrix from PyNNDescentTransformer.
+        row_idx: Row index to extract neighbors for.
+        threshold: Maximum distance threshold (inclusive).
+
+    Returns:
+        Array of column indices for neighbors within the threshold.
+    """
+    row_csr = transformed.getrow(row_idx)
+    return row_csr.indices[row_csr.data <= threshold]
+
+
 def find_dense_pairs(
     cfg: DictConfig, df: pd.DataFrame, allow_same_score_pair: bool = False
 ) -> List[Dict[str, Any]]:
@@ -179,21 +201,9 @@ def find_dense_pairs(
     for i in tqdm(range(transformed.shape[0]), desc="Finding pairs"):
         # find elements that are nearest neighbors but have different score
         # from the original particle and are within a bounded distance
-        row = transformed.getrow(i)
-        nearest_neighbor_idxs = row.nonzero()[1]
-        within_x_distance_idxs = [
-            idx
-            for idx, nn_dist in zip(
-                nearest_neighbor_idxs,
-                np.array(
-                    row[
-                        [0 for _ in range(nearest_neighbor_idxs.shape[-1])],
-                        nearest_neighbor_idxs,
-                    ]
-                )[0].tolist(),
-            )
-            if nn_dist <= cfg.dist_x_threshold
-        ]
+        within_x_distance_idxs = _get_neighbors_within_threshold(
+            transformed, i, cfg.dist_x_threshold
+        )
         if cfg.dist_y_threshold is not None:
             selected_idxs = [
                 idx
@@ -230,16 +240,18 @@ def get_score_pairs_df(
     scores: torch.Tensor,
     library: torch.Tensor,
     allow_same_score_pair: bool = False,
-    df: pd.DataFrame = None,
-) -> Optional[Dict[str, Any]]:
-    score_i = scores[i]
-    score_j = scores[j]
+    loglikelihood_values: np.ndarray | None = None,
+) -> Dict[str, Any] | None:
     particle_i = library[i]
     particle_j = library[j]
-    if torch.isnan(score_i).item():
-        score_i = torch.inf
-    if torch.isnan(score_j).item():
-        score_j = torch.inf
+    # Convert to Python floats early for fast comparison and formatting
+    score_i = float(scores[i])
+    score_j = float(scores[j])
+    if np.isnan(score_i):
+        score_i = float("inf")
+    if np.isnan(score_j):
+        score_j = float("inf")
+
     if score_i > score_j:
         higher_score = score_i
         lower_score = score_j
@@ -255,9 +267,6 @@ def get_score_pairs_df(
         higher_idx = j
         lower_idx = i
     elif not allow_same_score_pair:
-        logging.warning(
-            f"Pair of particles with the same score:\n{particle_i}\n{particle_j}\nScore: {score_i}"
-        )
         return None
     else:
         higher_score = score_i
@@ -273,9 +282,9 @@ def get_score_pairs_df(
         HIGHER_SCORE_PARTICLE: higher_score_p.tolist(),
         HIGHER_SCORE: f"{higher_score:.3f}",  # higher score is worse! can be inf
     }
-    if LOGLIKELIHOOD in df.columns:
-        output_dict[LOWER_PARTICLE_LOGLIKELIHOOD] = df.iloc[lower_idx][LOGLIKELIHOOD]
-        output_dict[HIGHER_PARTICLE_LOGLIKELIHOOD] = df.iloc[higher_idx][LOGLIKELIHOOD]
+    if loglikelihood_values is not None:
+        output_dict[LOWER_PARTICLE_LOGLIKELIHOOD] = loglikelihood_values[lower_idx]
+        output_dict[HIGHER_PARTICLE_LOGLIKELIHOOD] = loglikelihood_values[higher_idx]
     return output_dict
 
 
@@ -285,29 +294,30 @@ def get_score_pairs(
     particle_i: torch.Tensor,
     particle_j: torch.Tensor,
     allow_same_score_pair: bool = False,
-) -> Optional[Dict[str, Any]]:
-    if torch.isnan(score_i).item():
-        score_i = torch.inf
-    if torch.isnan(score_j).item():
-        score_j = torch.inf
-    if score_i > score_j:
-        higher_score = score_i
-        lower_score = score_j
+) -> Dict[str, Any] | None:
+    # Convert to Python floats early for fast comparison and formatting
+    score_i_f = float(score_i)
+    score_j_f = float(score_j)
+    if np.isnan(score_i_f):
+        score_i_f = float("inf")
+    if np.isnan(score_j_f):
+        score_j_f = float("inf")
+
+    if score_i_f > score_j_f:
+        higher_score = score_i_f
+        lower_score = score_j_f
         higher_score_p = particle_i
         lower_score_p = particle_j
-    elif score_j > score_i:
-        higher_score = score_j
-        lower_score = score_i
+    elif score_j_f > score_i_f:
+        higher_score = score_j_f
+        lower_score = score_i_f
         higher_score_p = particle_j
         lower_score_p = particle_i
     elif not allow_same_score_pair:
-        logging.warning(
-            f"Pair of particles with the same score:\n{particle_i}\n{particle_j}\nScore: {score_i}"
-        )
         return None
     else:
-        higher_score = score_i
-        lower_score = score_j
+        higher_score = score_i_f
+        lower_score = score_j_f
         higher_score_p = particle_i
         lower_score_p = particle_j
 
@@ -325,15 +335,30 @@ def get_outputs_from_idx_pairs(
     library: torch.Tensor,
     scores: torch.Tensor,
     allow_same_score_pair: bool = False,
-    df: pd.DataFrame = None,
+    df: pd.DataFrame | None = None,
 ) -> List[Dict[str, Any]]:
+    # Pre-extract loglikelihood values to avoid repeated df.iloc calls
+    loglikelihood_values: np.ndarray | None = None
+    if df is not None and LOGLIKELIHOOD in df.columns:
+        loglikelihood_values = df[LOGLIKELIHOOD].values
+
     outputs = []
+    same_score_count = 0
     for i, j in tqdm(idx_pairs, desc="Creating output records from index pairs"):
         output_dict = get_score_pairs_df(
-            i, j, scores, library, allow_same_score_pair=allow_same_score_pair, df=df
+            i,
+            j,
+            scores,
+            library,
+            allow_same_score_pair=allow_same_score_pair,
+            loglikelihood_values=loglikelihood_values,
         )
         if output_dict is not None:
             outputs.append(output_dict)
+        elif not allow_same_score_pair:
+            same_score_count += 1
+    if same_score_count > 0:
+        logging.warning(f"Skipped {same_score_count} pairs with identical scores.")
     logging.info(f"{len(outputs)} output records.")
     return outputs
 
@@ -392,6 +417,8 @@ def find_preference_pairs(cfg: DictConfig, df: pd.DataFrame) -> List[Dict[str, A
     filtered = library
     filtered_scores = ranking_scores
     filtered = filtered.numpy()
+    # Pre-convert scores to numpy for fast scalar access in triple-finding loop
+    scores_np = filtered_scores.numpy()
     pynn_transformer = PyNNDescentTransformer(
         n_neighbors=cfg.n_neighbors, metric=cfg.distance_metric
     ).fit(filtered)
@@ -401,49 +428,38 @@ def find_preference_pairs(cfg: DictConfig, df: pd.DataFrame) -> List[Dict[str, A
     for i in tqdm(range(transformed.shape[0]), desc="Finding pairs"):
         # find elements that are nearest neighbors
         # and are within a bounded distance
-        row = transformed.getrow(i)
-        nearest_neighbor_idxs = row.nonzero()[1]
-        within_x_distance_idxs = [
-            idx
-            for idx, nn_dist in zip(
-                nearest_neighbor_idxs,
-                np.array(
-                    row[
-                        [0 for _ in range(nearest_neighbor_idxs.shape[-1])],
-                        nearest_neighbor_idxs,
-                    ]
-                )[0].tolist(),
-            )
-            if nn_dist <= cfg.dist_x_threshold
-        ]
-        # get all possible pairs of (y1, y2)
-        all_pair_idxs = [
-            (k, j) for k in within_x_distance_idxs for j in within_x_distance_idxs
-        ]
-        # also add the index i itself in pairs
-        all_pair_idxs.extend([(i, k) for k in within_x_distance_idxs])
-        curr_score = filtered_scores[i].item()
+        within_x_distance_idxs = _get_neighbors_within_threshold(
+            transformed, i, cfg.dist_x_threshold
+        )
+        # get all possible pairs of (y1, y2), plus pairs with index i
+        all_pair_idxs = chain(
+            product(within_x_distance_idxs, within_x_distance_idxs),
+            ((i, k) for k in within_x_distance_idxs),
+        )
+        curr_score = scores_np[i]
         # loop through all possible triples of (x, y1, y2) and check if valid
         for pair_idx in all_pair_idxs:
-            first_score = filtered_scores[pair_idx[0]].item()
-            second_score = filtered_scores[pair_idx[1]].item()
+            first_score = scores_np[pair_idx[0]]
+            second_score = scores_np[pair_idx[1]]
             if first_score < curr_score and second_score >= curr_score:
                 # y1 is yw, y2 is yl
                 idx_triples.add((i, pair_idx[0], pair_idx[1]))
             elif second_score < curr_score and first_score >= curr_score:
                 idx_triples.add((i, pair_idx[1], pair_idx[0]))
     idx_triples = list(idx_triples)
+    # Pre-format all scores as strings to avoid repeated Tensor.__format__ calls
+    formatted_scores = [f"{s.item():.3f}" for s in filtered_scores]
     outputs = []
     for x_idx, yw_idx, yl_idx in tqdm(
         idx_triples, desc="Creating preference output records"
     ):
         output_dict = {
             PROMPT: filtered[x_idx].tolist(),
-            PROMPT_SCORE: f"{filtered_scores[x_idx]:.3f}",
+            PROMPT_SCORE: formatted_scores[x_idx],
             CHOSEN: filtered[yw_idx].tolist(),
-            CHOSEN_SCORE: f"{filtered_scores[yw_idx]:.3f}",
+            CHOSEN_SCORE: formatted_scores[yw_idx],
             REJECTED: filtered[yl_idx].tolist(),
-            REJECTED_SCORE: f"{filtered_scores[yl_idx]:.3f}",
+            REJECTED_SCORE: formatted_scores[yl_idx],
         }
         if LOGLIKELIHOOD in data[0].keys():
             output_dict[PROMPT_LOGLIKELIHOOD] = data[x_idx][LOGLIKELIHOOD]
