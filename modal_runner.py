@@ -42,6 +42,8 @@ Headless / deploy mode (survives laptop sleep or terminal close):
 
 from pathlib import Path
 
+import logging
+
 import modal
 
 app = modal.App("cpc-llm")
@@ -138,7 +140,9 @@ def _setup_env():
     return app_path
 
 
-def _persist_wandb_logs(app_path: str, output_dir: str, logger) -> None:
+def _persist_wandb_logs(
+    app_path: str, output_dir: str, logger: "logging.Logger"
+) -> None:
     """Copy wandb offline logs from container-local /app/cpc/outputs/ to the persistent volume."""
     import shutil
     from pathlib import Path
@@ -207,6 +211,7 @@ def run_experiment_remote(
     if torch.cuda.is_available():
         logger.info(f"CUDA device: {torch.cuda.get_device_name(0)}")
 
+    output_dir = OUTPUTS_PATH  # fallback if exception occurs before config resolution
     try:
         import hydra
         from omegaconf import OmegaConf
