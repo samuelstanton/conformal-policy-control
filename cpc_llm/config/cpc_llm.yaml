@@ -58,8 +58,8 @@ seed: 0
 greedy_decoding: False ## For initial and iterative
 temperature_scaling: False #True
 job_submission_system: slurm
-greedy_gen_batch_size: 256
-sampling_gen_batch_size: 256
+greedy_gen_batch_size: 64
+sampling_gen_batch_size: 32
 initial_model: "EleutherAI/pythia-14m" # "EleutherAI/pythia-2.8b"
 sanity_check: False  # will be propagated to all training + generation jobs
 path_to_repo: null # /scratch/ac5968/llome
