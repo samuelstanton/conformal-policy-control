@@ -38,6 +38,7 @@ from ..data_contracts import (
 )
 from .iterative_generation2 import generate_single_batch
 from holo.test_functions.closed_form import Ehrlich, RoughMtFuji
+from ..metrics import ARSamplingMetrics, ARSamplingResult, compute_sample_quality
 
 
 logger = logging.getLogger(__name__)
@@ -403,7 +404,7 @@ def accept_reject_sample_and_get_likelihoods(
     safe_prop_mix_weight: float = 1.0,  ## if proposal == "mixture":  weight in (0, 1) to assign to safe proposal
     env_const: float = 1.0,  ## Recalculated envelope constant,
     global_random_seed: int = 0.0,
-) -> tuple[pd.DataFrame | None, str | None, pd.DataFrame | None, str | None]:
+) -> ARSamplingResult:
 
     n_models = len(model_dir_list)
     use_inmemory = _is_direct_mode(cfg)
@@ -419,6 +420,12 @@ def accept_reject_sample_and_get_likelihoods(
 
     accepted_unconstrained_dfs = []
     accepted_constrained_dfs = []
+
+    # Metrics tracking
+    all_proposal_dfs: list[pd.DataFrame] = []
+    n_proposals_total = 0
+    imh_switched = False
+    imh_switch_call_idx: int | None = None
 
     call_idx = 0
 
@@ -533,6 +540,7 @@ def accept_reject_sample_and_get_likelihoods(
             )
 
             n_prop = len(gen_liks_df)
+            n_proposals_total += n_prop
 
             ## Accept or reject each proposal
 
@@ -544,6 +552,7 @@ def accept_reject_sample_and_get_likelihoods(
             target_lik = min(unconstrained_liks[0], betas_list[-1] * safe_liks[0])
             prop_lik = unconstrained_liks[0]
 
+            batch_acc_probs = []
             for i in range(n_prop):
                 u = np.random.uniform()
 
@@ -557,10 +566,14 @@ def accept_reject_sample_and_get_likelihoods(
                 target_lik = min(unconstrained_liks[i], betas_list[-1] * safe_liks[i])
                 prop_lik = unconstrained_liks[i]
 
-                if post_policy_control and (
+                is_imh = post_policy_control and (
                     cfg.conformal_policy_control.ind_metropolis_hastings
                     or call_idx > cfg.conformal_policy_control.num_AR_before_MH
-                ):
+                )
+                if is_imh:
+                    if not imh_switched:
+                        imh_switched = True
+                        imh_switch_call_idx = call_idx
                     ## Conditions for running IMH
                     acc_prob = min(
                         1, (target_lik / prev_target_lik) * (prev_prop_lik / prop_lik)
@@ -571,6 +584,8 @@ def accept_reject_sample_and_get_likelihoods(
                     acc_prob = min(
                         1, betas_list[-1] / lik_ratios_unconstrained_over_safe[i]
                     )
+
+                batch_acc_probs.append(acc_prob)
 
                 if u < acc_prob:
                     ## Update target and proposal likelihoods for last accepted sample
@@ -586,11 +601,16 @@ def accept_reject_sample_and_get_likelihoods(
                 else:
                     accepted_curr.append(False)
 
-            accepted_unconstrained_dfs.append(
-                gen_liks_df[: len(accepted_curr)][accepted_curr]
-            )
+            # Collect all proposals from this batch with acc_prob and accepted
+            n_evaluated = len(accepted_curr)
+            batch_df = gen_liks_df[:n_evaluated].copy()
+            batch_df["acc_prob"] = batch_acc_probs[:n_evaluated]
+            batch_df["accepted"] = accepted_curr
+            all_proposal_dfs.append(batch_df)
+
+            accepted_unconstrained_dfs.append(gen_liks_df[:n_evaluated][accepted_curr])
             accepted_constrained_dfs.append(
-                constrained_liks_df[: len(accepted_curr)][accepted_curr]
+                constrained_liks_df[:n_evaluated][accepted_curr]
             )
 
     elif proposal == "safe":
@@ -674,12 +694,7 @@ def accept_reject_sample_and_get_likelihoods(
                 # temps_curr = temps if len(model_dir_list) - 1 > 1 else [cfg.temperature_init] ## If model list after removing one model is not just initial, use temps
 
                 ## Sample using unconstrained model as proposal
-                (
-                    gen_liks_tmin1_df,
-                    gen_liks_tmin1_fp,
-                    constrained_gen_liks_tmin1_df,
-                    constrained_gen_liks_tmin1_fp,
-                ) = accept_reject_sample_and_get_likelihoods(
+                _recursive_result = accept_reject_sample_and_get_likelihoods(
                     cfg,
                     fs,
                     model_dir_list[:-1],
@@ -698,6 +713,10 @@ def accept_reject_sample_and_get_likelihoods(
                     proposal="safe",
                     global_random_seed=global_random_seed,
                 )
+                gen_liks_tmin1_df = _recursive_result.unconstrained_df
+                gen_liks_tmin1_fp = _recursive_result.unconstrained_fp
+                constrained_gen_liks_tmin1_df = _recursive_result.constrained_df
+                _constrained_gen_liks_tmin1_fp = _recursive_result.constrained_fp  # noqa: F841
                 call_idx += 1
 
                 ## Compute likelihoods under the most recent model
@@ -753,12 +772,14 @@ def accept_reject_sample_and_get_likelihoods(
                 )
 
             n_prop = len(gen_liks_df)
+            n_proposals_total += n_prop
 
             ## Arbitrary way of standardizing random seeds so that is consistent when rerunning from checkpoint (but uses different random seed for each call)
             ar_random_seed = call_idx if not post_policy_control else 1000 + call_idx
             np.random.seed(ar_random_seed)
 
             ## Accept or reject each proposal
+            batch_acc_probs = []
             for i in range(n_prop):
                 u = np.random.uniform()
 
@@ -781,10 +802,14 @@ def accept_reject_sample_and_get_likelihoods(
                 )  # / psis_list[-1]
                 prop_lik = safe_liks[i]
 
-                if post_policy_control and (
+                is_imh = post_policy_control and (
                     cfg.conformal_policy_control.ind_metropolis_hastings
                     or call_idx > cfg.conformal_policy_control.num_AR_before_MH
-                ):
+                )
+                if is_imh:
+                    if not imh_switched:
+                        imh_switched = True
+                        imh_switch_call_idx = call_idx
                     ## Conditions for running IMH
                     acc_prob = min(
                         1, (target_lik / prev_target_lik) * (prev_prop_lik / prop_lik)
@@ -795,6 +820,8 @@ def accept_reject_sample_and_get_likelihoods(
                     acc_prob = min(
                         1, lik_ratios_unconstrained_over_safe[i] / betas_list[-1]
                     )
+
+                batch_acc_probs.append(acc_prob)
 
                 if u < acc_prob:
                     ## Update target and proposal likelihoods for last accepted sample
@@ -810,15 +837,21 @@ def accept_reject_sample_and_get_likelihoods(
                 else:
                     accepted_curr.append(False)
 
-            accepted_unconstrained_dfs.append(
-                gen_liks_df[: len(accepted_curr)][accepted_curr]
-            )
+            # Collect all proposals from this batch
+            n_evaluated = len(accepted_curr)
+            batch_df = gen_liks_df[:n_evaluated].copy()
+            batch_df["acc_prob"] = batch_acc_probs[:n_evaluated]
+            batch_df["accepted"] = accepted_curr
+            all_proposal_dfs.append(batch_df)
+
+            accepted_unconstrained_dfs.append(gen_liks_df[:n_evaluated][accepted_curr])
             accepted_constrained_dfs.append(
-                constrained_liks_df[: len(accepted_curr)][accepted_curr]
+                constrained_liks_df[:n_evaluated][accepted_curr]
             )
 
     elif proposal == "mixture":
-        accepted_curr_dict = {"safe": [], "unconstrained": []}
+        accepted_curr_dict: dict[str, list[bool]] = {"safe": [], "unconstrained": []}
+        mix_acc_probs_dict: dict[str, list[float]] = {"safe": [], "unconstrained": []}
 
         n_proposed_dict = {"safe": 0, "unconstrained": 0}
         N_prop_dict = {"safe": 0, "unconstrained": 0}
@@ -951,12 +984,14 @@ def accept_reject_sample_and_get_likelihoods(
                     N_prop_dict[proposal_curr] = len(
                         gen_liks_df_dict[proposal_curr]
                     )  ## Reset number of available proposals
+                    n_proposals_total += N_prop_dict[proposal_curr]
                     n_proposed_dict[proposal_curr] = (
                         0  ## Reset number of used proposals to 0
                     )
                     accepted_curr_dict[
                         proposal_curr
                     ] = []  ## Reset running list of current acceptances
+                    mix_acc_probs_dict[proposal_curr] = []
 
             if gen_liks_df_dict[proposal_curr] is None:
                 ## If no proposals were generated, continue to restart the while loop (and try generating proposals again)
@@ -1036,10 +1071,14 @@ def accept_reject_sample_and_get_likelihoods(
                     + (1 - safe_prop_mix_weight) * unconstrained_liks[i_curr]
                 )
 
-                if post_policy_control and (
+                is_imh = post_policy_control and (
                     cfg.conformal_policy_control.ind_metropolis_hastings
                     or call_idx > cfg.conformal_policy_control.num_AR_before_MH
-                ):
+                )
+                if is_imh:
+                    if not imh_switched:
+                        imh_switched = True
+                        imh_switch_call_idx = call_idx
                     ## Conditions for running IMH
                     acc_prob = min(
                         1, (target_lik / prev_target_lik) * (prev_prop_lik / prop_lik)
@@ -1049,6 +1088,7 @@ def accept_reject_sample_and_get_likelihoods(
                     ## Condition for rejection sampling or until first acceptance of MH sampling
                     acc_prob = min(1, (target_lik / (prop_lik * env_const)))
 
+                mix_acc_probs_dict[proposal_curr].append(acc_prob)
                 n_proposed_dict[proposal_curr] += 1
 
                 if u < acc_prob:
@@ -1065,7 +1105,17 @@ def accept_reject_sample_and_get_likelihoods(
                 else:
                     accepted_curr_dict[proposal_curr].append(False)
 
+            # Collect all proposals from mixture sub-batches
             for proposal_curr in ["safe", "unconstrained"]:
+                n_evaluated = len(accepted_curr_dict[proposal_curr])
+                if n_evaluated > 0 and gen_liks_df_dict[proposal_curr] is not None:
+                    batch_df = gen_liks_df_dict[proposal_curr][:n_evaluated].copy()
+                    batch_df["acc_prob"] = mix_acc_probs_dict[proposal_curr][
+                        :n_evaluated
+                    ]
+                    batch_df["accepted"] = accepted_curr_dict[proposal_curr]
+                    all_proposal_dfs.append(batch_df)
+
                 accepted_unconstrained_dfs.append(
                     gen_liks_df_dict[proposal_curr][
                         : len(accepted_curr_dict[proposal_curr])
@@ -1121,7 +1171,7 @@ def accept_reject_sample_and_get_likelihoods(
         else:
             if gen_liks_fp is None and not unconstrained_pre_cpc_call_num_check:
                 ## If terminating due to exceeding limit on number of unconstrained pre-CPC, return None
-                return None, None, None, None
+                return ARSamplingResult(None, None, None, None, None, None)
 
             accepted_unconstrained_gen_liks_fp = os.path.join(
                 os.path.dirname(gen_liks_fp),
@@ -1150,9 +1200,43 @@ def accept_reject_sample_and_get_likelihoods(
             accepted_constrained_gen_liks_fp, orient="records", lines=True
         )
 
-    return (
-        accepted_unconstrained_df,
-        accepted_unconstrained_gen_liks_fp,
-        accepted_constrained_df,
-        accepted_constrained_gen_liks_fp,
+    # Persist all proposals and compute quality metrics
+    all_proposals_fp: str | None = None
+    sampling_metrics: ARSamplingMetrics | None = None
+    if depth == 0 and all_proposal_dfs:
+        all_proposals_df = pd.concat(all_proposal_dfs, ignore_index=True)
+        all_proposals_fp = os.path.join(
+            os.path.dirname(accepted_unconstrained_gen_liks_fp),
+            f"all_proposals_{base_output_name}",
+        )
+        if cfg.overwrite_ig or not fs.exists(all_proposals_fp):
+            all_proposals_df.to_json(all_proposals_fp, orient="records", lines=True)
+
+        accepted_mask = all_proposals_df["accepted"]
+        accepted_quality = compute_sample_quality(all_proposals_df[accepted_mask])
+        rejected_quality = compute_sample_quality(all_proposals_df[~accepted_mask])
+
+        sampling_metrics = ARSamplingMetrics(
+            n_accepted=n_accepted,
+            n_calls=call_idx,
+            n_proposals_total=n_proposals_total,
+            acceptance_rate=n_accepted / max(1, n_proposals_total),
+            proposal_type=proposal or "unconstrained",
+            ar_to_imh_switch=imh_switched,
+            imh_switch_call_idx=imh_switch_call_idx,
+            safe_prop_mix_weight=safe_prop_mix_weight
+            if proposal == "mixture"
+            else None,
+            env_const=env_const,
+            accepted_quality=accepted_quality,
+            rejected_quality=rejected_quality,
+        )
+
+    return ARSamplingResult(
+        unconstrained_df=accepted_unconstrained_df,
+        unconstrained_fp=accepted_unconstrained_gen_liks_fp,
+        constrained_df=accepted_constrained_df,
+        constrained_fp=accepted_constrained_gen_liks_fp,
+        all_proposals_fp=all_proposals_fp,
+        sampling_metrics=sampling_metrics,
     )

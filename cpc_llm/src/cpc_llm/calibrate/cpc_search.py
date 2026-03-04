@@ -32,6 +32,7 @@ from ..data_contracts import (
     con_lik_col,
     lik_col,
 )
+from ..metrics import CPCSearchMetrics, CPCSearchResult
 
 logger = logging.getLogger(__name__)
 
@@ -55,9 +56,12 @@ def cpc_beta_search(
     higher_score_field: str = HIGHER_SCORE,
     lower_score_field: str = LOWER_SCORE,
     global_random_seed: int = 0,
-) -> str:
-    """
-    Runs conformal policy control.
+) -> CPCSearchResult:
+    """Runs conformal policy control.
+
+    Returns:
+        A ``CPCSearchResult`` containing the selected beta, psi, constrained
+        likelihood DataFrames/filepaths, proposal info, and search metrics.
     """
 
     ## Load calibration data into one dataframe
@@ -455,6 +459,11 @@ def cpc_beta_search(
     )  ## Currently selected beta_t is initially smallest float value
     envelope_const_constrained_over_proposal = 1
 
+    # Metrics tracking
+    last_w_test = 0.0
+    last_switch_to_mixture = False
+    last_switch_to_optimized = False
+
     for i, proposal in enumerate(policy_names):
         unconstrained_df = unconstrained_df_dict[proposal]
         unconstrained_gen_liks_fp = unconstrained_gen_liks_fp_dict[proposal]
@@ -727,6 +736,11 @@ def cpc_beta_search(
             test_pt_factor *= cfg.conformal_policy_control.test_pt_scale_factor  ## Can conservatively scale test point weight to est population max (1.0 is plug in)
             w_test *= test_pt_factor
 
+            # Track metrics for this grid position
+            last_w_test = float(w_test)
+            last_switch_to_mixture = switch_to_mixture_proposal
+            last_switch_to_optimized = switch_to_optimized_proposal
+
             ## Concatenate and normalize
             sum_w_cal_test = np.sum(w_cal) + w_test
             w_cal_normalized = w_cal / sum_w_cal_test
@@ -832,18 +846,35 @@ def cpc_beta_search(
                 check_col_names(constrained_liks_df_beta_hat)
                 check_col_names(unconstrained_df)
 
-                return (
-                    beta_t,
-                    psi_hat_t,
-                    constrained_liks_df_beta_hat,
-                    constrained_liks_df_beta_hat_fp,
-                    unconstrained_df,
-                    unconstrained_gen_liks_fp,
-                    proposal,
-                    psi_hat_intersection_safe,
-                    psi_hat_intersection_unconstrained,
-                    envelope_const_constrained_over_proposal,
-                )  # unconstrained_df, unconstrained_liks_df_beta_hat_fp
+                search_metrics = CPCSearchMetrics(
+                    beta_t=float(beta_t),
+                    psi_hat_t=float(psi_hat_t),
+                    grid_size=len(G),
+                    grid_position_selected=b,
+                    risk_margin=float(adjusted_alpha - w_infeasible_normalized),
+                    w_test=last_w_test,
+                    proposal_selected=proposal,
+                    switch_to_mixture=last_switch_to_mixture,
+                    switch_to_optimized=last_switch_to_optimized,
+                    psi_hat_intersection_safe=float(psi_hat_intersection_safe),
+                    psi_hat_intersection_unconstrained=float(
+                        psi_hat_intersection_unconstrained
+                    ),
+                    envelope_const=float(envelope_const_constrained_over_proposal),
+                )
+                return CPCSearchResult(
+                    beta_t=beta_t,
+                    psi_hat_t=psi_hat_t,
+                    constrained_liks_df=constrained_liks_df_beta_hat,
+                    constrained_liks_fp=constrained_liks_df_beta_hat_fp,
+                    unconstrained_df=unconstrained_df,
+                    unconstrained_liks_fp=unconstrained_gen_liks_fp,
+                    proposal=proposal,
+                    psi_hat_intersection_safe=psi_hat_intersection_safe,
+                    psi_hat_intersection_unconstrained=psi_hat_intersection_unconstrained,
+                    envelope_const=envelope_const_constrained_over_proposal,
+                    search_metrics=search_metrics,
+                )
 
             else:
                 ## Reject null hypothesis for beta_t, record it as the current candidate
@@ -882,15 +913,30 @@ def cpc_beta_search(
     check_col_names(constrained_liks_df_beta_hat)
     check_col_names(unconstrained_df)
 
-    return (
-        beta_t,
-        psi_hat_t,
-        constrained_liks_df_beta_hat,
-        constrained_liks_df_beta_hat_fp,
-        unconstrained_df,
-        unconstrained_gen_liks_fp,
-        proposal,
-        psi_hat_intersection_safe,
-        psi_hat_intersection_unconstrained,
-        envelope_const_constrained_over_proposal,
-    )  # unconstrained_liks_df_beta_hat_fp
+    search_metrics = CPCSearchMetrics(
+        beta_t=float(beta_t),
+        psi_hat_t=float(psi_hat_t),
+        grid_size=len(G),
+        grid_position_selected=b,
+        risk_margin=float("nan"),  # risk not controlled
+        w_test=last_w_test,
+        proposal_selected=proposal,
+        switch_to_mixture=last_switch_to_mixture,
+        switch_to_optimized=last_switch_to_optimized,
+        psi_hat_intersection_safe=float(psi_hat_intersection_safe),
+        psi_hat_intersection_unconstrained=float(psi_hat_intersection_unconstrained),
+        envelope_const=float(envelope_const_constrained_over_proposal),
+    )
+    return CPCSearchResult(
+        beta_t=beta_t,
+        psi_hat_t=psi_hat_t,
+        constrained_liks_df=constrained_liks_df_beta_hat,
+        constrained_liks_fp=constrained_liks_df_beta_hat_fp,
+        unconstrained_df=unconstrained_df,
+        unconstrained_liks_fp=unconstrained_gen_liks_fp,
+        proposal=proposal,
+        psi_hat_intersection_safe=psi_hat_intersection_safe,
+        psi_hat_intersection_unconstrained=psi_hat_intersection_unconstrained,
+        envelope_const=envelope_const_constrained_over_proposal,
+        search_metrics=search_metrics,
+    )

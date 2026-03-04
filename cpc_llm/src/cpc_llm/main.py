@@ -6,6 +6,7 @@ import numpy as np
 import os
 import pandas as pd
 import sys
+import time
 
 
 from .infrastructure.file_handler import LocalOrS3Client
@@ -47,6 +48,7 @@ from .data_contracts import (
     lik_col,
 )
 from .infer.generation_utils import get_temperatures
+from .metrics import DatasetSizes, RoundSummary, StageTiming
 
 logger = logging.getLogger(__name__)
 
@@ -327,11 +329,13 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
         for i in tqdm(
             range(1, cfg.num_sft_rounds), desc="SFT Policy Improvement Iterations"
         ):
+            t_round_start = time.perf_counter()
             # n = cfg.num_labels_after_first_round if i > 0 else None
             n = cfg.num_labels_after_first_round
 
             ## TRAINING
             ## Format data
+            t0 = time.perf_counter()
             sft_dataset_fp = create_propen_sft_dataset(
                 cfg,
                 file_client,
@@ -360,8 +364,10 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                 model_dir=all_model_paths[-1],
                 train_from_scratch=train_from_scratch,
             )
+            training_s = time.perf_counter() - t0
 
             ## SELECT PROMPTS: Select new prompts/seeds from historical training data
+            t0 = time.perf_counter()
             old_seeds_idx = 0 if cfg.select_old_seeds_from == "init" else -1
             seeds_fp = get_seeds_from_training_data(
                 cfg,
@@ -377,6 +383,7 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                 random_seed=random_seed,
             )
             pi_seeds_filepaths_list.append(seeds_fp)
+            seed_selection_s = time.perf_counter() - t0
 
             ## Add new trained model to list
             logger.info(f"Trained SFT model: {sft_dir}")
@@ -391,6 +398,7 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
             logger.info(f"temps: {temps}")
 
             ## Add curr model unconstrained likelihoods to previously collected calibration data
+            t0 = time.perf_counter()
             cal_all_liks_fp, hd = run_compute_liks_all_models_and_cal_data(
                 cfg,
                 file_client,
@@ -403,21 +411,12 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                 # score_field= "score",
                 temps=[cfg.temperature],
             )
+            likelihood_computation_s = time.perf_counter() - t0
             logger.info(f"cal_all_liks_fp : {cal_all_liks_fp}")
 
             # ## CONFORMAL POLICY CONTROL
-            (
-                beta_t,
-                psi_hat_t,
-                constrained_liks_df_beta_hat,
-                constrained_liks_df_beta_hat_fp,
-                unconstrained_df,
-                unconstrained_liks_df_beta_hat_fp,
-                proposal,
-                psi_hat_intersection_safe,
-                psi_hat_intersection_unconstrained,
-                envelope_const_constrained_over_proposal,
-            ) = cpc_beta_search(
+            t0 = time.perf_counter()
+            cpc_result = cpc_beta_search(
                 cfg,
                 file_client,
                 model_dir_list=pi_model_fp_list,
@@ -429,6 +428,19 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                 ga_data_dir=ga_data_dir,
                 global_random_seed=random_seed,
             )
+            cpc_search_s = time.perf_counter() - t0
+            beta_t = cpc_result.beta_t
+            psi_hat_t = cpc_result.psi_hat_t
+            constrained_liks_df_beta_hat = cpc_result.constrained_liks_df
+            unconstrained_df = cpc_result.unconstrained_df
+            proposal = cpc_result.proposal
+            psi_hat_intersection_safe = cpc_result.psi_hat_intersection_safe
+            psi_hat_intersection_unconstrained = (
+                cpc_result.psi_hat_intersection_unconstrained
+            )
+            envelope_const_constrained_over_proposal = cpc_result.envelope_const
+            ar_sampling_s = 0.0
+
             betas_list.append(beta_t)
             psis_list.append(psi_hat_t)
             proposals_list.append(proposal)
@@ -439,25 +451,6 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
             envelope_const_constrained_over_proposal_list.append(
                 envelope_const_constrained_over_proposal
             )
-
-            ## Save selected hyperparameters
-            selected_hyperparams = {
-                "beta_hats": betas_list,
-                "psi_hats": psis_list,
-                "proposals": proposals_list,
-                "intersection_psis_safe": intersection_psis_safe_list,
-                "intersection_psis_unconstrained": intersection_psis_unconstrained_list,
-                "env_const_constrained_over_prop": envelope_const_constrained_over_proposal_list,
-            }
-
-            selected_hyperparams_df = pd.DataFrame(selected_hyperparams)
-            selected_hyperparams_fp = os.path.join(
-                pi_model_fp_list[-1], "selected_hyperparams.json"
-            )
-            if cfg.overwrite_ig or not file_client.exists(selected_hyperparams_fp):
-                selected_hyperparams_df.to_json(
-                    selected_hyperparams_fp, orient="records", lines=True
-                )
 
             if constrained_liks_df_beta_hat.iloc[0, 0] != unconstrained_df.iloc[0, 0]:
                 ## Sanity check
@@ -540,6 +533,7 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
             )
 
             """Split last batch of generated outputs into training and calibration data"""
+            t0 = time.perf_counter()
             cal_df, cal_unconstrained_output_path, train_df, train_output_path = (
                 train_cal_split_gen_outputs(
                     cfg,
@@ -550,6 +544,7 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                     random_seed=random_seed,
                 )
             )  # , sample_num_cal=cfg.num_cal_per_step, sample_num_train=cfg.num_train_per_step)
+            dataset_split_s = time.perf_counter() - t0
             prev_round_outputs_fp = train_output_path  ## Hereon, prev_round_outputs_fp will only contain training data
             cal_data_unconstrained_fp_list.append(cal_unconstrained_output_path)
             logger.info(
@@ -576,6 +571,42 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
             ## Keep track of calibration data with *constrained* liklihoods
             cal_data_constrained_fp_list.append(cal_constrained_output_path)
 
+            ## Write round summary
+            round_summary = RoundSummary(
+                round_idx=i,
+                round_type="sft",
+                cpc=cpc_result.search_metrics,
+                ar_sampling=None,
+                dataset_sizes=DatasetSizes(
+                    n_cal=len(cal_df),
+                    n_train=len(train_df),
+                    n_combined=len(cal_df) + len(train_df),
+                ),
+                temperatures=temps,
+                timing=StageTiming(
+                    training_s=training_s,
+                    seed_selection_s=seed_selection_s,
+                    likelihood_computation_s=likelihood_computation_s,
+                    cpc_search_s=cpc_search_s,
+                    ar_sampling_s=ar_sampling_s,
+                    dataset_split_s=dataset_split_s,
+                    total_round_s=time.perf_counter() - t_round_start,
+                ),
+            )
+            round_summary_fp = os.path.join(pi_model_fp_list[-1], "round_summary.json")
+            if cfg.overwrite_ig or not file_client.exists(round_summary_fp):
+                with open(round_summary_fp, "w") as f:
+                    f.write(round_summary.model_dump_json(indent=2))
+            logger.info(f"Round {i} summary written to {round_summary_fp}")
+
+            try:
+                import wandb
+
+                if wandb.run is not None:
+                    wandb.log(round_summary.model_dump(), step=i)
+            except ImportError:
+                pass
+
             if on_round_complete is not None:
                 try:
                     on_round_complete()
@@ -587,11 +618,12 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
         for i in tqdm(
             range(1, cfg.num_dpo_rounds), desc="DPO Policy Improvement Iterations"
         ):
-            # n = cfg.num_labels_after_first_round if i > 0 else None
+            t_round_start = time.perf_counter()
 
             ## TRAINING
             ## Format data
             n = cfg.num_labels_after_first_round
+            t0 = time.perf_counter()
             dpo_dataset_fp = create_propen_preference_dataset(
                 cfg,
                 file_client,
@@ -620,8 +652,10 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                 ref_model_path=all_model_paths[-1],
                 # train_from_scratch=train_from_scratch,
             )
+            training_s = time.perf_counter() - t0
 
             ## SELECT PROMPTS: Select new prompts/seeds from historical training data
+            t0 = time.perf_counter()
             old_seeds_idx = 0 if cfg.select_old_seeds_from == "init" else -1
             seeds_fp = get_seeds_from_training_data(
                 cfg,
@@ -642,6 +676,8 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
             )
             pi_seeds_filepaths_list.append(seeds_fp)
 
+            seed_selection_s = time.perf_counter() - t0
+
             ## Add new trained model to list
             logger.info(f"Trained DPO model: {dpo_dir}")
             all_model_paths.append(dpo_dir)
@@ -655,6 +691,7 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
             logger.info(f"temps: {temps}")
 
             ## Add curr model unconstrained likelihoods to previously collected calibration data
+            t0 = time.perf_counter()
             cal_all_liks_fp, hd = run_compute_liks_all_models_and_cal_data(
                 cfg,
                 file_client,
@@ -667,29 +704,20 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                 # score_field= "score",
                 temps=[cfg.temperature],
             )
+            likelihood_computation_s = time.perf_counter() - t0
             logger.info(f"cal_all_liks_fp : {cal_all_liks_fp}")
 
             # ## CONFORMAL POLICY CONTROL
-            (
-                beta_t,
-                psi_hat_t,
-                constrained_liks_df_beta_hat,
-                constrained_liks_df_beta_hat_fp,
-                unconstrained_df,
-                unconstrained_liks_df_beta_hat_fp,
-                proposal,
-                psi_hat_intersection_safe,
-                psi_hat_intersection_unconstrained,
-                envelope_const_constrained_over_proposal,
-            ) = cpc_beta_search(
+            t0 = time.perf_counter()
+            cpc_result = cpc_beta_search(
                 cfg,
                 file_client,
                 model_dir_list=pi_model_fp_list,
                 seeds_fp_list=pi_seeds_filepaths_list,
-                prev_cal_data_unconstrained_liks_fp_list=cal_data_unconstrained_fp_list,  ## Should contain both cal data and *constrained* likelihoods
-                prev_cal_data_constrained_liks_fp_list=cal_data_constrained_fp_list,  ## Should contain both cal data and *constrained* likelihoods
+                prev_cal_data_unconstrained_liks_fp_list=cal_data_unconstrained_fp_list,
+                prev_cal_data_constrained_liks_fp_list=cal_data_constrained_fp_list,
                 betas_list=betas_list,
-                psis_list=psis_list,  ## Normalization constants
+                psis_list=psis_list,
                 ga_data_dir=ga_data_dir,
                 higher_score_particle_field=PROMPT,
                 lower_score_particle_field=CHOSEN,
@@ -697,6 +725,17 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                 lower_score_field="chosen_score",
                 global_random_seed=random_seed,
             )
+            cpc_search_s = time.perf_counter() - t0
+            beta_t = cpc_result.beta_t
+            psi_hat_t = cpc_result.psi_hat_t
+            constrained_liks_df_beta_hat = cpc_result.constrained_liks_df
+            unconstrained_df = cpc_result.unconstrained_df
+            proposal = cpc_result.proposal
+            psi_hat_intersection_safe = cpc_result.psi_hat_intersection_safe
+            psi_hat_intersection_unconstrained = (
+                cpc_result.psi_hat_intersection_unconstrained
+            )
+            envelope_const_constrained_over_proposal = cpc_result.envelope_const
 
             ## For now, just dealing with this edge case by continuing to next step with one action
             # n_safe_actions = max(1, n_safe_actions)
@@ -711,25 +750,6 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
             envelope_const_constrained_over_proposal_list.append(
                 envelope_const_constrained_over_proposal
             )
-
-            ## Save selected hyperparameters
-            selected_hyperparams = {
-                "beta_hats": betas_list,
-                "psi_hats": psis_list,
-                "proposals": proposals_list,
-                "intersection_psis_safe": intersection_psis_safe_list,
-                "intersection_psis_unconstrained": intersection_psis_unconstrained_list,
-                "env_const_constrained_over_prop": envelope_const_constrained_over_proposal_list,
-            }
-
-            selected_hyperparams_df = pd.DataFrame(selected_hyperparams)
-            selected_hyperparams_fp = os.path.join(
-                pi_model_fp_list[-1], "selected_hyperparams.json"
-            )
-            if cfg.overwrite_ig or not file_client.exists(selected_hyperparams_fp):
-                selected_hyperparams_df.to_json(
-                    selected_hyperparams_fp, orient="records", lines=True
-                )
 
             if constrained_liks_df_beta_hat.iloc[0, 0] != unconstrained_df.iloc[0, 0]:
                 raise ValueError(
@@ -820,12 +840,8 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                 proposal = "mixture"
 
             ## Sample with conformal policy control
-            (
-                unconstrained_df,
-                unconstrained_gen_liks_fp,
-                constrained_liks_df,
-                constrained_gen_liks_fp,
-            ) = accept_reject_sample_and_get_likelihoods(
+            t0 = time.perf_counter()
+            ar_result = accept_reject_sample_and_get_likelihoods(
                 cfg,
                 file_client,
                 pi_model_fp_list,
@@ -845,8 +861,13 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                 env_const=envelope_const_constrained_over_proposal,
                 global_random_seed=random_seed,
             )
+            ar_sampling_s = time.perf_counter() - t0
+            unconstrained_df = ar_result.unconstrained_df
+            unconstrained_gen_liks_fp = ar_result.unconstrained_fp
+            constrained_liks_df = ar_result.constrained_df
 
             """Split last batch of generated outputs into training and calibration data"""
+            t0 = time.perf_counter()
             cal_df, cal_unconstrained_output_path, train_df, train_output_path = (
                 train_cal_split_gen_outputs(
                     cfg,
@@ -856,8 +877,9 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                     setting=setting,
                     random_seed=random_seed,
                 )
-            )  # , sample_num_cal=cfg.num_cal_per_step, sample_num_train=cfg.num_train_per_step)
-            prev_round_outputs_fp = train_output_path  ## Hereon, prev_round_outputs_fp will only contain training data
+            )
+            dataset_split_s = time.perf_counter() - t0
+            prev_round_outputs_fp = train_output_path
             cal_data_unconstrained_fp_list.append(cal_unconstrained_output_path)
             logger.info(
                 f"cal_r0 (n_cal{i}={len(cal_df)}) output path: {cal_unconstrained_output_path}"
@@ -883,6 +905,42 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
             ## Keep track of calibration data with *constrained* liklihoods
             cal_data_constrained_fp_list.append(cal_constrained_output_path)
 
+            ## Write round summary
+            round_summary = RoundSummary(
+                round_idx=i,
+                round_type="dpo",
+                cpc=cpc_result.search_metrics,
+                ar_sampling=ar_result.sampling_metrics,
+                dataset_sizes=DatasetSizes(
+                    n_cal=len(cal_df),
+                    n_train=len(train_df),
+                    n_combined=len(cal_df) + len(train_df),
+                ),
+                temperatures=temps,
+                timing=StageTiming(
+                    training_s=training_s,
+                    seed_selection_s=seed_selection_s,
+                    likelihood_computation_s=likelihood_computation_s,
+                    cpc_search_s=cpc_search_s,
+                    ar_sampling_s=ar_sampling_s,
+                    dataset_split_s=dataset_split_s,
+                    total_round_s=time.perf_counter() - t_round_start,
+                ),
+            )
+            round_summary_fp = os.path.join(pi_model_fp_list[-1], "round_summary.json")
+            if cfg.overwrite_ig or not file_client.exists(round_summary_fp):
+                with open(round_summary_fp, "w") as f:
+                    f.write(round_summary.model_dump_json(indent=2))
+            logger.info(f"Round {i} summary written to {round_summary_fp}")
+
+            try:
+                import wandb
+
+                if wandb.run is not None:
+                    wandb.log(round_summary.model_dump(), step=i)
+            except ImportError:
+                pass
+
             if on_round_complete is not None:
                 try:
                     on_round_complete()
@@ -892,11 +950,13 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
         all_prev_marge_datasets = []
         """MARGE Policy Improvement Outer Loop, with Policy Control Inner Loop"""
         for i in tqdm(range(1, cfg.num_marge_rounds), desc="MargE Iterations"):
+            t_round_start = time.perf_counter()
             # n = cfg.num_labels_after_first_round if i > 0 else None
 
             ## TRAINING
             ## Format data
             n = cfg.num_labels_after_first_round
+            t0 = time.perf_counter()
             marge_dataset_fp = create_propen_sft_dataset(
                 cfg,
                 file_client,
@@ -924,8 +984,10 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                 ref_model_path=all_model_paths[-1],
                 # train_from_scratch=train_from_scratch,
             )
+            training_s = time.perf_counter() - t0
 
             ## SELECT PROMPTS: Select new prompts/seeds from historical training data
+            t0 = time.perf_counter()
             old_seeds_idx = 0 if cfg.select_old_seeds_from == "init" else -1
             seeds_fp = get_seeds_from_training_data(
                 cfg,
@@ -941,6 +1003,7 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                 random_seed=random_seed,
             )
             pi_seeds_filepaths_list.append(seeds_fp)
+            seed_selection_s = time.perf_counter() - t0
 
             ## Add new trained model to list
             logger.info(f"Trained MARGE model: {marge_dir}")
@@ -955,6 +1018,7 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
             logger.info(f"temps: {temps}")
 
             ## Add curr model unconstrained likelihoods to previously collected calibration data
+            t0 = time.perf_counter()
             cal_all_liks_fp, hd = run_compute_liks_all_models_and_cal_data(
                 cfg,
                 file_client,
@@ -967,21 +1031,12 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                 # score_field= "score",
                 temps=[cfg.temperature],
             )
+            likelihood_computation_s = time.perf_counter() - t0
             logger.info(f"cal_all_liks_fp : {cal_all_liks_fp}")
 
             ### CONFORMAL POLICY CONTROL
-            (
-                beta_t,
-                psi_hat_t,
-                constrained_liks_df_beta_hat,
-                constrained_liks_df_beta_hat_fp,
-                unconstrained_df,
-                unconstrained_liks_df_beta_hat_fp,
-                proposal,
-                psi_hat_intersection_safe,
-                psi_hat_intersection_unconstrained,
-                envelope_const_constrained_over_proposal,
-            ) = cpc_beta_search(
+            t0 = time.perf_counter()
+            cpc_result = cpc_beta_search(
                 cfg,
                 file_client,
                 model_dir_list=pi_model_fp_list,
@@ -993,6 +1048,17 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                 ga_data_dir=ga_data_dir,
                 global_random_seed=random_seed,
             )
+            cpc_search_s = time.perf_counter() - t0
+            beta_t = cpc_result.beta_t
+            psi_hat_t = cpc_result.psi_hat_t
+            constrained_liks_df_beta_hat = cpc_result.constrained_liks_df
+            unconstrained_df = cpc_result.unconstrained_df
+            proposal = cpc_result.proposal
+            psi_hat_intersection_safe = cpc_result.psi_hat_intersection_safe
+            psi_hat_intersection_unconstrained = (
+                cpc_result.psi_hat_intersection_unconstrained
+            )
+            envelope_const_constrained_over_proposal = cpc_result.envelope_const
 
             ## For now, just dealing with this edge case by continuing to next step with one action
             # n_safe_actions = max(1, n_safe_actions)
@@ -1007,25 +1073,6 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
             envelope_const_constrained_over_proposal_list.append(
                 envelope_const_constrained_over_proposal
             )
-
-            ## Save selected hyperparameters
-            selected_hyperparams = {
-                "beta_hats": betas_list,
-                "psi_hats": psis_list,
-                "proposals": proposals_list,
-                "intersection_psis_safe": intersection_psis_safe_list,
-                "intersection_psis_unconstrained": intersection_psis_unconstrained_list,
-                "env_const_constrained_over_prop": envelope_const_constrained_over_proposal_list,
-            }
-
-            selected_hyperparams_df = pd.DataFrame(selected_hyperparams)
-            selected_hyperparams_fp = os.path.join(
-                pi_model_fp_list[-1], "selected_hyperparams.json"
-            )
-            if cfg.overwrite_ig or not file_client.exists(selected_hyperparams_fp):
-                selected_hyperparams_df.to_json(
-                    selected_hyperparams_fp, orient="records", lines=True
-                )
 
             if constrained_liks_df_beta_hat.iloc[0, 0] != unconstrained_df.iloc[0, 0]:
                 ## Sanity check
@@ -1124,12 +1171,8 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                 proposal = "mixture"
 
             ## Sample with conformal policy control
-            (
-                unconstrained_df,
-                unconstrained_gen_liks_fp,
-                constrained_liks_df,
-                constrained_gen_liks_fp,
-            ) = accept_reject_sample_and_get_likelihoods(
+            t0 = time.perf_counter()
+            ar_result = accept_reject_sample_and_get_likelihoods(
                 cfg,
                 file_client,
                 pi_model_fp_list,
@@ -1145,8 +1188,13 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                 env_const=envelope_const_constrained_over_proposal,
                 global_random_seed=random_seed,
             )
+            ar_sampling_s = time.perf_counter() - t0
+            unconstrained_df = ar_result.unconstrained_df
+            unconstrained_gen_liks_fp = ar_result.unconstrained_fp
+            constrained_liks_df = ar_result.constrained_df
 
             """Split last batch of generated outputs into training and calibration data"""
+            t0 = time.perf_counter()
             cal_df, cal_unconstrained_output_path, train_df, train_output_path = (
                 train_cal_split_gen_outputs(
                     cfg,
@@ -1158,6 +1206,7 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                 )
             )  # , sample_num_cal=cfg.num_cal_per_step, sample_num_train=cfg.num_train_per_step)
             # train_cal_split_gen_outputs(cfg, file_client, unconstrained_liks_df_beta_hat_fp, marge_dir)
+            dataset_split_s = time.perf_counter() - t0
             prev_round_outputs_fp = train_output_path  ## Hereon, prev_round_outputs_fp will only contain training data
             cal_data_unconstrained_fp_list.append(cal_unconstrained_output_path)
             logger.info(
@@ -1184,6 +1233,42 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
 
             ## Keep track of calibration data with *constrained* liklihoods
             cal_data_constrained_fp_list.append(cal_constrained_output_path)
+
+            ## Write round summary
+            round_summary = RoundSummary(
+                round_idx=i,
+                round_type="marge",
+                cpc=cpc_result.search_metrics,
+                ar_sampling=ar_result.sampling_metrics,
+                dataset_sizes=DatasetSizes(
+                    n_cal=len(cal_df),
+                    n_train=len(train_df),
+                    n_combined=len(cal_df) + len(train_df),
+                ),
+                temperatures=temps,
+                timing=StageTiming(
+                    training_s=training_s,
+                    seed_selection_s=seed_selection_s,
+                    likelihood_computation_s=likelihood_computation_s,
+                    cpc_search_s=cpc_search_s,
+                    ar_sampling_s=ar_sampling_s,
+                    dataset_split_s=dataset_split_s,
+                    total_round_s=time.perf_counter() - t_round_start,
+                ),
+            )
+            round_summary_fp = os.path.join(pi_model_fp_list[-1], "round_summary.json")
+            if cfg.overwrite_ig or not file_client.exists(round_summary_fp):
+                with open(round_summary_fp, "w") as f:
+                    f.write(round_summary.model_dump_json(indent=2))
+            logger.info(f"Round {i} summary written to {round_summary_fp}")
+
+            try:
+                import wandb
+
+                if wandb.run is not None:
+                    wandb.log(round_summary.model_dump(), step=i)
+            except ImportError:
+                pass
 
             if on_round_complete is not None:
                 try:
