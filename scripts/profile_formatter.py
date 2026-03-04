@@ -131,7 +131,8 @@ def profile_find_dense_pairs(df: pd.DataFrame, cfg, label: str = ""):
     transformed = pynn.transform(filtered)
     print(f"  PyNNDescent transform: {time.perf_counter() - t0:.3f}s")
 
-    # Phase 3: inner loop (pair finding)
+    # Phase 3: inner loop (pair finding) — intentionally uses OLD implementation
+    # to measure baseline time for comparison with the optimized version.
     t0 = time.perf_counter()
     idx_pairs = set()
     for i in range(transformed.shape[0]):
@@ -210,7 +211,8 @@ def profile_find_preference_pairs(df: pd.DataFrame, cfg, label: str = ""):
     transformed = pynn.transform(filtered)
     print(f"  PyNNDescent transform: {time.perf_counter() - t0:.3f}s")
 
-    # Phase 3: triple finding loop
+    # Phase 3: triple finding loop — intentionally uses OLD implementation
+    # to measure baseline time for comparison with the optimized version.
     t0 = time.perf_counter()
     idx_triples = set()
     for i in range(transformed.shape[0]):

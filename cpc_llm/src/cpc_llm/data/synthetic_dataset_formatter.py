@@ -168,6 +168,8 @@ def _get_neighbors_within_threshold(
     Returns:
         Array of column indices for neighbors within the threshold.
     """
+    # All stored distances are positive for PyNNDescent output,
+    # so .indices matches nonzero()[1] but avoids extra indexing.
     row_csr = transformed.getrow(row_idx)
     return row_csr.indices[row_csr.data <= threshold]
 
@@ -237,8 +239,8 @@ def find_dense_pairs(
 def get_score_pairs_df(
     i: int,
     j: int,
-    scores: torch.Tensor,
-    library: torch.Tensor,
+    scores: torch.Tensor | np.ndarray,
+    library: torch.Tensor | np.ndarray,
     allow_same_score_pair: bool = False,
     loglikelihood_values: np.ndarray | None = None,
 ) -> Dict[str, Any] | None:
@@ -289,10 +291,10 @@ def get_score_pairs_df(
 
 
 def get_score_pairs(
-    score_i: torch.Tensor,  # single-element tensor
-    score_j: torch.Tensor,
-    particle_i: torch.Tensor,
-    particle_j: torch.Tensor,
+    score_i: torch.Tensor | np.ndarray,
+    score_j: torch.Tensor | np.ndarray,
+    particle_i: torch.Tensor | np.ndarray,
+    particle_j: torch.Tensor | np.ndarray,
     allow_same_score_pair: bool = False,
 ) -> Dict[str, Any] | None:
     # Convert to Python floats early for fast comparison and formatting
@@ -332,8 +334,8 @@ def get_score_pairs(
 
 def get_outputs_from_idx_pairs(
     idx_pairs: List[Tuple[int, int]],
-    library: torch.Tensor,
-    scores: torch.Tensor,
+    library: torch.Tensor | np.ndarray,
+    scores: torch.Tensor | np.ndarray,
     allow_same_score_pair: bool = False,
     df: pd.DataFrame | None = None,
 ) -> List[Dict[str, Any]]:
@@ -448,7 +450,7 @@ def find_preference_pairs(cfg: DictConfig, df: pd.DataFrame) -> List[Dict[str, A
                 idx_triples.add((i, pair_idx[1], pair_idx[0]))
     idx_triples = list(idx_triples)
     # Pre-format all scores as strings to avoid repeated Tensor.__format__ calls
-    formatted_scores = [f"{s.item():.3f}" for s in filtered_scores]
+    formatted_scores = [f"{x:.3f}" for x in scores_np]
     outputs = []
     for x_idx, yw_idx, yl_idx in tqdm(
         idx_triples, desc="Creating preference output records"
