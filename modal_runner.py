@@ -42,6 +42,8 @@ Headless / deploy mode (survives laptop sleep or terminal close):
 
 from pathlib import Path
 
+import logging
+
 import modal
 
 app = modal.App("cpc-llm")
@@ -124,6 +126,9 @@ def _setup_env():
     os.environ["HF_HOME"] = HF_CACHE_PATH
     os.environ["TRANSFORMERS_CACHE"] = f"{HF_CACHE_PATH}/hub"
 
+    # Reduce CUDA memory fragmentation from repeated model load/unload cycles
+    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
     # Ensure subprocesses can find cpc_llm
     python_path = os.environ.get("PYTHONPATH", "")
     new_paths = f"{app_path}:{app_path}/cpc_llm/src"
@@ -133,6 +138,34 @@ def _setup_env():
         )
 
     return app_path
+
+
+def _persist_wandb_logs(
+    app_path: str, output_dir: str, logger: "logging.Logger"
+) -> None:
+    """Copy wandb offline logs from container-local /app/cpc/outputs/ to the persistent volume."""
+    import shutil
+    from pathlib import Path
+
+    wandb_src = Path(app_path) / "outputs"
+    wandb_dst = Path(output_dir) / "wandb_logs"
+    if not wandb_src.exists():
+        logger.info("No wandb logs found to persist")
+        return
+    wandb_runs = list(wandb_src.rglob("wandb/offline-run-*")) + list(
+        wandb_src.rglob("wandb/run-*")
+    )
+    if not wandb_runs:
+        logger.info("No wandb run directories found")
+        return
+    wandb_dst.mkdir(parents=True, exist_ok=True)
+    for run_dir in wandb_runs:
+        dst = wandb_dst / run_dir.name
+        if dst.exists():
+            continue
+        logger.info(f"Copying wandb logs: {run_dir} -> {dst}")
+        shutil.copytree(run_dir, dst)
+    logger.info(f"Persisted {len(wandb_runs)} wandb run(s) to {wandb_dst}")
 
 
 @app.function(
@@ -178,6 +211,7 @@ def run_experiment_remote(
     if torch.cuda.is_available():
         logger.info(f"CUDA device: {torch.cuda.get_device_name(0)}")
 
+    output_dir = OUTPUTS_PATH  # fallback if exception occurs before config resolution
     try:
         import hydra
         from omegaconf import OmegaConf
@@ -233,6 +267,9 @@ def run_experiment_remote(
             set_post_subprocess_hook(outputs_volume.commit)
             run_pipeline(cfg, on_round_complete=outputs_volume.commit)
 
+        # Copy wandb logs to the persistent volume before container exits
+        _persist_wandb_logs(app_path, output_dir, logger)
+
         # Persist any newly downloaded models and pipeline outputs to volumes
         hf_cache_volume.commit()
         outputs_volume.commit()
@@ -245,6 +282,7 @@ def run_experiment_remote(
         import traceback
 
         traceback.print_exc()
+        _persist_wandb_logs(app_path, output_dir, logger)
         outputs_volume.commit()  # persist partial work so --cache can resume
         raise
 
