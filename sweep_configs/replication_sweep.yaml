@@ -6,7 +6,7 @@
 #   modal run modal_runner.py --sweep sweep_configs/replication_sweep.yaml
 
 base_config: cpc_llm
-cache: true
+cache: false
 overrides: []
 
 parameters:
