@@ -16,6 +16,7 @@ dependencies = [
     "optuna>=3.6",
     "pandas>=2.2",
     "peft>=0.11",
+    "pydantic>=2.0",
     "pynndescent>=0.5",
     "pytorch-holo>=0.0.1",
     "s3fs>=2024.5",

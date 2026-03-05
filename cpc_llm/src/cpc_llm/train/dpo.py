@@ -193,8 +193,13 @@ def main(cfg: DictConfig):
         )
         train_dataset = ds["train"]
         eval_dataset = ds["test"]
+        if len(train_dataset) == 0:
+            transformers_logger.warning(
+                "DPO training dataset is empty after processing — skipping training"
+            )
+            return training_args.output_dir
         transformers_logger.info("Printing first 2 examples of formatted dataset:")
-        for ex in train_dataset.select(range(2)):
+        for ex in train_dataset.select(range(min(2, len(train_dataset)))):
             transformers_logger.info(ex)
     else:
         # Load pre-tokenized data instead

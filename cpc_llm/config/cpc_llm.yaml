@@ -80,6 +80,7 @@ split:
 temperature_init: 1.0 #1.0 #0.8 #1.0
 temperature: 1.0 #1.0
 
+# Note: each num_*_rounds runs N-1 policy improvement iterations (round 0 is initial SFT)
 num_dpo_rounds: 10
 num_init_sft_rounds: 1 #5 #10
 num_sft_rounds: 0 #10
