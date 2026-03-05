@@ -38,6 +38,14 @@ Headless / deploy mode (survives laptop sleep or terminal close):
 
     # Cancel a running headless job
     modal run modal_runner.py --cancel <call_id>
+
+Sweep mode (parallel runs across seeds/alpha/etc.):
+    # Define a sweep config (see sweep_configs/ for examples)
+    # Requires: modal deploy modal_runner.py  (run once first)
+    modal run modal_runner.py --sweep sweep_configs/test_sweep.yaml
+
+    # Check status of all jobs from a sweep
+    modal run modal_runner.py --sweep-status .sweep_runs/<record>.json
 """
 
 from pathlib import Path
@@ -364,6 +372,173 @@ def check_progress_remote() -> str:
     return str(latest)
 
 
+def _build_sweep_jobs(
+    sweep_path: str,
+) -> tuple[str, bool, list[str], list[list[str]]]:
+    """Parse sweep config and return job override lists.
+
+    The sweep config is a plain YAML file (not Hydra) with:
+        base_config: <hydra config name>
+        cache: <bool>
+        overrides: [<fixed hydra overrides>]
+        parameters:
+            <hydra.override.key>: [val1, val2, ...]
+
+    Returns the cartesian product of all parameter values as override lists.
+    Workaround: if ``initial_seed`` is swept, ``last_seed`` is auto-set to
+    match so each container runs exactly one seed.
+
+    Args:
+        sweep_path: Path to sweep YAML file.
+
+    Returns:
+        Tuple of (base_config, cache, fixed_overrides, jobs) where each job
+        is a list of Hydra override strings.
+    """
+    import itertools
+
+    import yaml
+
+    sweep_file = Path(sweep_path)
+    if not sweep_file.exists():
+        raise FileNotFoundError(f"Sweep config not found: {sweep_path}")
+
+    with open(sweep_file) as f:
+        sweep_cfg = yaml.safe_load(f)
+
+    if "base_config" not in sweep_cfg:
+        raise ValueError("Sweep config must specify 'base_config'")
+
+    base_config: str = sweep_cfg["base_config"]
+    cache: bool = sweep_cfg.get("cache", False)
+    fixed_overrides: list[str] = sweep_cfg.get("overrides", [])
+    parameters: dict[str, list] = sweep_cfg.get("parameters", {})
+
+    for key, values in parameters.items():
+        if not isinstance(values, list):
+            raise ValueError(
+                f"Parameter '{key}' must be a list, got {type(values).__name__}"
+            )
+
+    if not parameters:
+        return base_config, cache, fixed_overrides, [list(fixed_overrides)]
+
+    param_names = list(parameters.keys())
+    param_values = [parameters[k] for k in param_names]
+
+    jobs: list[list[str]] = []
+    for combo in itertools.product(*param_values):
+        job_overrides = list(fixed_overrides)
+        for name, value in zip(param_names, combo):
+            job_overrides.append(f"{name}={value}")
+
+        # Seed workaround: keep last_seed in sync so the main loop runs once.
+        if "initial_seed" in parameters:
+            seed_val = combo[param_names.index("initial_seed")]
+            job_overrides.append(f"last_seed={seed_val}")
+
+        jobs.append(job_overrides)
+
+    return base_config, cache, fixed_overrides, jobs
+
+
+def _run_sweep(sweep_path: str) -> None:
+    """Parse sweep config, spawn all jobs, print call ID table.
+
+    Always headless — requires prior ``modal deploy modal_runner.py``.
+
+    Args:
+        sweep_path: Path to sweep YAML file.
+    """
+    import json
+    from datetime import datetime
+
+    base_config, cache, fixed_overrides, jobs = _build_sweep_jobs(sweep_path)
+
+    fn = modal.Function.from_name("cpc-llm", "run_experiment_remote")
+
+    print(f"Sweep: {sweep_path}")
+    print(f"Base config: {base_config}")
+    print(f"Cache: {cache}")
+    if fixed_overrides:
+        print(f"Fixed overrides: {fixed_overrides}")
+    print(f"Total jobs: {len(jobs)}")
+    print()
+
+    call_ids: list[tuple[int, list[str], str]] = []
+    for i, job_overrides in enumerate(jobs):
+        call = fn.spawn(base_config, job_overrides, cache=cache)
+        call_id = call.object_id
+        call_ids.append((i, job_overrides, call_id))
+        override_str = ", ".join(job_overrides)
+        print(f"  [{i}] {call_id}  {override_str}")
+
+    print()
+    print("=" * 72)
+    print(f"Spawned {len(call_ids)} jobs")
+    print("=" * 72)
+
+    # Save record for --sweep-status
+    sweep_record = {
+        "sweep_path": sweep_path,
+        "timestamp": datetime.now().isoformat(),
+        "base_config": base_config,
+        "cache": cache,
+        "jobs": [
+            {"index": i, "call_id": cid, "overrides": ovr} for i, ovr, cid in call_ids
+        ],
+    }
+    record_dir = Path(".sweep_runs")
+    record_dir.mkdir(parents=True, exist_ok=True)
+    stem = Path(sweep_path).stem
+    record_path = record_dir / f"{stem}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    record_path.write_text(json.dumps(sweep_record, indent=2))
+
+    print()
+    print(f"Sweep record: {record_path}")
+    print()
+    print("Check all statuses:")
+    print(f"  modal run modal_runner.py --sweep-status {record_path}")
+    print()
+    print("Check individual job:")
+    print("  modal run modal_runner.py --status <call_id>")
+    print()
+    print("Dashboard: https://modal.com/apps/samuelstanton/cpc-llm")
+
+
+def _show_sweep_status(record_path: str) -> None:
+    """Show status of all jobs from a sweep run.
+
+    Args:
+        record_path: Path to a ``.sweep_runs/*.json`` record file.
+    """
+    import json
+
+    from modal.call_graph import InputStatus  # noqa: F401 (used for type context)
+
+    record = json.loads(Path(record_path).read_text())
+
+    print(f"Sweep: {record['sweep_path']}")
+    print(f"Started: {record['timestamp']}")
+    print(f"Jobs: {len(record['jobs'])}")
+    print()
+    print(f"{'Job':>4}  {'Status':<12}  {'Call ID':<32}  Overrides")
+    print("-" * 80)
+
+    for job in record["jobs"]:
+        call_id = job["call_id"]
+        try:
+            call = modal.FunctionCall.from_id(call_id)
+            graph = call.get_call_graph()
+            status = graph[0].status.name
+        except Exception:
+            status = "UNKNOWN"
+        override_str = ", ".join(job["overrides"])
+        print(f"{job['index']:>4}  {status:<12}  {call_id:<32}  {override_str}")
+
+    print()
+
+
 def _show_status(call_id: str) -> None:
     """Show status and result of a spawned job. Pure local operation."""
     from modal.call_graph import InputStatus
@@ -418,6 +593,8 @@ def main_entrypoint(
     cache: bool = False,
     check_progress: bool = False,
     deploy: bool = False,
+    sweep: str = "",
+    sweep_status: str = "",
     status: str = "",
     cancel: str = "",
     overrides: str = None,
@@ -458,8 +635,19 @@ def main_entrypoint(
 
         # Cancel a running headless job
         modal run modal_runner.py --cancel <call_id>
+
+        # Sweep mode (parallel runs across seeds/alpha/etc.)
+        # Requires: modal deploy modal_runner.py  (run once first)
+        modal run modal_runner.py --sweep sweep_configs/test_sweep.yaml
+
+        # Check status of all jobs from a sweep
+        modal run modal_runner.py --sweep-status .sweep_runs/<record>.json
     """
-    if test:
+    if sweep:
+        _run_sweep(sweep)
+    elif sweep_status:
+        _show_sweep_status(sweep_status)
+    elif test:
         print("Running environment test...")
         result = test_environment.remote()
         print(f"Result: {result}")

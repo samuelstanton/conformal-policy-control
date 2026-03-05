@@ -18,3 +18,4 @@ build/
 # Project
 outputs/
 slurm_outputs/
+.sweep_runs/

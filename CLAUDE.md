@@ -48,6 +48,17 @@ uv run modal run modal_runner.py --cancel <call_id>  # cancel a running headless
 # Dashboard: https://modal.com/apps/samuelstanton/cpc-llm
 ```
 
+Sweep mode (parallel runs across seeds, alpha, etc.):
+
+```bash
+uv run modal deploy modal_runner.py                                    # one-time deploy
+uv run modal run modal_runner.py --sweep sweep_configs/test_sweep.yaml # launch sweep
+uv run modal run modal_runner.py --sweep-status .sweep_runs/<record>.json  # check all jobs
+```
+
+Sweep configs are plain YAML files defining a cartesian product of Hydra override parameters.
+See `sweep_configs/` for examples.
+
 Modal automatically forces `job_submission_system=direct` and `parent_output_dir=null`.
 
 ## Project layout
