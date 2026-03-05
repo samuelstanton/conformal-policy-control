@@ -181,7 +181,7 @@ def _persist_wandb_logs(
     gpu="A100",
     cpu=8,
     memory=65536,
-    timeout=43200,  # 12 hours
+    timeout=57600,  # 16 hours
     secrets=[modal.Secret.from_name("wandb")],
     volumes={HF_CACHE_PATH: hf_cache_volume, OUTPUTS_PATH: outputs_volume},
 )
