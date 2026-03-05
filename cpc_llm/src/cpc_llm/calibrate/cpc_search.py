@@ -850,7 +850,7 @@ def cpc_beta_search(
                     beta_t=float(beta_t),
                     psi_hat_t=float(psi_hat_t),
                     grid_size=len(G),
-                    grid_position_selected=b,
+                    grid_position_selected=max(b - 1, 0),
                     risk_margin=float(adjusted_alpha - w_infeasible_normalized),
                     w_test=last_w_test,
                     proposal_selected=proposal,

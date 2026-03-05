@@ -1,7 +1,8 @@
 """Structured metrics for CPC-LLM pipeline logging.
 
 Pydantic models define the experiment data schema. JSON serialization is the
-source of truth; wandb consumes the flat dict as a lightweight secondary sink.
+source of truth; wandb consumes the nested dict (via ``model_dump()``) as a lightweight
+secondary sink, logging keys like ``cpc/beta_t``, ``ar_sampling/n_accepted``.
 """
 
 from __future__ import annotations
@@ -20,8 +21,8 @@ from pydantic import BaseModel, ConfigDict
 class SampleQualityMetrics(BaseModel):
     """Aggregate quality stats for a set of samples (accepted or rejected).
 
-    Computed from the ``score`` column of proposal DataFrames. Feasibility is
-    determined by whether the score is finite (non-nan, non-inf).
+    Computed from the ``score`` column of proposal DataFrames. Parsability
+    requires a non-NaN score; feasibility additionally excludes infinite scores.
     """
 
     model_config = ConfigDict(ser_json_inf_nan="constants")

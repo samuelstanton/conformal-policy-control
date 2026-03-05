@@ -595,7 +595,7 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
             )
             round_summary_fp = os.path.join(pi_model_fp_list[-1], "round_summary.json")
             if cfg.overwrite_ig or not file_client.exists(round_summary_fp):
-                with open(round_summary_fp, "w") as f:
+                with file_client.open(round_summary_fp, "w") as f:
                     f.write(round_summary.model_dump_json(indent=2))
             logger.info(f"Round {i} summary written to {round_summary_fp}")
 
@@ -929,7 +929,7 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
             )
             round_summary_fp = os.path.join(pi_model_fp_list[-1], "round_summary.json")
             if cfg.overwrite_ig or not file_client.exists(round_summary_fp):
-                with open(round_summary_fp, "w") as f:
+                with file_client.open(round_summary_fp, "w") as f:
                     f.write(round_summary.model_dump_json(indent=2))
             logger.info(f"Round {i} summary written to {round_summary_fp}")
 
@@ -1258,7 +1258,7 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
             )
             round_summary_fp = os.path.join(pi_model_fp_list[-1], "round_summary.json")
             if cfg.overwrite_ig or not file_client.exists(round_summary_fp):
-                with open(round_summary_fp, "w") as f:
+                with file_client.open(round_summary_fp, "w") as f:
                     f.write(round_summary.model_dump_json(indent=2))
             logger.info(f"Round {i} summary written to {round_summary_fp}")
 
