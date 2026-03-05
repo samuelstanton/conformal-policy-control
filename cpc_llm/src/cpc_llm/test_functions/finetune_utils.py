@@ -402,6 +402,8 @@ def parse_particle_and_score_permissive(
     particle = [
         int(x) for x in particle
     ]  ## Will return this one (only modifying length if needed)
+    if len(particle) == 0:
+        return None
     particle_for_scoring = (
         particle.copy()
     )  ## Will use this one for scoring (permissive score function)

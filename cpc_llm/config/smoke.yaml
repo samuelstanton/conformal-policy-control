@@ -11,9 +11,9 @@ sanity_check: False
 
 evol_dataset_gen:
   args:
-    num_opt_steps: 3
+    num_opt_steps: 5
     optimizer:
-      num_particles: 100
+      num_particles: 200
 
 iterative_generation:
   num_jobs: 1
