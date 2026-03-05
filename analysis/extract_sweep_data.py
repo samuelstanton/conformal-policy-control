@@ -57,13 +57,24 @@ def extract_sweep_data(
     alpha_set = set(alphas) if alphas else None
     seed_set = set(seeds) if seeds else None
 
-    def score_stats(df: pd.DataFrame) -> dict:
+    def score_stats(df: pd.DataFrame) -> dict[str, float | int | None]:
+        """Compute feasibility and score statistics from a scored DataFrame.
+
+        Args:
+            df: DataFrame with a ``score`` column. Infeasible samples have
+                non-finite scores (NaN or ±inf).
+
+        Returns:
+            Dict with ``frac_infeasible``, ``mean_score``, ``max_score``,
+            ``n_total``, and ``n_feasible``.
+        """
         scores = df["score"].to_numpy(dtype=float)
         finite = scores[np.isfinite(scores)]
         return {
             "frac_infeasible": 1.0 - len(finite) / len(scores)
             if len(scores) > 0
             else None,
+            # Raw scores are negative (closer to 0 is better); negate for display
             "mean_score": float(-np.mean(finite)) if len(finite) else None,
             "max_score": float(-np.min(finite)) if len(finite) else None,
             "n_total": len(scores),
@@ -125,7 +136,9 @@ def extract_sweep_data(
             if not accepted_files:
                 continue
             try:
-                df = pd.read_json(accepted_files[0], orient="records", lines=True)
+                df = pd.read_json(
+                    sorted(accepted_files)[0], orient="records", lines=True
+                )
                 if "score" not in df.columns:
                     continue
                 row = {"seed": seed, "alpha": alpha, "round_idx": round_idx}
@@ -138,7 +151,7 @@ def extract_sweep_data(
 
 
 @app.local_entrypoint()
-def main():
+def main() -> None:
     results = extract_sweep_data.remote()
     out_path = Path("sweep_data.json")
     out_path.write_text(json.dumps(results, indent=2))

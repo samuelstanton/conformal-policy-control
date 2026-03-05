@@ -18,6 +18,8 @@ from __future__ import annotations
 import argparse
 import json
 import matplotlib
+
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
@@ -72,14 +74,25 @@ def build_lookup(
         if r0:
             for a in alphas:
                 if (a, s, 0) not in lookup:
-                    lookup[(a, s, 0)] = r0
+                    lookup[(a, s, 0)] = dict(r0)
     return lookup
 
 
 def get_series(
     lookup: dict, alpha: float, seeds: list[int], max_round: int, metric: str
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Per-seed values for a metric across rounds."""
+    """Gather per-seed values for a metric across rounds.
+
+    Args:
+        lookup: (alpha, seed, round_idx) -> row dict.
+        alpha: Alpha value to query.
+        seeds: Seed values to include.
+        max_round: Maximum round index.
+        metric: Key to extract from each row.
+
+    Returns:
+        Tuple of (rounds array, per-seed values array of shape (n_seeds, n_rounds)).
+    """
     rounds = np.arange(0, max_round + 1)
     per_seed = []
     for s in seeds:
@@ -90,7 +103,17 @@ def get_series(
 def get_cummax_series(
     lookup: dict, alpha: float, seeds: list[int], max_round: int
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Per-seed cumulative max of max_score across rounds."""
+    """Compute per-seed cumulative max of max_score across rounds.
+
+    Args:
+        lookup: (alpha, seed, round_idx) -> row dict.
+        alpha: Alpha value to query.
+        seeds: Seed values to include.
+        max_round: Maximum round index.
+
+    Returns:
+        Tuple of (rounds array, per-seed cummax array of shape (n_seeds, n_rounds)).
+    """
     rounds = np.arange(0, max_round + 1)
     per_seed = []
     for s in seeds:
@@ -112,7 +135,6 @@ def plot_sweep(data: list[dict], output: str = "sweep_results.png") -> None:
         data: List of per-round metric dicts from extract_sweep_data.
         output: Path to save the figure.
     """
-    matplotlib.use("Agg")
     sns.set_theme(style="white", font_scale=1.1)
 
     alphas = sorted({r["alpha"] for r in data})
