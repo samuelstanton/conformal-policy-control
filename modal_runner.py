@@ -406,6 +406,9 @@ def _build_sweep_jobs(
     with open(sweep_file) as f:
         sweep_cfg = yaml.safe_load(f)
 
+    if not isinstance(sweep_cfg, dict):
+        raise ValueError(f"Sweep config is empty or invalid: {sweep_path}")
+
     if "base_config" not in sweep_cfg:
         raise ValueError("Sweep config must specify 'base_config'")
 
@@ -433,9 +436,12 @@ def _build_sweep_jobs(
             job_overrides.append(f"{name}={value}")
 
         # Seed workaround: keep last_seed in sync so the main loop runs once.
-        if "initial_seed" in parameters:
-            seed_val = combo[param_names.index("initial_seed")]
-            job_overrides.append(f"last_seed={seed_val}")
+        # Skipped if last_seed is already set in fixed_overrides or parameters.
+        if "initial_seed" in parameters and "last_seed" not in parameters:
+            has_last_seed = any(o.startswith("last_seed=") for o in fixed_overrides)
+            if not has_last_seed:
+                seed_val = combo[param_names.index("initial_seed")]
+                job_overrides.append(f"last_seed={seed_val}")
 
         jobs.append(job_overrides)
 
@@ -514,8 +520,6 @@ def _show_sweep_status(record_path: str) -> None:
     """
     import json
 
-    from modal.call_graph import InputStatus  # noqa: F401 (used for type context)
-
     record = json.loads(Path(record_path).read_text())
 
     print(f"Sweep: {record['sweep_path']}")
@@ -531,8 +535,8 @@ def _show_sweep_status(record_path: str) -> None:
             call = modal.FunctionCall.from_id(call_id)
             graph = call.get_call_graph()
             status = graph[0].status.name
-        except Exception:
-            status = "UNKNOWN"
+        except Exception as exc:
+            status = f"UNKNOWN ({type(exc).__name__})"
         override_str = ", ".join(job["overrides"])
         print(f"{job['index']:>4}  {status:<12}  {call_id:<32}  {override_str}")
 
