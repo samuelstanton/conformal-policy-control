@@ -397,7 +397,7 @@ def parse_particle_and_score_permissive(
     try:
         if any([int(x) != x for x in particle]):
             return None
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OverflowError):
         return None
     particle = [
         int(x) for x in particle
