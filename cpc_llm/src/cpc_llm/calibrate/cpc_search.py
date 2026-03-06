@@ -104,6 +104,7 @@ def cpc_beta_search(
             logger.warning(
                 f"Skipping empty calibration file at index {i}: {', '.join(empty)}"
             )
+            n_cal_per_model.append(0)
             continue
 
         if len(cal_data_constrained_curr) != len(cal_data_unconstrained_curr):
