@@ -262,6 +262,12 @@ def compute_likelihoods_one_model_all_data(
         # Load target data
         target_df = pd.read_json(target_data_path, orient="records", lines=True)
 
+        if target_df.empty:
+            logger.warning(
+                f"Skipping empty calibration file (round {i}): {target_data_path}"
+            )
+            continue
+
         # Keep only particle/score + existing likelihood columns
         lik_col_names_prev = [lik_col(c) for c in range(num_prev_cal)]
         if SCORE in target_df.columns:

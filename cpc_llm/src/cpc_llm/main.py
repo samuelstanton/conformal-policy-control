@@ -468,6 +468,19 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                     cal_data_unconstrained_fp_list[c_i], orient="records", lines=True
                 )
 
+                if cal_data_constrained_curr.empty or cal_data_unconstrained_curr.empty:
+                    empty = []
+                    if cal_data_constrained_curr.empty:
+                        empty.append(f"constrained={cal_data_constrained_fp}")
+                    if cal_data_unconstrained_curr.empty:
+                        empty.append(
+                            f"unconstrained={cal_data_unconstrained_fp_list[c_i]}"
+                        )
+                    logger.warning(
+                        f"Skipping calibration index {c_i}, empty file(s): {', '.join(empty)}"
+                    )
+                    continue
+
                 num_lik_cols_constrained_curr = (
                     len(cal_data_constrained_curr.columns) - 2
                 )  ## Number of steps for which constrained likelihood has been computed
@@ -767,6 +780,19 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                 cal_data_unconstrained_curr = pd.read_json(
                     cal_data_unconstrained_fp_list[c_i], orient="records", lines=True
                 )
+
+                if cal_data_constrained_curr.empty or cal_data_unconstrained_curr.empty:
+                    empty = []
+                    if cal_data_constrained_curr.empty:
+                        empty.append(f"constrained={cal_data_constrained_fp}")
+                    if cal_data_unconstrained_curr.empty:
+                        empty.append(
+                            f"unconstrained={cal_data_unconstrained_fp_list[c_i]}"
+                        )
+                    logger.warning(
+                        f"Skipping calibration index {c_i}, empty file(s): {', '.join(empty)}"
+                    )
+                    continue
 
                 num_lik_cols_constrained_curr = (
                     len(cal_data_constrained_curr.columns) - 2
@@ -1091,6 +1117,19 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                 cal_data_unconstrained_curr = pd.read_json(
                     cal_data_unconstrained_fp_list[c_i], orient="records", lines=True
                 )
+
+                if cal_data_constrained_curr.empty or cal_data_unconstrained_curr.empty:
+                    empty = []
+                    if cal_data_constrained_curr.empty:
+                        empty.append(f"constrained={cal_data_constrained_fp}")
+                    if cal_data_unconstrained_curr.empty:
+                        empty.append(
+                            f"unconstrained={cal_data_unconstrained_fp_list[c_i]}"
+                        )
+                    logger.warning(
+                        f"Skipping calibration index {c_i}, empty file(s): {', '.join(empty)}"
+                    )
+                    continue
 
                 num_lik_cols_constrained_curr = (
                     len(cal_data_constrained_curr.columns) - 2
