@@ -217,8 +217,8 @@ initial_sft:
     training_args:
       num_train_epochs: 10 #10 #2 #10
       seed: 0
-      eval_strategy: epoch
-      save_strategy: epoch
+      eval_steps: 0.1
+      save_steps: 0.2
       learning_rate: 1e-6
       per_device_train_batch_size: 32 #16 #2
       per_device_eval_batch_size: 256
@@ -271,8 +271,8 @@ sft:
     training_args:
       num_train_epochs: 2  #5
       seed: 0
-      eval_strategy: epoch
-      save_strategy: epoch
+      eval_steps: 0.1
+      save_steps: 0.2
       learning_rate: 1e-4 #1e-6
       per_device_train_batch_size: 16 #2
       per_device_eval_batch_size: 256
@@ -472,8 +472,8 @@ dpo:
       beta: 0.4
       gradient_accumulation_steps: 1
       num_train_epochs: 1 #1 #2 #2 #1
-      eval_strategy: epoch
-      save_strategy: epoch
+      eval_steps: 0.1
+      save_steps: 0.2
       torch_compile: false
       max_length: 256
       log_level: "info"
@@ -508,8 +508,8 @@ marge:
       beta: 10.0
       gradient_accumulation_steps: 1
       num_train_epochs: 1
-      eval_strategy: epoch
-      save_strategy: epoch
+      eval_steps: 0.1
+      save_steps: 0.2
       torch_compile: false
       self_normalize_weights: True
       reinforce_style: False
