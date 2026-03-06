@@ -33,7 +33,7 @@ class TestBuildSweepJobs:
             },
         }
         path = _write_sweep_config(tmp_path, config)
-        base, cache, fixed, jobs = _build_sweep_jobs(path)
+        base, cache, _name, fixed, jobs = _build_sweep_jobs(path)
 
         assert base == "smoke"
         assert cache is True
@@ -47,7 +47,7 @@ class TestBuildSweepJobs:
             "parameters": {"initial_seed": [3, 7]},
         }
         path = _write_sweep_config(tmp_path, config)
-        _, _, _, jobs = _build_sweep_jobs(path)
+        *_, jobs = _build_sweep_jobs(path)
 
         assert len(jobs) == 2
         assert "initial_seed=3" in jobs[0]
@@ -62,7 +62,7 @@ class TestBuildSweepJobs:
             "parameters": {"initial_seed": [0]},
         }
         path = _write_sweep_config(tmp_path, config)
-        _, _, fixed, jobs = _build_sweep_jobs(path)
+        _, _, _name, fixed, jobs = _build_sweep_jobs(path)
 
         assert fixed == ["num_dpo_rounds=3"]
         assert "num_dpo_rounds=3" in jobs[0]
@@ -74,7 +74,7 @@ class TestBuildSweepJobs:
             "overrides": ["num_dpo_rounds=1"],
         }
         path = _write_sweep_config(tmp_path, config)
-        _, _, _, jobs = _build_sweep_jobs(path)
+        *_, jobs = _build_sweep_jobs(path)
 
         assert len(jobs) == 1
         assert jobs[0] == ["num_dpo_rounds=1"]
@@ -107,7 +107,7 @@ class TestBuildSweepJobs:
             "parameters": {"conformal_policy_control.alpha": [0.1, 0.5]},
         }
         path = _write_sweep_config(tmp_path, config)
-        _, _, _, jobs = _build_sweep_jobs(path)
+        *_, jobs = _build_sweep_jobs(path)
 
         assert len(jobs) == 2
         for job in jobs:

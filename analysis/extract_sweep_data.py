@@ -102,6 +102,10 @@ def extract_sweep_data(
             continue
         alpha = float(alpha_m.group(1))
         seed = int(seed_m.group(1))
+        sweep_name_file = d / ".sweep_name"
+        sweep_name = (
+            sweep_name_file.read_text().strip() if sweep_name_file.exists() else None
+        )
         if alpha_set and alpha not in alpha_set:
             continue
         if seed_set and seed not in seed_set:
@@ -115,7 +119,12 @@ def extract_sweep_data(
                 gen_file = max(gen_files, key=lambda f: f.stat().st_size)
                 try:
                     df = pd.read_json(gen_file, orient="records", lines=True)
-                    row = {"seed": seed, "alpha": alpha, "round_idx": 0}
+                    row = {
+                        "sweep_name": sweep_name,
+                        "seed": seed,
+                        "alpha": alpha,
+                        "round_idx": 0,
+                    }
                     row.update(score_stats(df))
                     results.append(row)
                 except Exception as e:
@@ -141,7 +150,12 @@ def extract_sweep_data(
                 )
                 if "score" not in df.columns:
                     continue
-                row = {"seed": seed, "alpha": alpha, "round_idx": round_idx}
+                row = {
+                    "sweep_name": sweep_name,
+                    "seed": seed,
+                    "alpha": alpha,
+                    "round_idx": round_idx,
+                }
                 row.update(score_stats(df))
                 results.append(row)
             except Exception as e:

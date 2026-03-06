@@ -189,6 +189,7 @@ def run_experiment_remote(
     config_name: str = "cpc_llm",
     overrides: list | None = None,
     cache: bool = False,
+    sweep_name: str | None = None,
 ):
     """Run CPC-LLM pipeline with the specified Hydra config.
 
@@ -261,6 +262,11 @@ def run_experiment_remote(
                             child.unlink()
                     outputs_volume.commit()
                     logger.info("Cleared outputs (--no-cache)")
+
+            # Tag output dir with sweep name for grouping
+            if sweep_name:
+                output_path.mkdir(parents=True, exist_ok=True)
+                (output_path / ".sweep_name").write_text(sweep_name)
             else:
                 output_path.mkdir(parents=True, exist_ok=True)
                 logger.info(f"Reusing cached outputs at {output_dir}")
@@ -414,6 +420,7 @@ def _build_sweep_jobs(
 
     base_config: str = sweep_cfg["base_config"]
     cache: bool = sweep_cfg.get("cache", False)
+    sweep_name: str = sweep_cfg.get("name", Path(sweep_path).stem)
     fixed_overrides: list[str] = sweep_cfg.get("overrides", [])
     parameters: dict[str, list] = sweep_cfg.get("parameters", {})
 
@@ -424,7 +431,7 @@ def _build_sweep_jobs(
             )
 
     if not parameters:
-        return base_config, cache, fixed_overrides, [list(fixed_overrides)]
+        return base_config, cache, sweep_name, fixed_overrides, [list(fixed_overrides)]
 
     param_names = list(parameters.keys())
     param_values = [parameters[k] for k in param_names]
@@ -445,7 +452,7 @@ def _build_sweep_jobs(
 
         jobs.append(job_overrides)
 
-    return base_config, cache, fixed_overrides, jobs
+    return base_config, cache, sweep_name, fixed_overrides, jobs
 
 
 def _run_sweep(sweep_path: str) -> None:
@@ -457,13 +464,22 @@ def _run_sweep(sweep_path: str) -> None:
         sweep_path: Path to sweep YAML file.
     """
     import json
+    import uuid
     from datetime import datetime
 
-    base_config, cache, fixed_overrides, jobs = _build_sweep_jobs(sweep_path)
+    base_config, cache, sweep_name, fixed_overrides, jobs = _build_sweep_jobs(
+        sweep_path
+    )
+
+    # Make sweep_name unique with timestamp + short uuid
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    short_id = uuid.uuid4().hex[:6]
+    sweep_name = f"{sweep_name}_{timestamp}_{short_id}"
 
     fn = modal.Function.from_name("cpc-llm", "run_experiment_remote")
 
     print(f"Sweep: {sweep_path}")
+    print(f"Sweep name: {sweep_name}")
     print(f"Base config: {base_config}")
     print(f"Cache: {cache}")
     if fixed_overrides:
@@ -473,7 +489,7 @@ def _run_sweep(sweep_path: str) -> None:
 
     call_ids: list[tuple[int, list[str], str]] = []
     for i, job_overrides in enumerate(jobs):
-        call = fn.spawn(base_config, job_overrides, cache=cache)
+        call = fn.spawn(base_config, job_overrides, cache=cache, sweep_name=sweep_name)
         call_id = call.object_id
         call_ids.append((i, job_overrides, call_id))
         override_str = ", ".join(job_overrides)

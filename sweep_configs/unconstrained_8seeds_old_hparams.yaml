@@ -6,6 +6,7 @@
 #   modal deploy modal_runner.py
 #   modal run modal_runner.py --sweep sweep_configs/unconstrained_8seeds_old_hparams.yaml
 
+name: unconstrained_old_hparams
 base_config: cpc_llm
 cache: false
 overrides:
