@@ -1,0 +1,39 @@
+# Unconstrained baseline with old-style hparams: 8 seeds x alpha=1.0.
+# Reverts max_length, attn_implementation, and eval_batch_size to dev values
+# to isolate whether these cause the round-0 infeasibility gap.
+#
+# Usage:
+#   modal deploy modal_runner.py
+#   modal run modal_runner.py --sweep sweep_configs/unconstrained_8seeds_old_hparams.yaml
+
+base_config: cpc_llm
+cache: false
+overrides:
+  # Revert max_length / max_new_tokens to 512
+  - initial_sft.args.training_args.max_length=512
+  - initial_sft.args.generation_config.max_new_tokens=512
+  - initial_sft.args.seq_length=512
+  - sft.args.training_args.max_length=512
+  - sft.args.generation_config.max_new_tokens=512
+  - sft.args.seq_length=512
+  - dpo.args.dpo_config.max_length=512
+  - dpo.args.generation_config.max_new_tokens=512
+  - marge.args.marge_config.max_length=512
+  - marge.args.marge_config.max_prompt_length=256
+  - marge.args.generation_config.max_new_tokens=512
+  - initial_generation.args.generation_config.max_new_tokens=512
+  - contrastive_generation.args.generation_config.max_new_tokens=512
+  - iterative_generation.args.generation_config.max_new_tokens=512
+  - compute_likelihooods_all_models.args.generation_config.max_new_tokens=512
+  # Revert attn_implementation to eager
+  - initial_sft.args.model_config.attn_implementation=eager
+  - sft.args.model_config.attn_implementation=eager
+  # Revert per_device_eval_batch_size to 8
+  - initial_sft.args.training_args.per_device_eval_batch_size=8
+  - sft.args.training_args.per_device_eval_batch_size=8
+  - dpo.args.dpo_config.per_device_eval_batch_size=8
+  - marge.args.marge_config.per_device_eval_batch_size=8
+
+parameters:
+  initial_seed: [0, 1, 2, 3, 4, 5, 6, 7]
+  conformal_policy_control.alpha: [1.0]
