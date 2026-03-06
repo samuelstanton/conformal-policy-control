@@ -93,6 +93,19 @@ def cpc_beta_search(
             prev_cal_data_unconstrained_liks_fp_list[i], orient="records", lines=True
         )
 
+        if cal_data_constrained_curr.empty or cal_data_unconstrained_curr.empty:
+            empty = []
+            if cal_data_constrained_curr.empty:
+                empty.append(f"constrained={prev_cal_data_constrained_liks_fp_list[i]}")
+            if cal_data_unconstrained_curr.empty:
+                empty.append(
+                    f"unconstrained={prev_cal_data_unconstrained_liks_fp_list[i]}"
+                )
+            logger.warning(
+                f"Skipping empty calibration file at index {i}: {', '.join(empty)}"
+            )
+            continue
+
         if len(cal_data_constrained_curr) != len(cal_data_unconstrained_curr):
             raise ValueError(
                 "Num samples in constrained and constrained cal sets should be same (ie, same particles)!"
