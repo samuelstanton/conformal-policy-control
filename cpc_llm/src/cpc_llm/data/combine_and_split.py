@@ -90,7 +90,15 @@ def train_cal_split_gen_outputs(
     random_seed: int = 0,
 ):
 
-    gen_outputs_df = pd.read_json(gen_outputs, orient="records", lines=True)
+    try:
+        gen_outputs_df = pd.read_json(gen_outputs, orient="records", lines=True)
+    except ValueError:
+        # Older pandas C parser fails on extreme float values; fall back to
+        # line-by-line parsing which handles inf/large values gracefully
+        import json as _json
+
+        with open(gen_outputs) as _f:
+            gen_outputs_df = pd.DataFrame([_json.loads(line) for line in _f])
 
     if first_iter:
         cal_output_path = os.path.join(
