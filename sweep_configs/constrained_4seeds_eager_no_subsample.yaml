@@ -1,0 +1,18 @@
+# Constrained CPC sweep: eager attention + no mixture proposal subsampling.
+# 4 seeds x 3 alpha values = 12 jobs.
+#
+# Usage:
+#   modal deploy modal_runner.py
+#   modal run modal_runner.py --sweep sweep_configs/constrained_4seeds_eager_no_subsample.yaml
+
+name: constrained_eager_no_subsample
+base_config: cpc_llm
+cache: false
+overrides:
+  - initial_sft.args.model_config.attn_implementation=eager
+  - sft.args.model_config.attn_implementation=eager
+  - conformal_policy_control.mixture_proposal_subsample_cpc=False
+
+parameters:
+  initial_seed: [0, 1, 2, 3]
+  conformal_policy_control.alpha: [0.4, 0.6, 0.8]
