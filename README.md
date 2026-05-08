@@ -2,7 +2,7 @@
 
 Code for "Conformal Policy Control" — a framework for enabling AI agents to automatically determine their zone of competence using conformal risk-control guarantees.
 
-By Drew Prinster, Clara Fannjiang, Ji Won Park, Anqi Liu, Suchi Saria, and Samuel Stanton.
+By Drew Prinster, Clara Fannjiang, Ji Won Park, Kyunghyun Cho, Anqi Liu, Suchi Saria, and Samuel Stanton.
 
 ## Overview
 
