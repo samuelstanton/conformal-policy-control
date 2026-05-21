@@ -297,6 +297,7 @@ def run_iterative_generation(
     args += f"sanity_check={cfg.sanity_check} "
     args += f"seed={random_seed_curr} "
     args += f"permissive_parsing={cfg.iterative_generation.permissive_parsing} "
+    args += f"min_rel_len_feasible_particle={cfg.iterative_generation.min_rel_len_feasible_particle} "
     # args += f"first_iter={cfg.first_iter}"
 
     if first_iter:
@@ -429,6 +430,7 @@ def run_compute_liks_all_models_and_cal_data(
         model_indices_str = "\\[\\]"
         model_indices = [i for i in range(len(model_dir_list))]
 
+    logger.info(f"target_fp: {target_fp}")
     output_dir = os.path.dirname(target_fp)
 
     args = f"{opt_str} input_data_path_list={seeds_fp_list_str} target_data_path={target_fp} prev_target_data_path_list={prev_cal_data_fp_list_str} model_name_or_path_list={model_dir_list_str} output_dir={output_dir} "

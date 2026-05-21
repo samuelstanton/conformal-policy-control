@@ -12,6 +12,7 @@ from ..test_functions.finetune_utils import (
     parse_particle_and_score,
     parse_particle_and_score_permissive,
     truncate_after_right_bracket,
+    remove_integer_padding_from_list,
 )
 from holo.test_functions.closed_form import Ehrlich, RoughMtFuji
 from ..core.model_client import ModelClient
@@ -105,11 +106,21 @@ def generate_single_batch(
         higher_score_particle_field=cfg.higher_score_particle_field,
         lower_score_particle_field=cfg.lower_score_particle_field,
     )
+    ## Remove integer padding (default pad is -1) from input texts
+    for j, text in enumerate(input_texts):
+        input_texts[j] = remove_integer_padding_from_list(text)
+        if (len(input_texts[j])) < len(text):
+            logger.info(f"Removed integer padding from input text {text}, new input is {input_texts[j]}")
+
+    # input_texts = [remove_integer_padding_from_list(text) for text in input_texts]
+
     logger.info(
         f"Generating texts with cfg.subsample_seeds={cfg.subsample_seeds}, "
         f"len(input_texts)={len(input_texts)}, "
         f"len(set(input_texts))={len(set(input_texts))}"
     )
+
+    logger.info(f"cfg.permissive_parsing : {cfg.permissive_parsing}")
 
     ## Generate and decode
     output_strs = model_client.generate_texts_batched(
@@ -118,6 +129,7 @@ def generate_single_batch(
         generation_config=gen_config,
         return_likelihoods=False,
         subsample_seeds=cfg.subsample_seeds,
+        logger=logger,
     )
 
     ## Truncate after closing bracket and parse
@@ -127,8 +139,10 @@ def generate_single_batch(
         truncated = truncate_after_right_bracket(output_str)
 
         if cfg.permissive_parsing:
-            result = parse_particle_and_score_permissive(truncated, test_fn)
+            # logger.info(f"Permissive parsing enabled. Truncated: {truncated}")
+            result = parse_particle_and_score_permissive(truncated, test_fn, cfg, logger)
         else:
+            # logger.info(f"Permissive parsing disabled. Truncated: {truncated}")
             result = parse_particle_and_score(truncated, test_fn)
 
         num_particles_generated += 1

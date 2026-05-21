@@ -11,6 +11,7 @@ from datasets import Dataset
 from ..infrastructure.file_handler import LocalOrS3Client
 from ..infrastructure.retry import cuda_retry
 from ..test_functions.finetune_utils import (
+    drop_pad_ints,
     formatting_texts_func_edit_pairs,
     load_test_fn_from_file,
     strtobool,
@@ -183,8 +184,8 @@ def main(cfg: DictConfig):
                 include_target=False,
                 higher_score_particle_field=PROMPT,
             )[0]
-            row[CHOSEN] = json.dumps([int(x) for x in row[CHOSEN]])
-            row[REJECTED] = json.dumps([int(x) for x in row[REJECTED]])
+            row[CHOSEN] = json.dumps(drop_pad_ints(row[CHOSEN]))
+            row[REJECTED] = json.dumps(drop_pad_ints(row[REJECTED]))
             return row
 
         ds = ds.map(

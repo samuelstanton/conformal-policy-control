@@ -125,7 +125,7 @@ def submit_cmd_to_slurm(
     **slurm_kwargs,
 ) -> Tuple[subprocess.Popen, str]:
     if path_to_repo is None:
-        path_to_repo = "~/cdt-agents"
+        path_to_repo = "~/conformal-policy-control" #"~/cdt-agents"
 
     # Add GPU check if GPUs are requested
     num_gpus_required = slurm_kwargs.get("gpus_per_node", 0)

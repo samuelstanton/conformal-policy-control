@@ -10,7 +10,10 @@ import torch.nn as nn
 from botorch.test_functions import SyntheticTestFunction
 from collections import defaultdict
 from contextlib import nullcontext
-from ..test_functions.finetune_utils import truncate_after_right_bracket
+from ..test_functions.finetune_utils import (
+    remove_integer_padding_from_list,
+    truncate_after_right_bracket,
+)
 from holo.test_functions.closed_form import Ehrlich
 from torch.utils.data import DataLoader
 from transformers.trainer_utils import (
@@ -277,6 +280,19 @@ class DPOTrainerWithLogging(DPOTrainer):
             max_prompt_len = prompt_lens.max().item()
             prompt_ids = chosen_ids[:, :max_prompt_len]
             prompt_mask = (prompt_ids != tokenizer.pad_token_id).long()
+
+        prompt_texts = tokenizer.batch_decode(prompt_ids, skip_special_tokens=True)
+        prompt_texts = [
+            remove_integer_padding_from_list(text) for text in prompt_texts
+        ]
+        reencoded = tokenizer(
+            prompt_texts,
+            padding=True,
+            return_tensors="pt",
+            add_special_tokens=False,
+        )
+        prompt_ids = reencoded["input_ids"].to(prompt_ids.device)
+        prompt_mask = reencoded["attention_mask"].to(prompt_ids.device)
 
         with generate_context_manager():
             policy_output = model.generate(

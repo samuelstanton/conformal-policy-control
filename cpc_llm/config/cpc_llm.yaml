@@ -1,7 +1,12 @@
 log_level: info
 run_name: smaller_pythia #smaller_pythia_0.25dist_0.1maxinf_50gen
-parent_output_dir: /cv/data/ai4dd/data/prinstea/cdt-agents/cpc_llm/parent_output_20260223 #s3://prescient-pcluster-data/prinstea/llome/parent_output_20261225 #parent_output_20251225 #parent_output_20251123 #028 #parent_output_20251013_CAinit # #parent_output_20250918_noCPC  #parent_output_20250923 #_20250901_evol0.5 #/data/bucket/prinstea/llome/parent_output
-local_output_dir: /cv/home/prinstea/cdt-agents/cpc_llm/local_output_20260223 #/homefs/home/prinstea/llome/local_output_20251225 #local_output_20251225 #local_output_20251123 #028 #local_output_20251013_CAinit # #local_output_20250918_noCPC  #local_output_20250923 #_20250901_evol0.5
+parent_output_dir:  /cv/data/ai4dd/data/prinstea/conformal-policy-control/cpc_llm/parent_output_20260518
+#/cv/data/ai4dd/data/prinstea/conformal-policy-control/cpc_llm/parent_output_20260513
+#/cv/scratch/u/prinstea/conformal-policy-control/cpc_llm/parent_output_20260513
+#/cv/data/ai4dd/data/prinstea/cdt-agents/cpc_llm/parent_output_20260223 #s3://prescient-pcluster-data/prinstea/llome/parent_output_20261225 #parent_output_20251225 #parent_output_20251123 #028 #parent_output_20251013_CAinit # #parent_output_20250918_noCPC  #parent_output_20250923 #_20250901_evol0.5 #/data/bucket/prinstea/llome/parent_output
+local_output_dir: /cv/scratch/u/prinstea/conformal-policy-control/cpc_llm/local_output_20260518
+#/cv/scratch/u/prinstea/conformal-policy-control/cpc_llm/local_output_20260513
+#/cv/home/prinstea/cdt-agents/cpc_llm/local_output_20260223 #/homefs/home/prinstea/llome/local_output_20251225 #local_output_20251225 #local_output_20251123 #028 #local_output_20251013_CAinit # #local_output_20250918_noCPC  #local_output_20250923 #_20250901_evol0.5
 overwrite_ga: False ## If False, will only run genetic algorithm when output file does not already exist.
 overwrite_initial_sft: False ## If False, will only run SFT when output file does not already exist.
 overwrite_init_sft_formatter: False
@@ -23,14 +28,12 @@ overwrite_dpo_formatter: False #True
 overwrite_dpo: False #True # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
 
 
-setting_str: 20260223_replication_subsampleMixture #20260211_replication_subsampleMixture_1envConst #"20251225_MixProp_fixedGetSeeds_0.2Hist_50minOld" 
-
-
- # False ## Whether to allow parsing and scoring of particles that are not exact lenght of test_fn dim, or invalid values
+setting_str: 20260518_refactor_removedPadInts_0.25fracDimLen_256seqLen_5e-7dpoLR_0.1dpoB
 
 
 initial_seed: 0
-last_seed: 9
+last_seed: 1
+
 
 run_conformal_policy_control: True
 
@@ -81,13 +84,14 @@ temperature_init: 1.0 #1.0 #0.8 #1.0
 temperature: 1.0 #1.0
 
 # Note: each num_*_rounds runs N-1 policy improvement iterations (round 0 is initial SFT)
-num_dpo_rounds: 10
+num_dpo_rounds: 16
 num_init_sft_rounds: 1 #5 #10
 num_sft_rounds: 0 #10
 num_marge_rounds: 0 #10
 
 evol_dataset_gen:
   args:
+    wandb_mode: offline
     optimizer:
       num_particles: 5000 #10000 #1000
       mutation_prob: 0.05 #0.01 #0.05 #0.005
@@ -121,8 +125,8 @@ evol_dataset_gen:
     time: "24:00:00"
     mem: "100GB"
     mail_type: "BEGIN,END,FAIL"
-    mail_user: "drew@cs.jhu.edu" # "ac5968@nyu.edu"
-    account: "ai4dd_preempt"
+    mail_user: # "ac5968@nyu.edu"
+    account: "ai4dd"
     qos: "preempt"
     gres: "gpu:b200:1"
     
@@ -148,10 +152,10 @@ propen_dataset_formatting_sft:
     time: "6:00:00"
     mem: "100GB"
     mail_type: "BEGIN,END,FAIL"
-    mail_user: "drew@cs.jhu.edu" # "ac5968@nyu.edu"
+    mail_user: # "ac5968@nyu.edu"
     partition: "preempt-priority"
     #gpus_per_node: 0
-    account: "ai4dd_preempt"
+    account: "ai4dd"
     qos: "preempt"
     gres: "gpu:b200:1"
 
@@ -177,10 +181,10 @@ propen_dataset_formatting_initial_sft:
     time: "6:00:00"
     mem: "100GB"
     mail_type: "BEGIN,END,FAIL"
-    mail_user: "drew@cs.jhu.edu" # "ac5968@nyu.edu"
+    mail_user: ## "ac5968@nyu.edu"
     partition: "preempt-priority"
     #gpus_per_node: 0
-    account: "ai4dd_preempt"
+    account: "ai4dd"
     qos: "preempt"
     gres: "gpu:b200:1"
 
@@ -205,10 +209,10 @@ propen_dataset_formatting_preference:
     time: "6:00:00"
     mem: "100GB"
     mail_type: "BEGIN,END,FAIL"
-    mail_user: "drew@cs.jhu.edu" # "ac5968@nyu.edu"
+    mail_user: # "ac5968@nyu.edu"
     partition: "preempt-priority"
     #gpus_per_node: 0
-    account: "ai4dd_preempt"
+    account: "ai4dd"
     qos: "preempt"
     gres: "gpu:b200:1"
 
@@ -229,6 +233,7 @@ initial_sft:
       max_length: 256 #512
       log_level: "info"
       save_total_limit: 2
+      torch_compile: false
       #warmup_ratio: 0.0
 
     generation_config:  # use greedy decoding during evaluation
@@ -239,7 +244,7 @@ initial_sft:
 
     model_config:
       model_name_or_path: "EleutherAI/pythia-14m" # "EleutherAI/pythia-2.8b"
-      attn_implementation: "sdpa"
+      attn_implementation: "eager" #"sdpa"
 
     train_size: 0.95
     max_eval_size: 100 # evaluation takes a long time, so we set a max. size on the eval dataset
@@ -263,7 +268,7 @@ initial_sft:
     export: "ALL"
     time: "24:00:00"
     mem: "100GB"
-    account: "ai4dd_preempt"
+    account: "ai4dd"
     qos: "preempt"
     gres: "gpu:b200:1"
 
@@ -282,7 +287,7 @@ sft:
       per_device_eval_batch_size: 256
       eval_accumulation_steps: 2
       gradient_accumulation_steps: 2 #16 #32
-      max_length: 256 #512
+      max_seq_length: 256 #512
       log_level: "info"
       save_total_limit: 2
       #warmup_ratio: 0.0
@@ -295,7 +300,7 @@ sft:
 
     model_config:
       model_name_or_path: "EleutherAI/pythia-14m" # "EleutherAI/pythia-2.8b"
-      attn_implementation: "sdpa"
+      attn_implementation: "eager" #"sdpa"
 
     train_size: 0.95
     max_eval_size: 100 # evaluation takes a long time, so we set a max. size on the eval dataset
@@ -319,7 +324,7 @@ sft:
     export: "ALL"
     time: "24:00:00"
     mem: "100GB"
-    account: "ai4dd_preempt"
+    account: "ai4dd"
     qos: "preempt"
     gres: "gpu:b200:1"
 
@@ -338,7 +343,7 @@ initial_generation:
     test_fn_type: "ehrlich"  # [ehrlich, mt_fuji]
     init_sampling_method: "uniform" ## Method for selecting seeds # "uniform", "combination", "best_scoring"
     generation_config:
-      max_new_tokens: 256 #512
+      max_new_tokens: 256
   slurm_args:
     nodes: 1
     cpus_per_task: 1
@@ -349,7 +354,7 @@ initial_generation:
     export: "ALL"
     time: "24:00:00"
     mem: "100GB"
-    account: "ai4dd_preempt"
+    account: "ai4dd"
     qos: "preempt"
     gres: "gpu:b200:1"
 
@@ -367,7 +372,7 @@ contrastive_generation:
     test_fn_type: "ehrlich"  # [ehrlich, mt_fuji]
     # init_sampling_method: "uniform" ## Method for selecting seeds # "uniform", "combination", "best_scoring"
     generation_config:
-      max_new_tokens: 256 #512
+      max_new_tokens: 256
   slurm_args:
     nodes: 1
     cpus_per_task: 1
@@ -378,7 +383,7 @@ contrastive_generation:
     export: "ALL"
     time: "24:00:00"
     mem: "100GB"
-    account: "ai4dd_preempt"
+    account: "ai4dd"
     qos: "preempt"
     gres: "gpu:b200:1"
 
@@ -386,6 +391,7 @@ contrastive_generation:
 iterative_generation:
   num_jobs: 6  # number of generation jobs to parallelize this over
   permissive_parsing: True #False #True #False
+  min_rel_len_feasible_particle: 0.25 ## Minimum length of feasible particle as a fraction of test_fn dim
   init_args:
     ## init args just for first iteration:
     sample_size: 20 #20 #100 #20
@@ -402,7 +408,7 @@ iterative_generation:
     max_iterations: 100 #60 #120 #120 #50 #100 #10
     sampling_method: "best_scoring" ## Method for selecting seeds # "uniform", "combination", "best_scoring"
     generation_config:
-      max_new_tokens: 256 #512
+      max_new_tokens: 256
   slurm_args:
     nodes: 1
     cpus_per_task: 1
@@ -413,7 +419,7 @@ iterative_generation:
     export: "ALL"
     time: "24:00:00"
     mem: "100GB" #"300GB" #"100GB"
-    account: "ai4dd_preempt"
+    account: "ai4dd"
     qos: "preempt"
     gres: "gpu:b200:1"
     # nodelist: "b200-st-b200-[2-10,13-15,23,40-41],b200-st-b200-2-[2-3,9,65,69-83]" #"b200-st-b200-41"
@@ -421,11 +427,11 @@ iterative_generation:
 
 
 conformal_policy_control:
-  alpha: 0.4 #0.5 #1.0 #0.25 #0.5 #0.3 #1.0 #0.5
+  alpha: 0.8 #0.5 #1.0 #0.25 #0.5 #0.3 #1.0 #0.5
   num_starts_beta_search: 1
   mixture_proposal: True #True #True ## Whether to do mixture proposal in place of optimized proposal (else use safe and then optimized proposal)
   mixture_proposal_factor: 1 #1 ## Do mixture proposal if mixture_proposal_factor *overlap_coef_{safe} < overlap_coef_{unconstrained}. So, 0 or -1 does nothing
-  mixture_proposal_subsample_cpc: True #False
+  mixture_proposal_subsample_cpc: False #False
   optimized_proposal_factor: 1 #1 ## Do optimized proposal if optimized_proposal_factor *overlap_coef_{safe} < overlap_coef_{unconstrained}. So, 0 or -1 does nothing
   min_safe_mix_weight: 0.1
   ind_metropolis_hastings: False #False
@@ -464,7 +470,7 @@ compute_likelihooods_all_models:
     export: "ALL"
     time: "24:00:00" #"48:00:00"
     mem: "100GB" #"100GB"
-    account: "ai4dd_preempt"
+    account: "ai4dd"
     qos: "preempt"
     gres: "gpu:b200:1"
 
@@ -472,13 +478,13 @@ compute_likelihooods_all_models:
 dpo:
   args:
     dpo_config:
-      learning_rate: 5e-7 #9e-8
-      beta: 0.4
+      learning_rate: 5e-7
+      beta: 0.1 #0.4 ## Switched to using default regularization level from DPO paper
       gradient_accumulation_steps: 1
       num_train_epochs: 1 #1 #2 #2 #1
-      eval_strategy: steps
+      # eval_strategy: steps
       eval_steps: 0.1
-      save_strategy: steps
+      # save_strategy: steps
       save_steps: 0.2
       torch_compile: false
       max_length: 256
@@ -501,7 +507,7 @@ dpo:
     export: "ALL"
     time: "24:00:00"
     mem: "100GB" #"200GB"
-    account: "ai4dd_preempt"
+    account: "ai4dd"
     qos: "preempt"
     gres: "gpu:b200:1"
 
@@ -542,7 +548,7 @@ marge:
     export: "ALL"
     time: "24:00:00"
     mem: "100GB"
-    account: "ai4dd_preempt"
+    account: "ai4dd"
     qos: "preempt"
     gres: "gpu:b200:1"
  

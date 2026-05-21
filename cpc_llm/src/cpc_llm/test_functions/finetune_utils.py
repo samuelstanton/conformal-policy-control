@@ -8,6 +8,8 @@ import torch
 import torch.utils
 import torch.utils.data
 import wandb
+import ast
+import re
 
 from botorch.test_functions import SyntheticTestFunction
 from holo.test_functions.closed_form import Ehrlich, RoughMtFuji
@@ -379,8 +381,66 @@ def parse_particle_and_score(
     return particle, score
 
 
+# Flat integer lists embedded in prompts/targets (e.g. "<inc> [1, 2, -1]\n").
+_LIST_LITERAL_PATTERN = re.compile(r"\[[^\]]*\]")
+
+
+def _parse_list_literal(list_literal: str) -> Optional[List]:
+    """Parse a bracketed list literal; return None if not a list."""
+    for parser in (json.loads, ast.literal_eval):
+        try:
+            value = parser(list_literal)
+        except (json.JSONDecodeError, SyntaxError, ValueError, TypeError):
+            continue
+        if isinstance(value, list):
+            return value
+    return None
+
+
+def _filter_pad_int_from_list_literal(list_literal: str, pad_int: int) -> str:
+    """Remove pad_int entries from one [...] substring; return unchanged on parse failure."""
+    sequence_list = _parse_list_literal(list_literal)
+    if sequence_list is None:
+        return list_literal
+    filtered_list = [
+        x
+        for x in sequence_list
+        if not (isinstance(x, (int, float)) and int(x) == pad_int)
+    ]
+    return json.dumps(filtered_list)
+
+
+def remove_integer_padding_from_list(sequence_str: str, pad_int: int = -1) -> str:
+    """Remove pad_int entries from every list literal in a string.
+
+    Works on bare lists and on strings with prefixes/suffixes, e.g.
+    ``"<inc> [12, 31, 2, 18, -1, -1]\\n"`` -> ``"<inc> [12, 31, 2, 18]\\n"``,
+    or ``"Score: 1.23\\nParticle: [12, 31, -1]"``.
+
+    Args:
+        sequence_str: Text containing one or more ``[...]`` list literals.
+        pad_int: Integer padding value to drop (default ``-1``).
+
+    Returns:
+        The input string with pad_int removed from each parsed list; unchanged
+        if no list literals are found or a literal cannot be parsed.
+    """
+    if not sequence_str:
+        return sequence_str
+
+    def _replace_list(match: re.Match) -> str:
+        return _filter_pad_int_from_list_literal(match.group(0), pad_int)
+
+    return _LIST_LITERAL_PATTERN.sub(_replace_list, sequence_str)
+
+
+def drop_pad_ints(particle: Iterable[Any], pad_int: int = -1) -> List[int]:
+    """Drop pad_int entries from a particle list before JSON serialization."""
+    return [int(x) for x in particle if int(x) != pad_int]
+
+
 def parse_particle_and_score_permissive(
-    input_str: str, test_fn: SyntheticTestFunction
+    input_str: str, test_fn: SyntheticTestFunction, cfg: DictConfig = None, logger: logging.Logger = None, pad_token: int = -1
 ) -> Optional[Tuple[List[int], float]]:
     """
     Checks that <input_str> can be parsed into a list with test_fn.dim integer elements.
@@ -404,6 +464,8 @@ def parse_particle_and_score_permissive(
     ]  ## Will return this one (only modifying length if needed)
     if len(particle) == 0:
         return None
+    len_original_particle = len(particle)
+    
     particle_for_scoring = (
         particle.copy()
     )  ## Will use this one for scoring (permissive score function)
@@ -415,9 +477,12 @@ def parse_particle_and_score_permissive(
             mode="wrap",
         )[: test_fn.dim].tolist()
         if len(particle) < test_fn.dim:
-            particle.extend([-1 for i in range(test_fn.dim - len(particle))])
+            particle.extend([pad_token for i in range(test_fn.dim - len(particle))])
         else:
             particle = particle[: test_fn.dim]
+
+    # if len_original_particle < cfg.min_rel_len_feasible_particle * test_fn.dim:
+    #     return particle, float("inf")
 
     if hasattr(test_fn, "num_states"):
         if any([x >= test_fn.num_states or x < 0 for x in particle_for_scoring]):
@@ -426,8 +491,10 @@ def parse_particle_and_score_permissive(
                 (0, max(0, test_fn.dim - len(particle_for_scoring))),
                 mode="wrap",
             )[: test_fn.dim].tolist()
-    particle_for_scoring = np.clip(particle_for_scoring, a_min=0, a_max=test_fn.dim - 1)
-    score = test_fn(torch.LongTensor([particle_for_scoring])).item()
+            particle_for_scoring = np.clip(particle_for_scoring, a_min=0, a_max=test_fn.dim - 1)
+    score = test_fn(torch.LongTensor([particle_for_scoring])).item() if len_original_particle >= cfg.min_rel_len_feasible_particle * test_fn.dim else float("inf")
+
+    particle = np.clip(particle, a_min=-np.iinfo(np.int32).max, a_max=np.iinfo(np.int32).max)
     return particle, score
 
 
@@ -705,7 +772,7 @@ def formatting_texts_func_plain_pairs(
     output_texts = []
     for i in range(len(examples["score"])):
         score = examples["score"][i]
-        particles = [int(x) for x in json.loads(examples["particle"][i])]
+        particles = drop_pad_ints(json.loads(examples["particle"][i]))
         particles_str = json.dumps(particles)
         output_texts.append(f"Score: {score:.2f}\nParticle: {particles_str}")
     return output_texts
@@ -752,7 +819,7 @@ def formatting_texts_func_single_seq(
     output_texts = []
     for i in range(len(examples[score_field])):
         score = examples[score_field][i]
-        particles = [int(x) for x in examples[particle_field][i]]
+        particles = drop_pad_ints(examples[particle_field][i])
         particles_str = json.dumps(particles)
         output_texts.append(f"Score: {score:.2f}\nParticle: {particles_str}")
     return output_texts
@@ -800,9 +867,9 @@ def formatting_texts_func_edit_pairs(
     else:
         prefix_str = ""
     for i in range(len(examples[higher_score_particle_field])):
-        input_particle = [int(x) for x in examples[higher_score_particle_field][i]]
+        input_particle = drop_pad_ints(examples[higher_score_particle_field][i])
         if include_target:
-            target_particle = [int(x) for x in examples[lower_score_particle_field][i]]
+            target_particle = drop_pad_ints(examples[lower_score_particle_field][i])
             target_str = f"{json.dumps(target_particle)}"
         else:
             target_str = ""

@@ -266,7 +266,7 @@ def cpc_beta_search(
                 raise RuntimeError(f"Model client not pre-loaded for {gen_model_dir}")
 
             ## Step 1: Generate samples from the proposal model
-            gen_df = generate_sample_batch(
+            gen_df, gen_fp = generate_sample_batch(
                 cfg,
                 fs,
                 gen_seeds_fp,
@@ -289,6 +289,9 @@ def cpc_beta_search(
                 continue
             if gen_df is None:
                 continue
+            
+            logger.info(f"_is_direct_mode(cfg) : {_is_direct_mode(cfg)}")
+            logger.info(f"cpc search gen_fp: {gen_fp}")
 
             ## Step 2: Compute likelihoods under all models
             unconstrained_df = compute_batch_likelihoods(
@@ -297,6 +300,7 @@ def cpc_beta_search(
                 gen_df,
                 seeds_fp_list,
                 model_dir_list,
+                target_fp=gen_fp,
                 _lik_model_clients=lik_model_clients or None,
             )
 

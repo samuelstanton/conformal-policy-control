@@ -22,6 +22,7 @@ subsample_seeds: True ## Whether to subsample input seeds (with replacement), or
 first_iter: False ## Whether is first iteration, in which case will use sampling_method="uniform"
 
 permissive_parsing: True
+min_rel_len_feasible_particle: 0.25
 
 generation_config:  # greedy decoding
   _target_: transformers.GenerationConfig

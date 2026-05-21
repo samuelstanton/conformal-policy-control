@@ -10,7 +10,7 @@ import torch
 import torch.distributed.checkpoint as dist_cp
 
 from ..infrastructure.retry import cuda_retry
-from ..test_functions.finetune_utils import maybe_log
+from ..test_functions.finetune_utils import maybe_log, remove_integer_padding_from_list
 from tqdm import tqdm
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 from typing import Dict, List, Any, Optional, Tuple, Union
@@ -481,6 +481,7 @@ class ModelClient:
         batch_size: int = 8,
         return_likelihoods=False,
         subsample_seeds=False,
+        logger: logging.Logger = None,
         **kwargs,
     ) -> Union[List[str], Tuple[List[str], List[torch.Tensor], List[torch.Tensor]]]:
         """
@@ -675,6 +676,31 @@ class ModelClient:
             )
         return expanded
 
+    # @staticmethod
+    # def _filter_negative_one_fillers(sequence_str: str) -> str:
+    #     """Remove negative integers from a string representation of a list.
+        
+    #     Args:
+    #         sequence_str: String like "[1, 3, 2, -1, -1]"
+            
+    #     Returns:
+    #         Filtered string like "[1, 3, 2]"
+    #     """
+    #     try:
+    #         # Parse the string as a list of integers
+    #         sequence_list = eval(sequence_str)
+    #         if not isinstance(sequence_list, list):
+    #             return sequence_str
+            
+    #         # Filter out negative integers
+    #         filtered_list = [x for x in sequence_list if isinstance(x, (int, float)) and x == -1]
+            
+    #         # Convert back to string representation
+    #         return str(filtered_list)
+    #     except Exception:
+    #         # If parsing fails, return the original string
+    #         return sequence_str
+
     @torch.no_grad()
     def compute_likelihoods_avg(
         self,
@@ -707,13 +733,19 @@ class ModelClient:
         orig_padding_side = self.tokenizer.padding_side
         self.tokenizer.padding_side = "right"
 
+        # logger.info(f"inputs : {inputs}")
+        # logger.info(f"targets : {targets}")
+
         try:
             for input_text in tqdm(
                 inputs, desc="Computing log likelihoods averaged over inputs..."
             ):
+                # logger.info(f"input_text : {input_text}")
+                # Filter negative integers from input
+                filtered_input = remove_integer_padding_from_list(input_text)
                 # --- encode input prefix once, cache KV states ---
                 input_tok = self._tokenize_batch(
-                    [input_text], max_generate_length=0
+                    [filtered_input], max_generate_length=0
                 ).to(self.device)
                 input_out = self.model(**input_tok, use_cache=True)
                 kv_cache = input_out.past_key_values
@@ -726,9 +758,20 @@ class ModelClient:
                     t_end = min(t_start + batch_size, len(targets))
                     target_batch = targets[t_start:t_end]
                     cur_batch_size = len(target_batch)
+                    # logger.info(f"target_batch : {target_batch}")
+
+                    # Filter negative integers from targets
+                    # filtered_targets = [self._filter_negative_one_fillers(t) for t in target_batch]
+                    filtered_targets = []
+                    for t in target_batch:
+                        t_filtered = remove_integer_padding_from_list(t)
+                        filtered_targets.append(t_filtered)
+                        if len(t_filtered) < len(t):
+                            logger.info(f"t : {t}")
+                            logger.info(f"t_filtered : {t_filtered}")
 
                     target_tok = self._tokenize_batch(
-                        target_batch, max_generate_length=0
+                        filtered_targets, max_generate_length=0
                     ).to(self.device)
 
                     expanded_kv = self._expand_kv_cache(kv_cache, cur_batch_size)

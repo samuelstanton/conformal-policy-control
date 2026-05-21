@@ -106,6 +106,7 @@ def generate_sample_batch(
     model_dir: str,
     output_dir: str,
     temp: float,
+    model_idx: int = 0,
     higher_score_particle_field: str = HIGHER_SCORE_PARTICLE,
     lower_score_particle_field: str = LOWER_SCORE_PARTICLE,
     higher_score_field: str = HIGHER_SCORE,
@@ -131,6 +132,7 @@ def generate_sample_batch(
         model_dir: Path to the model to generate from.
         output_dir: Output directory for subprocess mode.
         temp: Generation temperature.
+        model_idx: Index of model to generate from.
         higher_score_particle_field: Column name for higher-score particles.
         lower_score_particle_field: Column name for lower-score particles.
         higher_score_field: Column name for higher scores.
@@ -147,6 +149,7 @@ def generate_sample_batch(
         DataFrame with columns: particle, score, num_particles_generated.
         Returns None if generation produced no samples.
     """
+    gen_fp = None
     if _is_direct_mode(cfg):
         gen_df = _generate_inmemory(
             cfg,
@@ -174,15 +177,16 @@ def generate_sample_batch(
             higher_score_field=higher_score_field,
             lower_score_field=lower_score_field,
             temps=[temp],
-            model_idx=0,
+            model_idx=model_idx,
             call_idx=call_idx,
             global_random_seed=global_random_seed,
         )
-        gen_df = pd.read_json(iter_gen_outputs_list[-1], orient="records", lines=True)
+        gen_fp = iter_gen_outputs_list[-1]
+        gen_df = pd.read_json(gen_fp, orient="records", lines=True)
 
     if len(gen_df) == 0:
-        return None
-    return gen_df
+        return None, gen_fp
+    return gen_df, gen_fp
 
 
 def compute_batch_likelihoods(
@@ -473,7 +477,7 @@ def accept_reject_sample_and_get_likelihoods(
                 global_random_seed * 10000 + post_policy_control * 1000 + call_idx
             )
             temps_curr = temps if len(model_dir_list) > 1 else [cfg.temperature_init]
-            gen_df = generate_sample_batch(
+            gen_df, gen_fp = generate_sample_batch(
                 cfg,
                 fs,
                 seeds_fp_list[-1],
@@ -481,6 +485,7 @@ def accept_reject_sample_and_get_likelihoods(
                 model_dir_list[-1],
                 output_dir,
                 temps_curr[-1],
+                model_idx=len(model_dir_list) - 1,
                 higher_score_particle_field=higher_score_particle_field,
                 lower_score_particle_field=lower_score_particle_field,
                 higher_score_field=higher_score_field,
@@ -503,6 +508,7 @@ def accept_reject_sample_and_get_likelihoods(
                 gen_df,
                 seeds_fp_list,
                 model_dir_list,
+                target_fp=gen_fp,
                 _lik_model_clients=lik_model_clients or None,
             )
             gen_liks_df = gen_liks_df[unconstrained_col_names]
@@ -630,7 +636,7 @@ def accept_reject_sample_and_get_likelihoods(
                 random_seed_curr = (
                     global_random_seed * 10000 + post_policy_control * 1000 + call_idx
                 )
-                gen_df = generate_sample_batch(
+                gen_df, gen_fp = generate_sample_batch(
                     cfg,
                     fs,
                     seeds_fp_list[0],
@@ -638,6 +644,7 @@ def accept_reject_sample_and_get_likelihoods(
                     model_dir_list[0],
                     output_dir,
                     cfg.temperature_init,
+                    model_idx=0,
                     higher_score_particle_field=higher_score_particle_field,
                     lower_score_particle_field=lower_score_particle_field,
                     higher_score_field=higher_score_field,
@@ -660,6 +667,7 @@ def accept_reject_sample_and_get_likelihoods(
                     gen_df,
                     seeds_fp_list,
                     model_dir_list,
+                    target_fp=gen_fp,
                     _lik_model_clients=lik_model_clients or None,
                 )
                 gen_liks_df = gen_liks_df[unconstrained_col_names]
@@ -878,6 +886,7 @@ def accept_reject_sample_and_get_likelihoods(
                     if proposal_curr == "unconstrained":
                         mix_seeds_fp = seeds_fp_list[-1]
                         mix_model_dir = model_dir_list[-1]
+                        curr_model_idx = len(model_dir_list) - 1
                         mix_temp = (
                             temps[-1]
                             if len(model_dir_list) > 1
@@ -886,6 +895,7 @@ def accept_reject_sample_and_get_likelihoods(
                     else:
                         mix_seeds_fp = seeds_fp_list[0]
                         mix_model_dir = model_dir_list[0]
+                        curr_model_idx = 0
                         mix_temp = cfg.temperature_init
 
                     ## Step 1: Generate
@@ -897,7 +907,7 @@ def accept_reject_sample_and_get_likelihoods(
                         + post_policy_control * 1000
                         + call_idx
                     )
-                    mix_gen_df = generate_sample_batch(
+                    mix_gen_df, gen_fp = generate_sample_batch(
                         cfg,
                         fs,
                         mix_seeds_fp,
@@ -905,6 +915,7 @@ def accept_reject_sample_and_get_likelihoods(
                         mix_model_dir,
                         output_dir,
                         mix_temp,
+                        model_idx=curr_model_idx,
                         higher_score_particle_field=higher_score_particle_field,
                         lower_score_particle_field=lower_score_particle_field,
                         higher_score_field=higher_score_field,
@@ -929,6 +940,7 @@ def accept_reject_sample_and_get_likelihoods(
                         mix_gen_df,
                         seeds_fp_list,
                         model_dir_list,
+                        target_fp=gen_fp,
                         _lik_model_clients=lik_model_clients or None,
                     )
                     gen_liks_df_dict[proposal_curr] = gen_liks_df_dict[proposal_curr][
