@@ -443,6 +443,7 @@ def run_compute_liks_all_models_and_cal_data(
     # args += f"score_field={score_field} "
     args += f"generation_config.max_new_tokens={cfg.compute_likelihooods_all_models.args.generation_config.max_new_tokens} "
     args += f"sanity_check={cfg.sanity_check} "
+    args += f"test_fn_dim={cfg.evol_dataset_gen.args.test_function.dim} "
 
     # output_filename_prefix = f"cal_gens_all_likelihoods"
     # greedy_decoding_gen_args = f"generation_config.do_sample=False generation_config.num_beams=1 batch_size={cfg.greedy_gen_batch_size}"

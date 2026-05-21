@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 from ..core.model_client import ModelClient
 from ..core.model_loading import init_model_client_with_retry
@@ -25,6 +25,20 @@ from ..test_functions.finetune_utils import formatting_texts_func_single_seq
 
 
 CUDA_ERROR = getattr(torch.cuda, "CudaError", RuntimeError)
+
+
+def _resolve_test_fn_dim(cfg: DictConfig) -> int | None:
+    """Read particle dimension from cfg for conditional EOS likelihood scoring."""
+    if cfg is not None and cfg.get("test_fn_dim") is not None:
+        return int(cfg.test_fn_dim)
+    for path in (
+        "test_fn.dim",
+        "evol_dataset_gen.args.test_function.dim",
+    ):
+        dim = OmegaConf.select(cfg, path, default=None)
+        if dim is not None:
+            return int(dim)
+    return None
 
 
 def compute_likelihoods_inmemory(
@@ -89,6 +103,8 @@ def compute_likelihoods_inmemory(
     # Format target
     target_data = target_df.to_dict("list")
     formatted_targets = formatting_texts_func_single_seq(target_data)
+    # logger.info(f"formatted_targets : {formatted_targets}")
+
 
     # For each model, compute likelihoods of each target sequence, averaged over seeds
     all_timestep_likelihoods = []
@@ -113,7 +129,9 @@ def compute_likelihoods_inmemory(
         input_data = input_df.to_dict("list")
         formatted_inputs = formatting_texts_func_single_seq(input_data)
 
-        logger.info(f"len(formatted_targets) : {len(formatted_targets)}")
+        # logger.info(f"len(formatted_targets) : {len(formatted_targets)}")
+
+        # logger.info(f"formatted_inputs : {formatted_inputs}")
 
         # Compute likelihoods
         target_likelihoods = model_client.compute_likelihoods_avg(
@@ -121,8 +139,9 @@ def compute_likelihoods_inmemory(
             formatted_targets,
             batch_size=min(cfg.batch_size, len(formatted_targets)),
             logger=logger,
+            test_fn_dim=_resolve_test_fn_dim(cfg),
         )
-        logger.info(f"target_likelihoods : {target_likelihoods}")
+        # logger.info(f"target_likelihoods : {target_likelihoods}")
         all_timestep_likelihoods.append(target_likelihoods)
 
         # Free model to reclaim GPU memory before loading the next one
@@ -284,6 +303,7 @@ def compute_likelihoods_one_model_all_data(
             formatted_targets,
             batch_size=min(cfg.batch_size, len(formatted_targets)),
             logger=logger,
+            test_fn_dim=_resolve_test_fn_dim(cfg),
         )
 
         lik_col_name = [lik_col(num_prev_cal)]

@@ -10,7 +10,11 @@ import torch
 import torch.distributed.checkpoint as dist_cp
 
 from ..infrastructure.retry import cuda_retry
-from ..test_functions.finetune_utils import maybe_log, remove_integer_padding_from_list
+from ..test_functions.finetune_utils import (
+    integer_list_length_or_none,
+    maybe_log,
+    remove_integer_padding_from_list,
+)
 from tqdm import tqdm
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 from typing import Dict, List, Any, Optional, Tuple, Union
@@ -708,6 +712,7 @@ class ModelClient:
         targets: List[str],
         batch_size: int = 10,
         logger: logging.Logger | None = None,
+        test_fn_dim: Optional[int] = None,
     ) -> List[float]:
         """Compute likelihoods of target sequences, averaged over all input seeds.
 
@@ -719,13 +724,33 @@ class ModelClient:
             targets: List of target sequences to evaluate.
             batch_size: Number of targets to process per forward pass.
             logger: Logger instance for status messages.
+            test_fn_dim: When set, multiply likelihood by p(EOS | context) for
+                targets whose integer list (after padding removal) parses and
+                has length strictly less than this value.
 
         Returns:
             List of average likelihoods, one per target. Each value is
-            mean_i(exp(sum_t(log p(target_t | input_i, target_<t)))).
+            mean_i(exp(sum_t(log p(target_t | input_i, target_<t)) [+ log p(EOS|·)])),
+            where the EOS term is included only for short parseable integer lists
+            when test_fn_dim is provided.
         """
         if logger is not None:
             logger.info(f"temperature : {self.temperature}")
+
+        include_eos: Optional[List[bool]] = None
+        eos_token_id: Optional[int] = None
+        if test_fn_dim is not None:
+            eos_token_id = self.tokenizer.eos_token_id
+            if eos_token_id is None:
+                raise ValueError(
+                    f"Tokenizer for {self.model_name_or_path} has no eos_token_id; "
+                    "cannot score EOS likelihood."
+                )
+            include_eos = []
+            for t in targets:
+                t_filtered = remove_integer_padding_from_list(t)
+                n = integer_list_length_or_none(t_filtered)
+                include_eos.append(n is not None and n < test_fn_dim)
 
         all_likelihoods = torch.zeros(len(targets), dtype=torch.float64)
 
@@ -818,6 +843,26 @@ class ModelClient:
 
                     # Sum log-probs per target sequence
                     log_liks = target_log_probs.sum(-1)  # (batch,)
+
+                    if include_eos is not None:
+                        last_pos = target_tok.attention_mask.sum(dim=1) - 1
+                        batch_idx = torch.arange(
+                            cur_batch_size, device=self.device
+                        )
+                        last_logits = (
+                            target_out.logits[batch_idx, last_pos, :]
+                            / self.temperature
+                        )
+                        eos_log_prob = torch.nn.functional.log_softmax(
+                            last_logits, dim=-1
+                        )[:, eos_token_id]
+                        eos_mask = torch.tensor(
+                            include_eos[t_start:t_end],
+                            device=self.device,
+                            dtype=last_logits.dtype,
+                        )
+                        valid_last = (last_pos >= 0).to(last_logits.dtype)
+                        log_liks = log_liks + eos_log_prob * eos_mask * valid_last
 
                     # Accumulate exp(log_lik) for averaging across inputs
                     all_likelihoods[t_start:t_end] += torch.exp(log_liks.cpu().double())

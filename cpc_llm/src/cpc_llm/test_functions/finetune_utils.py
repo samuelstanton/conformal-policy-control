@@ -397,6 +397,29 @@ def _parse_list_literal(list_literal: str) -> Optional[List]:
     return None
 
 
+def integer_list_length_or_none(text: str) -> Optional[int]:
+    """Return the length of a parseable list of integers in text, or None."""
+    candidates: List[List] = []
+    parsed = _parse_list_literal(text.strip())
+    if parsed is not None:
+        candidates.append(parsed)
+    else:
+        for match in _LIST_LITERAL_PATTERN.finditer(text):
+            p = _parse_list_literal(match.group(0))
+            if p is not None:
+                candidates.append(p)
+    for candidate in candidates:
+        if not candidate:
+            continue
+        try:
+            if any(int(x) != x for x in candidate):
+                continue
+            return len([int(x) for x in candidate])
+        except (ValueError, TypeError, OverflowError):
+            continue
+    return None
+
+
 def _filter_pad_int_from_list_literal(list_literal: str, pad_int: int) -> str:
     """Remove pad_int entries from one [...] substring; return unchanged on parse failure."""
     sequence_list = _parse_list_literal(list_literal)

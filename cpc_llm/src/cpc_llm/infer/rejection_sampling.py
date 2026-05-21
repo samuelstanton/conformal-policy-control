@@ -360,6 +360,9 @@ def _compute_liks_all_models_inmemory(
     # (compute_liks_all_models_and_cal_data.yaml), not in the pipeline
     # config's args sub-dict.  Default is 10.
     lik_batch_size = getattr(cfg.compute_likelihooods_all_models.args, "batch_size", 10)
+    test_fn_dim = OmegaConf.select(
+        cfg, "evol_dataset_gen.args.test_function.dim", default=None
+    )
     lik_cfg = OmegaConf.create(
         {
             "batch_size": lik_batch_size,
@@ -368,6 +371,7 @@ def _compute_liks_all_models_inmemory(
                 "max_new_tokens": cfg.compute_likelihooods_all_models.args.generation_config.max_new_tokens,
             },
             "overwrite_cmp_lik_all": cfg.overwrite_cmp_lik_all,
+            "test_fn_dim": test_fn_dim,
         }
     )
 
