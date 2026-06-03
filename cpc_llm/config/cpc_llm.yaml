@@ -1,12 +1,9 @@
 log_level: info
 run_name: smaller_pythia #smaller_pythia_0.25dist_0.1maxinf_50gen
-parent_output_dir:  /cv/data/ai4dd/data/prinstea/conformal-policy-control/cpc_llm/parent_output_20260518
-#/cv/data/ai4dd/data/prinstea/conformal-policy-control/cpc_llm/parent_output_20260513
-#/cv/scratch/u/prinstea/conformal-policy-control/cpc_llm/parent_output_20260513
-#/cv/data/ai4dd/data/prinstea/cdt-agents/cpc_llm/parent_output_20260223 #s3://prescient-pcluster-data/prinstea/llome/parent_output_20261225 #parent_output_20251225 #parent_output_20251123 #028 #parent_output_20251013_CAinit # #parent_output_20250918_noCPC  #parent_output_20250923 #_20250901_evol0.5 #/data/bucket/prinstea/llome/parent_output
-local_output_dir: /cv/scratch/u/prinstea/conformal-policy-control/cpc_llm/local_output_20260518
-#/cv/scratch/u/prinstea/conformal-policy-control/cpc_llm/local_output_20260513
-#/cv/home/prinstea/cdt-agents/cpc_llm/local_output_20260223 #/homefs/home/prinstea/llome/local_output_20251225 #local_output_20251225 #local_output_20251123 #028 #local_output_20251013_CAinit # #local_output_20250918_noCPC  #local_output_20250923 #_20250901_evol0.5
+parent_output_dir: /cv/data/ai4dd/data/prinstea/conformal-policy-control/cpc_llm/parent_output_20260530_bestScoreSafe
+
+local_output_dir: /cv/scratch/u/prinstea/conformal-policy-control/cpc_llm/local_output_20260530_bestScoreSafe
+
 overwrite_ga: False ## If False, will only run genetic algorithm when output file does not already exist.
 overwrite_initial_sft: False ## If False, will only run SFT when output file does not already exist.
 overwrite_init_sft_formatter: False
@@ -28,11 +25,11 @@ overwrite_dpo_formatter: False #True
 overwrite_dpo: False #True # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
 
 
-setting_str: 20260518_refactor_removedPadInts_EOSLikFix_0.25fracDimLen_256seqLen_4e-7dpoLR_0.1dpoB
+setting_str: 20260530_refactor_bestScoreSafe_0.1dpoB_1e-7dpoLR
 
 
 initial_seed: 0
-last_seed: 1
+last_seed: 19
 
 
 run_conformal_policy_control: True
@@ -104,7 +101,7 @@ evol_dataset_gen:
     random_seed: 0
     log_interval: 1
     log_level: info
-    num_opt_steps: 10 #50 # 512 ##### NOTE THIS
+    num_opt_steps: 10 #50 # 256 ##### NOTE THIS
     project_name: sherpa
     exp_name: sherpa_smaller_pythia
     job_name: sherpa_smaller_pythia
@@ -230,14 +227,14 @@ initial_sft:
       per_device_eval_batch_size: 256
       eval_accumulation_steps: 2
       gradient_accumulation_steps: 1 #16 #32
-      max_length: 256 #512
+      max_length: 256 #256
       log_level: "info"
       save_total_limit: 2
       torch_compile: false
       #warmup_ratio: 0.0
 
     generation_config:  # use greedy decoding during evaluation
-      max_new_tokens: 256 #512
+      max_new_tokens: 256 #256
       num_beams: 1
       do_sample: False
       num_return_sequences: 1
@@ -248,7 +245,7 @@ initial_sft:
 
     train_size: 0.95
     max_eval_size: 100 # evaluation takes a long time, so we set a max. size on the eval dataset
-    seq_length: 256 #512
+    seq_length: 256 #256
     format_type: "edit_pairs"
     # test function
     test_fn_type: "ehrlich"  # [ehrlich, mt_fuji]
@@ -287,13 +284,13 @@ sft:
       per_device_eval_batch_size: 256
       eval_accumulation_steps: 2
       gradient_accumulation_steps: 2 #16 #32
-      max_seq_length: 256 #512
+      max_seq_length: 256 #256
       log_level: "info"
       save_total_limit: 2
       #warmup_ratio: 0.0
 
     generation_config:  # use greedy decoding during evaluation
-      max_new_tokens: 256 #512
+      max_new_tokens: 256 #256
       num_beams: 1
       do_sample: False
       num_return_sequences: 1
@@ -304,7 +301,7 @@ sft:
 
     train_size: 0.95
     max_eval_size: 100 # evaluation takes a long time, so we set a max. size on the eval dataset
-    seq_length: 256 #512
+    seq_length: 256 #256
     format_type: "edit_pairs"
     # test function
     test_fn_type: "ehrlich"  # [ehrlich, mt_fuji]
@@ -341,7 +338,7 @@ initial_generation:
     log_level: info
     seed: 0
     test_fn_type: "ehrlich"  # [ehrlich, mt_fuji]
-    init_sampling_method: "uniform" ## Method for selecting seeds # "uniform", "combination", "best_scoring"
+    init_sampling_method: "best_scoring" # "uniform" ## Method for selecting seeds # "uniform", "combination", "best_scoring"
     generation_config:
       max_new_tokens: 256
   slurm_args:
@@ -391,12 +388,12 @@ contrastive_generation:
 iterative_generation:
   num_jobs: 6  # number of generation jobs to parallelize this over
   permissive_parsing: True #False #True #False
-  min_rel_len_feasible_particle: 0.25 ## Minimum length of feasible particle as a fraction of test_fn dim
+  min_rel_len_feasible_particle: 1.0 ## Minimum length of feasible particle as a fraction of test_fn dim
   init_args:
     ## init args just for first iteration:
     sample_size: 20 #20 #100 #20
     max_iterations: 100 #100 #120 #200 #50 #100 #200
-    sampling_method: "uniform"
+    sampling_method: "best_scoring" #"uniform"
     seed: 0
   args:
     sanity_check: False
@@ -431,7 +428,7 @@ conformal_policy_control:
   num_starts_beta_search: 1
   mixture_proposal: True #True #True ## Whether to do mixture proposal in place of optimized proposal (else use safe and then optimized proposal)
   mixture_proposal_factor: 1 #1 ## Do mixture proposal if mixture_proposal_factor *overlap_coef_{safe} < overlap_coef_{unconstrained}. So, 0 or -1 does nothing
-  mixture_proposal_subsample_cpc: False #False
+  mixture_proposal_subsample_cpc: True #False
   optimized_proposal_factor: 1 #1 ## Do optimized proposal if optimized_proposal_factor *overlap_coef_{safe} < overlap_coef_{unconstrained}. So, 0 or -1 does nothing
   min_safe_mix_weight: 0.1
   ind_metropolis_hastings: False #False
@@ -443,7 +440,7 @@ conformal_policy_control:
   args:
     n_grid: 200 ## Approx size of grid to search over for lik-ratio bound    
   accept_reject:
-    max_total_AR_calls: 30 #40
+    max_total_AR_calls: 25 #30 #40
     n_target_pre_cpc: 500 # 1000
     n_target_post_cpc: 200 # 1000
     iwmci_intersect_thresh: 0.5
@@ -479,7 +476,7 @@ compute_likelihooods_all_models:
 dpo:
   args:
     dpo_config:
-      learning_rate: 4e-7
+      learning_rate: 1e-7
       beta: 0.1 #0.4 ## Switched to using default regularization level from DPO paper
       gradient_accumulation_steps: 1
       num_train_epochs: 1 #1 #2 #2 #1
