@@ -38,7 +38,7 @@ from ..data_contracts import (
 )
 from .iterative_generation2 import generate_single_batch
 from holo.test_functions.closed_form import Ehrlich, RoughMtFuji
-from ..metrics import ARSamplingMetrics, ARSamplingResult, compute_sample_quality
+from ..metrics import ARSamplingMetrics, ARSamplingResult, SampleQualityMetrics, compute_sample_quality
 
 
 logger = logging.getLogger(__name__)
@@ -1216,37 +1216,92 @@ def accept_reject_sample_and_get_likelihoods(
             accepted_constrained_gen_liks_fp, orient="records", lines=True
         )
 
-    # Persist all proposals and compute quality metrics
+    # Persist all proposals and compute quality metrics.
+    # Batches are written one at a time and metrics are accumulated incrementally
+    # to avoid materialising a single ~n_proposals_total-row DataFrame in memory.
     all_proposals_fp: str | None = None
     sampling_metrics: ARSamplingMetrics | None = None
     if depth == 0 and all_proposal_dfs:
-        all_proposals_df = pd.concat(all_proposal_dfs, ignore_index=True)
-        all_proposals_fp = os.path.join(
-            os.path.dirname(accepted_unconstrained_gen_liks_fp),
-            f"all_proposals_{base_output_name}",
-        )
-        if cfg.overwrite_ig or not fs.exists(all_proposals_fp):
-            all_proposals_df.to_json(all_proposals_fp, orient="records", lines=True)
+        try:
+            all_proposals_fp = os.path.join(
+                os.path.dirname(accepted_unconstrained_gen_liks_fp),
+                f"all_proposals_{base_output_name}",
+            )
 
-        accepted_mask = all_proposals_df["accepted"]
-        accepted_quality = compute_sample_quality(all_proposals_df[accepted_mask])
-        rejected_quality = compute_sample_quality(all_proposals_df[~accepted_mask])
+            # --- incremental file write ---
+            if cfg.overwrite_ig or not fs.exists(all_proposals_fp):
+                with fs.open(all_proposals_fp, "w") as _f:
+                    for _batch in all_proposal_dfs:
+                        if len(_batch) > 0:
+                            _f.write(
+                                _batch.to_json(
+                                    path_or_buf=None, orient="records", lines=True
+                                )
+                            )
 
-        sampling_metrics = ARSamplingMetrics(
-            n_accepted=n_accepted,
-            n_calls=call_idx,
-            n_proposals_total=n_proposals_total,
-            acceptance_rate=n_accepted / max(1, n_proposals_total),
-            proposal_type=proposal or "unconstrained",
-            ar_to_imh_switch=imh_switched,
-            imh_switch_call_idx=imh_switch_call_idx,
-            safe_prop_mix_weight=safe_prop_mix_weight
-            if proposal == "mixture"
-            else None,
-            env_const=env_const,
-            accepted_quality=accepted_quality,
-            rejected_quality=rejected_quality,
-        )
+            # --- incremental quality metrics ---
+            # Running totals for accepted and rejected subsets.
+            _acc = dict(n=0, n_parsable=0, n_feasible=0, score_sum=0.0,
+                        min_score=float("inf"), max_score=float("-inf"))
+            _rej = dict(n=0, n_parsable=0, n_feasible=0, score_sum=0.0,
+                        min_score=float("inf"), max_score=float("-inf"))
+
+            for _batch in all_proposal_dfs:
+                _mask = _batch["accepted"].astype(bool)
+                for _subset, _stats in [(_batch[_mask], _acc), (_batch[~_mask], _rej)]:
+                    if len(_subset) == 0:
+                        continue
+                    _scores = _subset[SCORE].to_numpy(dtype=float)
+                    _finite = np.isfinite(_scores)
+                    _stats["n"] += len(_subset)
+                    _stats["n_parsable"] += int(np.sum(~np.isnan(_scores)))
+                    _stats["n_feasible"] += int(np.sum(_finite))
+                    if np.any(_finite):
+                        _stats["score_sum"] += float(np.sum(_scores[_finite]))
+                        _stats["min_score"] = min(
+                            _stats["min_score"], float(np.min(_scores[_finite]))
+                        )
+                        _stats["max_score"] = max(
+                            _stats["max_score"], float(np.max(_scores[_finite]))
+                        )
+
+            def _make_quality(s: dict) -> SampleQualityMetrics:
+                n, n_feas = s["n"], s["n_feasible"]
+                return SampleQualityMetrics(
+                    n_samples=n,
+                    n_parsable=s["n_parsable"],
+                    n_feasible=n_feas,
+                    frac_feasible=n_feas / n if n > 0 else 0.0,
+                    mean_score=s["score_sum"] / n_feas if n_feas > 0 else float("nan"),
+                    min_score=s["min_score"] if n_feas > 0 else float("nan"),
+                    max_score=s["max_score"] if n_feas > 0 else float("nan"),
+                )
+
+            sampling_metrics = ARSamplingMetrics(
+                n_accepted=n_accepted,
+                n_calls=call_idx,
+                n_proposals_total=n_proposals_total,
+                acceptance_rate=n_accepted / max(1, n_proposals_total),
+                proposal_type=proposal or "unconstrained",
+                ar_to_imh_switch=imh_switched,
+                imh_switch_call_idx=imh_switch_call_idx,
+                safe_prop_mix_weight=safe_prop_mix_weight
+                if proposal == "mixture"
+                else None,
+                env_const=env_const,
+                accepted_quality=_make_quality(_acc),
+                rejected_quality=_make_quality(_rej),
+            )
+        except Exception:
+            logger.warning(
+                "Failed to write all_proposals or compute sampling metrics "
+                "(n_accepted=%d, n_proposals_total=%d); continuing with accepted samples only.",
+                n_accepted,
+                n_proposals_total,
+                exc_info=True,
+            )
+            all_proposals_fp = None
+            sampling_metrics = None
 
     return ARSamplingResult(
         unconstrained_df=accepted_unconstrained_df,
