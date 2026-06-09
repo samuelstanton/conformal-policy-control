@@ -121,7 +121,7 @@ def submit_cmd_to_slurm(
         '[ -f "$HOME/.env.slurm" ] && source "$HOME/.env.slurm"'
     ),
     path_to_repo: Optional[str] = None,
-    nodes_to_exclude_str: str = None,  ## Example: 'b200-st-b200-2-4,b200-st-b200-2-1'
+    nodes_to_exclude_str: str = 'ai4dd-b200-st-comp-48xl-51, ai4dd-b200-st-comp-48xl-69, ai4dd-b200-st-comp-48xl-68, ai4dd-b200-st-comp-48xl-82, ai4dd-b200-st-comp-48xl-7', #None,  ## Example: 'b200-st-b200-2-4,b200-st-b200-2-1'
     **slurm_kwargs,
 ) -> Tuple[subprocess.Popen, str]:
     if path_to_repo is None:
@@ -141,9 +141,13 @@ def submit_cmd_to_slurm(
     sbatch_prefix.extend(
         [f"#SBATCH --{k.replace('_', '-')}={v}" for k, v in slurm_kwargs.items()]
     )
-    # Add node exclusion as a #SBATCH directive
+    # Add node exclusion as a #SBATCH directive.
+    # Slurm parses each #SBATCH line by splitting on whitespace, so the exclude
+    # list must be comma-separated with no spaces (e.g. "node1,node2"), otherwise
+    # anything after the first space is treated as a separate invalid directive.
     if nodes_to_exclude_str is not None and nodes_to_exclude_str.strip():
-        sbatch_prefix.append(f"#SBATCH --exclude={nodes_to_exclude_str}")
+        exclude_str = ",".join(n.strip() for n in nodes_to_exclude_str.split(","))
+        sbatch_prefix.append(f"#SBATCH --exclude={exclude_str}")
     sbatch_str = "\n".join(sbatch_prefix) + "\n\n" + setup_str + "\n\n" + sbatch_str
     return submit_sbatch_job(sbatch_str, dump_dir, blocking=blocking)
 

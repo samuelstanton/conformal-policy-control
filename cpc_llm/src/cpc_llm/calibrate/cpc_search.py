@@ -274,6 +274,7 @@ def cpc_beta_search(
                 gen_model_dir,
                 model_dir_list[-1],  # output_dir
                 gen_temp,
+                model_idx = 0 if proposal == "safe" else len(model_dir_list) - 1,
                 higher_score_particle_field=higher_score_particle_field,
                 lower_score_particle_field=lower_score_particle_field,
                 higher_score_field=higher_score_field,
@@ -283,6 +284,7 @@ def cpc_beta_search(
                 _model_client=gen_model_client,
                 _test_fn=test_fn,
             )
+
 
             if gen_df is None and proposal == "unconstrained":
                 policy_names = ["safe"]
@@ -567,9 +569,10 @@ def cpc_beta_search(
                 )
             )
 
+
             ## If not using mixture proposal, flag for whent o switch to optimized proposal (from safe proposal)
             switch_to_optimized_proposal = (
-                not cfg.conformal_policy_control.mixture_proposal
+                not switch_to_mixture_proposal
                 and (
                     cfg.conformal_policy_control.optimized_proposal_factor
                     * psi_hat_intersection_safe
@@ -593,10 +596,21 @@ def cpc_beta_search(
                 if cfg.conformal_policy_control.alpha >= 1.0:
                     safe_prop_mix_weight = 0.0
                 elif cfg.conformal_policy_control.use_overlap_mix_weight:
-                    safe_prop_mix_weight = psi_hat_intersection_safe / (
-                        psi_hat_intersection_safe + psi_hat_intersection_unconstrained
+                    # safe_prop_mix_weight = psi_hat_intersection_safe / (
+                    #     psi_hat_intersection_safe + psi_hat_intersection_unconstrained
+                    # )
+                    if isinstance(cfg.conformal_policy_control.min_safe_mix_weight, (int, float)):
+                        min_safe_mix_weight = cfg.conformal_policy_control.min_safe_mix_weight
+                    else:
+                        min_safe_mix_weight = (1 - cfg.conformal_policy_control.alpha) ** 4
+                    safe_prop_mix_weight = max(
+                        psi_hat_intersection_safe
+                        / (psi_hat_intersection_safe + psi_hat_intersection_unconstrained),
+                        min_safe_mix_weight, 
+                        # cfg.conformal_policy_control.min_safe_mix_weight,
                     )
                 else:
+                    logger.info(f"Using fixed safe mix weight: 1 / (1 + beta_t) = {1 / (1 + beta_t)}")
                     safe_prop_mix_weight = 1 / (1 + beta_t)
 
                 n_safe_prop_include = int(
@@ -754,10 +768,6 @@ def cpc_beta_search(
             test_pt_factor *= cfg.conformal_policy_control.test_pt_scale_factor  ## Can conservatively scale test point weight to est population max (1.0 is plug in)
             w_test *= test_pt_factor
 
-            # Track metrics for this grid position
-            last_w_test = float(w_test)
-            last_switch_to_mixture = switch_to_mixture_proposal
-            last_switch_to_optimized = switch_to_optimized_proposal
 
             ## Concatenate and normalize
             sum_w_cal_test = np.sum(w_cal) + w_test
@@ -766,6 +776,11 @@ def cpc_beta_search(
             w_infeasible_normalized = (
                 np.sum(w_cal_normalized[cal_infeasible_indicators]) + w_test_normalized
             )
+
+            # Track metrics for this grid position
+            last_w_test = w_test_normalized #float(w_test) ## Track normalized test point weight instead of raw test point weight
+            last_switch_to_mixture = switch_to_mixture_proposal
+            last_switch_to_optimized = switch_to_optimized_proposal
 
             if cfg.conformal_policy_control.randomized_cpc:
                 w_infeasible_normalized *= np.random.uniform()
@@ -814,18 +829,32 @@ def cpc_beta_search(
                     )
 
                 ## Estimate new envelope constant for constrained policy over proposal
-                if (
-                    cfg.conformal_policy_control.mixture_proposal
-                    or cfg.conformal_policy_control.mixture_proposal_factor
-                    * psi_hat_intersection_safe
-                    < psi_hat_intersection_unconstrained
-                ):
+                # if (
+                #     cfg.conformal_policy_control.mixture_proposal
+                #     or cfg.conformal_policy_control.mixture_proposal_factor
+                #     * psi_hat_intersection_safe
+                #     < psi_hat_intersection_unconstrained
+                # ):
+                # logger.info(f"switch_to_mixture_proposal: {switch_to_mixture_proposal}")
+                # logger.info(f"proposal {proposal}")
+
+                if switch_to_mixture_proposal:
                     if cfg.conformal_policy_control.alpha >= 1.0:
                         safe_prop_mix_weight = 0.0
                     elif cfg.conformal_policy_control.use_overlap_mix_weight:
-                        safe_prop_mix_weight = psi_hat_intersection_safe / (
+                        # safe_prop_mix_weight = psi_hat_intersection_safe / (
+                        #     psi_hat_intersection_safe
+                        #     + psi_hat_intersection_unconstrained
+                        # )
+                        if isinstance(cfg.conformal_policy_control.min_safe_mix_weight, (int, float)):
+                            min_safe_mix_weight = cfg.conformal_policy_control.min_safe_mix_weight
+                        else:
+                            min_safe_mix_weight = (1 - cfg.conformal_policy_control.alpha) ** 4
+                        safe_prop_mix_weight = max(
                             psi_hat_intersection_safe
-                            + psi_hat_intersection_unconstrained
+                            / (psi_hat_intersection_safe + psi_hat_intersection_unconstrained),
+                            min_safe_mix_weight, 
+                            # cfg.conformal_policy_control.min_safe_mix_weight,
                         )
                     else:
                         safe_prop_mix_weight = 1 / (1 + beta_t)

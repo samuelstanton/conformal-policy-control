@@ -2,7 +2,7 @@ log_level: info
 run_name: smaller_pythia #smaller_pythia_0.25dist_0.1maxinf_50gen
 parent_output_dir: /cv/data/ai4dd/data/prinstea/conformal-policy-control/cpc_llm/parent_output_20260530_bestScoreSafe
 
-local_output_dir: /cv/scratch/u/prinstea/conformal-policy-control/cpc_llm/local_output_20260530_bestScoreSafe
+local_output_dir: /cv/data/ai4dd/data/prinstea/conformal-policy-control/cpc_llm/local_output_20260530_bestScoreSafe
 
 overwrite_ga: False ## If False, will only run genetic algorithm when output file does not already exist.
 overwrite_initial_sft: False ## If False, will only run SFT when output file does not already exist.
@@ -25,11 +25,14 @@ overwrite_dpo_formatter: False #True
 overwrite_dpo: False #True # If False, will only run remaining jobs (that don't have their own overwrite flag) when output file does not exist.
 
 
-setting_str: 20260530_refactor_bestScoreSafe_0.1dpoB_1e-7dpoLR
+## Modify this string for different settings
+setting_str: 20260609_refactor
+#20260608_0.1dpoB_1e-7dpoLR_20gen_2seedsFromInit_overlap0.5
+
 
 
 initial_seed: 0
-last_seed: 19
+last_seed: 1
 
 
 run_conformal_policy_control: True
@@ -51,13 +54,13 @@ unconditional_sampling_num_return_sequences: 10 ## Number of sequences to sample
 num_labels_after_first_round: 2000 # num. of labels to use in all rounds after the first
 proportion_of_old_data: 0.2 #0.3333 #1.0 #0.0  # proportion of old training data to include in the running "combined" dataset (used for selecting seeds)
 min_num_data_old: 50 #100 ## If proportion_of_old_data > 0.0, min number of old data samples to include in training
-proportion_of_old_seeds: 0.1 #0.5 ## proportion of seeds from previous training data to use in current optimized policy (rest are from most recent round)
-select_old_seeds_from: "last" ## "last" or "init"
+proportion_of_old_seeds: 0.2 #0.5 ## proportion of seeds from previous training data to use in current optimized policy (rest are from most recent round)
+select_old_seeds_from: "init" #"last" ## "last" or "init"
 
 seed: 0
 greedy_decoding: False ## For initial and iterative
 temperature_scaling: False #True
-job_submission_system: slurm
+job_submission_system: direct #slurm
 greedy_gen_batch_size: 64
 sampling_gen_batch_size: 32
 initial_model: "EleutherAI/pythia-14m" # "EleutherAI/pythia-2.8b"
@@ -76,6 +79,8 @@ split:
   num_cal_per_step: 10
   num_train_per_step: 40
 
+## If using ranked FFT for selecting seeds, top fraction of particles to construct library from
+ranked_fft_top_fraction: 0.01
 
 temperature_init: 1.0 #1.0 #0.8 #1.0
 temperature: 1.0 #1.0
@@ -328,61 +333,61 @@ sft:
 
 
 
-initial_generation:
-  num_jobs: 6  # number of generation jobs to parallelize this over
-  args:
-    subsample_seeds: True ## Whether to subsample input seeds (with replacement), or to iterate through all of them
-    sanity_check: False
-    sample_size: 200 #100 #200  # initial number of seeds to use for iterative generation
-    max_iterations: 20 # 10
-    log_level: info
-    seed: 0
-    test_fn_type: "ehrlich"  # [ehrlich, mt_fuji]
-    init_sampling_method: "best_scoring" # "uniform" ## Method for selecting seeds # "uniform", "combination", "best_scoring"
-    generation_config:
-      max_new_tokens: 256
-  slurm_args:
-    nodes: 1
-    cpus_per_task: 1
-    ntasks_per_node: 1
-    #gpus_per_node: 1
-    partition: "preempt-priority"
-    open_mode: "append"
-    export: "ALL"
-    time: "24:00:00"
-    mem: "100GB"
-    account: "ai4dd"
-    qos: "preempt"
-    gres: "gpu:b200:1"
+# initial_generation:
+#   num_jobs: 6  # number of generation jobs to parallelize this over
+#   args:
+#     subsample_seeds: True ## Whether to subsample input seeds (with replacement), or to iterate through all of them
+#     sanity_check: False
+#     sample_size: 200 #100 #200  # initial number of seeds to use for iterative generation
+#     max_iterations: 20 # 10
+#     log_level: info
+#     seed: 0
+#     test_fn_type: "ehrlich"  # [ehrlich, mt_fuji]
+#     init_sampling_method: "best_scoring" # "uniform" ## Method for selecting seeds # "uniform", "combination", "best_scoring"
+#     generation_config:
+#       max_new_tokens: 256
+#   slurm_args:
+#     nodes: 1
+#     cpus_per_task: 1
+#     ntasks_per_node: 1
+#     #gpus_per_node: 1
+#     partition: "preempt-priority"
+#     open_mode: "append"
+#     export: "ALL"
+#     time: "24:00:00"
+#     mem: "100GB"
+#     account: "ai4dd"
+#     qos: "preempt"
+#     gres: "gpu:b200:1"
 
 
-contrastive_generation:
-  num_jobs: 6  # number of generation jobs to parallelize this over
-  greedy_decoding: False
-  args:
-    # subsample_seeds: True ## Whether to subsample input seeds (with replacement), or to iterate through all of them
-    sanity_check: False
-    sample_size: 100 #200  # initial number of seeds to use for contrastive generation, should be same as in initial_generation & iterative_generation
-    max_iterations: 1
-    log_level: info
-    seed: 0
-    test_fn_type: "ehrlich"  # [ehrlich, mt_fuji]
-    # init_sampling_method: "uniform" ## Method for selecting seeds # "uniform", "combination", "best_scoring"
-    generation_config:
-      max_new_tokens: 256
-  slurm_args:
-    nodes: 1
-    cpus_per_task: 1
-    ntasks_per_node: 1
-    #gpus_per_node: 1
-    partition: "preempt-priority"
-    open_mode: "append"
-    export: "ALL"
-    time: "24:00:00"
-    mem: "100GB"
-    account: "ai4dd"
-    qos: "preempt"
-    gres: "gpu:b200:1"
+# contrastive_generation:
+#   num_jobs: 6  # number of generation jobs to parallelize this over
+#   greedy_decoding: False
+#   args:
+#     # subsample_seeds: True ## Whether to subsample input seeds (with replacement), or to iterate through all of them
+#     sanity_check: False
+#     sample_size: 100 #200  # initial number of seeds to use for contrastive generation, should be same as in initial_generation & iterative_generation
+#     max_iterations: 1
+#     log_level: info
+#     seed: 0
+#     test_fn_type: "ehrlich"  # [ehrlich, mt_fuji]
+#     # init_sampling_method: "uniform" ## Method for selecting seeds # "uniform", "combination", "best_scoring"
+#     generation_config:
+#       max_new_tokens: 256
+#   slurm_args:
+#     nodes: 1
+#     cpus_per_task: 1
+#     ntasks_per_node: 1
+#     #gpus_per_node: 1
+#     partition: "preempt-priority"
+#     open_mode: "append"
+#     export: "ALL"
+#     time: "24:00:00"
+#     mem: "100GB"
+#     account: "ai4dd"
+#     qos: "preempt"
+#     gres: "gpu:b200:1"
 
 
 iterative_generation:
@@ -392,7 +397,7 @@ iterative_generation:
   init_args:
     ## init args just for first iteration:
     sample_size: 20 #20 #100 #20
-    max_iterations: 100 #100 #120 #200 #50 #100 #200
+    max_iterations: 20 #100 #120 #200 #50 #100 #200
     sampling_method: "best_scoring" #"uniform"
     seed: 0
   args:
@@ -402,7 +407,7 @@ iterative_generation:
     test_fn_type: "ehrlich"  # [ehrlich, mt_fuji]
     subsample_seeds: True ## Whether to subsample input seeds (with replacement), or to iterate through all of them
     sample_size: 10 #10 #100 #200  # initial number of seeds to use for iterative generation
-    max_iterations: 100 #60 #120 #120 #50 #100 #10
+    max_iterations: 20 #60 #120 #120 #50 #100 #10
     sampling_method: "best_scoring" ## Method for selecting seeds # "uniform", "combination", "best_scoring"
     generation_config:
       max_new_tokens: 256
@@ -427,12 +432,12 @@ conformal_policy_control:
   alpha: 0.8 #0.5 #1.0 #0.25 #0.5 #0.3 #1.0 #0.5
   num_starts_beta_search: 1
   mixture_proposal: True #True #True ## Whether to do mixture proposal in place of optimized proposal (else use safe and then optimized proposal)
-  mixture_proposal_factor: 1 #1 ## Do mixture proposal if mixture_proposal_factor *overlap_coef_{safe} < overlap_coef_{unconstrained}. So, 0 or -1 does nothing
-  mixture_proposal_subsample_cpc: True #False
+  mixture_proposal_factor: 0.5 # 0.25 #0.05 ## Do mixture proposal if mixture_proposal_factor * overlap_coef_{safe} < overlap_coef_{unconstrained}. So, 0 or -1 does nothing
+  mixture_proposal_subsample_cpc: True
   optimized_proposal_factor: 1 #1 ## Do optimized proposal if optimized_proposal_factor *overlap_coef_{safe} < overlap_coef_{unconstrained}. So, 0 or -1 does nothing
-  min_safe_mix_weight: 0.1
+  min_safe_mix_weight: "adaptive" #0.1 ## When set to "adaptive", will use (1 - alpha) ** 4 as the minimum weight on safe proposals
   ind_metropolis_hastings: False #False
-  num_AR_before_MH: 20 #10 ## Number of AR generation iterations to try before switching to IMH sampling
+  num_AR_before_MH: 10 #10 ## Number of AR generation iterations to try before switching to IMH sampling (only runs IMH if less than max_total_AR_calls)
   constrain_against: "init" ## "init" or "last": whether to constrain against the initial safe policy, or the last/most recent safe policy
   use_overlap_mix_weight: True  #True ## Whether to use overlap coefficient mixture weight; else, use 1 / (1 + beta)
   randomized_cpc: False #True
@@ -440,12 +445,12 @@ conformal_policy_control:
   args:
     n_grid: 200 ## Approx size of grid to search over for lik-ratio bound    
   accept_reject:
-    max_total_AR_calls: 25 #30 #40
+    max_total_AR_calls: 20 #15 #30 #40
     n_target_pre_cpc: 500 # 1000
     n_target_post_cpc: 200 # 1000
     iwmci_intersect_thresh: 0.5
     n_opt_prop_calls_pre_cpc_quarter_check: 5
-    env_const_scale_emp_max: 1.0 #1.05 ## Factor by which to scale the empirical maximum likelihood ratio for estimating envelope constant
+    env_const_scale_emp_max: 1.0 #1.0 #1.05 ## Factor by which to scale the empirical maximum likelihood ratio for estimating envelope constant
 
 
 
@@ -526,7 +531,7 @@ marge:
       self_normalize_weights: True
       reinforce_style: False
       max_length: 256
-      max_prompt_length: 128
+      max_prompt_length: 256
       log_level: "info"
       seed: 0
       per_device_train_batch_size: 32

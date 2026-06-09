@@ -272,7 +272,10 @@ def run_iterative_generation(
     )
 
 
-@hydra.main(config_path="../../../config", config_name="iterative_generation")
+_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "config")
+
+
+@hydra.main(config_path=_CONFIG_PATH, config_name="iterative_generation")
 def main(cfg: DictConfig):
     logging.basicConfig(level=cfg.log_level.upper(), force=True)
     logging.info(

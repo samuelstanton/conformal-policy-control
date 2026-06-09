@@ -1,5 +1,8 @@
+import json
+import numpy as np
 import os
 import pandas as pd
+import torch
 from omegaconf import DictConfig
 from ..infrastructure.file_handler import LocalOrS3Client
 from ..data_contracts import (
@@ -13,6 +16,7 @@ from ..data_contracts import (
     PROMPT_SCORE,
     SCORE,
 )
+from .synthetic_dataset_lib import ranked_fft
 
 
 def get_seeds_from_training_data(
@@ -46,7 +50,9 @@ def get_seeds_from_training_data(
         curr_training_data_fp: Path to current round's training JSONL.
         output_dir: Directory to write the selected seeds file.
         sample_size: Total number of seeds to select.
-        sampling_method: ``"best_scoring"`` or ``"uniform"``.
+        sampling_method: ``"best_scoring"``, ``"uniform"``, or
+            ``"ranked_fft"`` (ranked farthest-first traversal, which balances
+            best-scoring selection with diversity).
         higher_score_particle_field: Column name for the higher-score particle.
         lower_score_particle_field: Column name for the lower-score particle.
         lower_score_field: Column name for the lower score value.
@@ -117,6 +123,113 @@ def get_seeds_from_training_data(
             curr_train_df = curr_train_df.sample(
                 n=min(len(curr_train_df), curr_sample_size), random_state=random_seed
             )
+
+        elif sampling_method == "ranked_fft":
+
+            def _hamming_distance(x, y):
+                return (x != y).sum().item()
+
+            def _build_library_and_scores(df, particle_col, score_col):
+                """Parse particles into a fixed-length LongTensor library.
+
+                Mirrors the particle_for_scoring logic of
+                parse_particle_and_score_permissive: JSON-decode, validate
+                integer values, then pad (wrap mode) or truncate to the target
+                dimension inferred from the first valid particle.
+
+                Returns:
+                    library: LongTensor of shape (n_valid, dim)
+                    scores: FloatTensor of shape (n_valid,)
+                    valid_positions: list of iloc positions in df that parsed
+                        successfully, for mapping ranked_fft indices back to df
+                """
+
+                def _parse_raw(p):
+                    if isinstance(p, str):
+                        try:
+                            particle = json.loads(p)
+                        except (ValueError, TypeError):
+                            return None
+                    else:
+                        particle = p
+                    if not isinstance(particle, list) or len(particle) == 0:
+                        return None
+                    try:
+                        if any(int(x) != x for x in particle):
+                            return None
+                        return [int(x) for x in particle]
+                    except (ValueError, TypeError, OverflowError):
+                        return None
+
+                raw_parsed = [_parse_raw(p) for p in df[particle_col]]
+                valid_raw = [p for p in raw_parsed if p is not None]
+                if not valid_raw:
+                    raise ValueError(
+                        f"No parseable particles in column '{particle_col}' "
+                        "for ranked_fft."
+                    )
+                dim = len(valid_raw[0])
+
+                valid_positions = []
+                valid_particles = []
+                for i, p in enumerate(raw_parsed):
+                    if p is None:
+                        continue
+                    if len(p) != dim:
+                        p = np.pad(
+                            p, (0, max(0, dim - len(p))), mode="wrap"
+                        )[:dim].tolist()
+                    valid_positions.append(i)
+                    valid_particles.append(p)
+
+                library = torch.LongTensor(valid_particles)
+                scores = torch.FloatTensor(
+                    df[score_col].iloc[valid_positions].tolist()
+                )
+                finite_mask = torch.isfinite(scores)
+                finite_indices = finite_mask.nonzero(as_tuple=True)[0].tolist()
+                library = library[finite_indices]
+                scores = scores[finite_indices]
+                valid_positions = [valid_positions[i] for i in finite_indices]
+
+                # Restrict to the top-scoring fraction (lower score is better).
+                top_fraction = cfg.get("ranked_fft_top_fraction", 0.1)
+                n_keep = max(1, int(np.ceil(len(scores) * top_fraction)))
+                top_indices = torch.argsort(scores)[:n_keep].tolist()
+                library = library[top_indices]
+                scores = scores[top_indices]
+                valid_positions = [valid_positions[i] for i in top_indices]
+                return library, scores, valid_positions
+
+            curr_library, curr_scores, curr_valid_pos = _build_library_and_scores(
+                curr_train_df, lower_score_particle_field, lower_score_field
+            )
+            
+            curr_indices = ranked_fft(
+                curr_library,
+                curr_scores,
+                n=curr_sample_size,
+                descending=False,
+                distance_fn=_hamming_distance,
+            )
+            curr_train_df = curr_train_df.iloc[
+                [curr_valid_pos[i] for i in curr_indices.tolist()]
+            ]
+
+            if not first_iter:
+                prev_library, prev_scores, prev_valid_pos = _build_library_and_scores(
+                    prev_seeds_df, higher_score_particle_field, SCORE
+                )
+                prev_indices = ranked_fft(
+                    prev_library,
+                    prev_scores,
+                    n=hist_sample_size,
+                    descending=False,
+                    distance_fn=_hamming_distance,
+                )
+                prev_seeds_df = prev_seeds_df.iloc[
+                    [prev_valid_pos[i] for i in prev_indices.tolist()]
+                ]
 
         else:
             raise ValueError(f"Unknown sampling method '{sampling_method}.'")

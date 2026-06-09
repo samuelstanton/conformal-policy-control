@@ -476,6 +476,17 @@ def main(cfg: DictConfig):
     logging.basicConfig(level=cfg.log_level.upper(), force=True)
     logging.info(f"Config:\n{pprint.pformat(OmegaConf.to_container(cfg))}")
     df = pd.read_json(cfg.source_dataset_path, orient="records", lines=True)
+    if len(df) == 0 or PARTICLE not in df.columns:
+        logging.warning(
+            "Source dataset '%s' is empty or missing required column '%s' "
+            "(columns found: %s). Writing empty output to '%s'.",
+            cfg.source_dataset_path,
+            PARTICLE,
+            list(df.columns),
+            cfg.output_path,
+        )
+        pd.DataFrame().to_json(cfg.output_path, orient="records", lines=True)
+        return
     df[PARTICLE] = df[PARTICLE].map(
         lambda input_str: (
             [int(x) for x in json.loads(input_str)]

@@ -452,10 +452,10 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                 envelope_const_constrained_over_proposal
             )
 
-            if constrained_liks_df_beta_hat.iloc[0, 0] != unconstrained_df.iloc[0, 0]:
-                ## Sanity check
+            if constrained_liks_df_beta_hat.iloc[0, 2] != unconstrained_df.iloc[0, 2]:
+                ## Sanity check: First likelihood column should be same for safe policy
                 raise ValueError(
-                    f"constrained_liks_df_beta_hat.iloc[0,0] ({constrained_liks_df_beta_hat.iloc[0, 0]}) != ({unconstrained_df.iloc[0, 0]}) unconstrained_df.iloc[0,0]"
+                    f"constrained_liks_df_beta_hat.iloc[0,2] ({constrained_liks_df_beta_hat.iloc[0, 2]}) != ({unconstrained_df.iloc[0, 2]}) unconstrained_df.iloc[0,2]"
                 )
 
             ## Add constrained likelihoods for the current model to previous calibration data
@@ -764,9 +764,13 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                 envelope_const_constrained_over_proposal
             )
 
-            if constrained_liks_df_beta_hat.iloc[0, 0] != unconstrained_df.iloc[0, 0]:
+            logger.info(f"constrained_liks_df_beta_hat.columns: {constrained_liks_df_beta_hat.columns}")
+            logger.info(f"unconstrained_df.columns: {unconstrained_df.columns}")
+
+            if constrained_liks_df_beta_hat.iloc[0, 2] != unconstrained_df.iloc[0, 2]:
+                ## Sanity check: First likelihood column should be same for safe policy
                 raise ValueError(
-                    f"constrained_liks_df_beta_hat.iloc[0,0] ({constrained_liks_df_beta_hat.iloc[0, 0]}) != ({unconstrained_df.iloc[0, 0]}) unconstrained_df.iloc[0,0]"
+                    f"constrained_liks_df_beta_hat.iloc[0,2] ({constrained_liks_df_beta_hat.iloc[0, 2]}) != ({unconstrained_df.iloc[0, 2]}) unconstrained_df.iloc[0,2]"
                 )
 
             check_col_names(constrained_liks_df_beta_hat)
@@ -850,10 +854,20 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
             if cfg.conformal_policy_control.alpha >= 1.0:
                 safe_prop_mix_weight = 0.0
             elif cfg.conformal_policy_control.use_overlap_mix_weight:
-                safe_prop_mix_weight = psi_hat_intersection_safe / (
-                    psi_hat_intersection_safe + psi_hat_intersection_unconstrained
+                # safe_prop_mix_weight = psi_hat_intersection_safe / (
+                #     psi_hat_intersection_safe + psi_hat_intersection_unconstrained
+                # )
+                if isinstance(cfg.conformal_policy_control.min_safe_mix_weight, (int, float)):
+                    min_safe_mix_weight = cfg.conformal_policy_control.min_safe_mix_weight
+                else:
+                    min_safe_mix_weight = (1 - cfg.conformal_policy_control.alpha) ** 4
+                safe_prop_mix_weight = max(
+                    psi_hat_intersection_safe
+                    / (psi_hat_intersection_safe + psi_hat_intersection_unconstrained),
+                    min_safe_mix_weight,
                 )
             else:
+                logger.info(f"Using fixed safe mix weight: 1 / (1 + beta_t) = {1 / (1 + beta_t)}")
                 safe_prop_mix_weight = 1 / (1 + beta_t)
 
             if (
@@ -1100,10 +1114,10 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                 envelope_const_constrained_over_proposal
             )
 
-            if constrained_liks_df_beta_hat.iloc[0, 0] != unconstrained_df.iloc[0, 0]:
-                ## Sanity check
+            if constrained_liks_df_beta_hat.iloc[0, 2] != unconstrained_df.iloc[0, 2]:
+                ## Sanity check: First likelihood column should be same for safe policy
                 raise ValueError(
-                    f"constrained_liks_df_beta_hat.iloc[0,0] ({constrained_liks_df_beta_hat.iloc[0, 0]}) != ({unconstrained_df.iloc[0, 0]}) unconstrained_df.iloc[0,0]"
+                    f"constrained_liks_df_beta_hat.iloc[0,2] ({constrained_liks_df_beta_hat.iloc[0, 2]}) != ({unconstrained_df.iloc[0, 2]}) unconstrained_df.iloc[0,2]"
                 )
 
             check_col_names(constrained_liks_df_beta_hat)
@@ -1192,10 +1206,14 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
             if cfg.conformal_policy_control.alpha >= 1.0:
                 safe_prop_mix_weight = 0.0
             elif cfg.conformal_policy_control.use_overlap_mix_weight:
+                if isinstance(cfg.conformal_policy_control.min_safe_mix_weight, (int, float)):
+                    min_safe_mix_weight = cfg.conformal_policy_control.min_safe_mix_weight
+                else:
+                    min_safe_mix_weight = (1 - cfg.conformal_policy_control.alpha) ** 4
                 safe_prop_mix_weight = max(
                     psi_hat_intersection_safe
                     / (psi_hat_intersection_safe + psi_hat_intersection_unconstrained),
-                    cfg.conformal_policy_control.min_safe_mix_weight,
+                    min_safe_mix_weight, 
                 )
             else:
                 safe_prop_mix_weight = 1 / (1 + beta_t)
@@ -1316,7 +1334,10 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                     logger.warning("on_round_complete callback failed", exc_info=True)
 
 
-@hydra.main(config_path="../../config", config_name="pipeline")
+_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "config")
+
+
+@hydra.main(config_path=_CONFIG_PATH, config_name="pipeline")
 def main(cfg: DictConfig):
     run_pipeline(cfg)
 

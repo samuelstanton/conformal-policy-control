@@ -117,6 +117,7 @@ def generate_sample_batch(
     n_target: int | None = None,
     _model_client: ModelClient | None = None,
     _test_fn: Ehrlich | RoughMtFuji | None = None,
+    post_policy_control: bool = False, ## Whether calling post CPC (True) or pre CPC (False)
 ) -> pd.DataFrame | None:
     """Generate samples from a model, with optional early stopping.
 
@@ -179,6 +180,7 @@ def generate_sample_batch(
             temps=[temp],
             model_idx=model_idx,
             call_idx=call_idx,
+            post_policy_control=post_policy_control,
             global_random_seed=global_random_seed,
         )
         gen_fp = iter_gen_outputs_list[-1]
@@ -319,6 +321,7 @@ def _generate_inmemory(
             "permissive_parsing": cfg.iterative_generation.permissive_parsing,
             "higher_score_particle_field": higher_score_particle_field,
             "lower_score_particle_field": lower_score_particle_field,
+            "min_rel_len_feasible_particle": cfg.iterative_generation.min_rel_len_feasible_particle,
         }
     )
 
@@ -499,6 +502,7 @@ def accept_reject_sample_and_get_likelihoods(
                 global_random_seed=global_random_seed,
                 _model_client=gen_model_client,
                 _test_fn=test_fn,
+                post_policy_control=post_policy_control,
             )
             call_idx += 1
 
@@ -618,11 +622,41 @@ def accept_reject_sample_and_get_likelihoods(
             batch_df["accepted"] = accepted_curr
             all_proposal_dfs.append(batch_df)
 
-            accepted_unconstrained_dfs.append(gen_liks_df[:n_evaluated][accepted_curr])
-            accepted_constrained_dfs.append(
-                constrained_liks_df[:n_evaluated][accepted_curr]
-            )
+            accepted_unconstrained_curr_df = gen_liks_df[:n_evaluated][accepted_curr]
+            accepted_constrained_curr_df = constrained_liks_df[:n_evaluated][accepted_curr]
 
+            accepted_unconstrained_dfs.append(accepted_unconstrained_curr_df)
+            accepted_constrained_dfs.append(accepted_constrained_curr_df)
+
+
+            logger.info(f"Accepted {sum(accepted_curr)} samples in current sampling round for {proposal} proposal")
+            ## Record samples accepted in current sampling round for tracking acceptance progress
+            if sum(accepted_curr) > 0:
+                base_output_name = f"alpha{cfg.conformal_policy_control.alpha}_gens_likelihood_{cfg.iterative_generation.args.sample_size}sample_{cfg.iterative_generation.args.max_iterations}iter_temp{temps[-1]}_{cfg.generation_sampling_num_return_sequences}seqs.jsonl"
+
+                curr_accepted_unconstrained_fp = os.path.join(
+                    os.path.dirname(gen_liks_fp),
+                    f"curr_accepted_uLiks_cn{call_idx}_{proposal}Prop_{base_output_name}",
+                )
+                curr_accepted_constrained_fp = os.path.join(
+                    os.path.dirname(gen_liks_fp),
+                    f"curr_accepted_cLiks_cn{call_idx}_{proposal}Prop_{base_output_name}",
+                )
+
+                if cfg.overwrite_ig or not fs.exists(curr_accepted_unconstrained_fp):
+                    accepted_unconstrained_curr_df.to_json(
+                        curr_accepted_unconstrained_fp, orient="records", lines=True
+                    )
+
+                if cfg.overwrite_ig or not fs.exists(curr_accepted_constrained_fp):
+                    accepted_constrained_curr_df.to_json(
+                        curr_accepted_constrained_fp, orient="records", lines=True
+                    )
+
+            ## If still no samples accepted after max(20% of planned AR calls, 1), go ahead and switch to IMH sampling
+            if n_accepted == 0 and call_idx >= max(0.2 * cfg.conformal_policy_control.num_AR_before_MH, 1):
+                call_idx = cfg.conformal_policy_control.num_AR_before_MH
+    
     elif proposal == "safe":
         ## Else, beta_t < 1, then using safe policy as proposal
 
@@ -658,6 +692,7 @@ def accept_reject_sample_and_get_likelihoods(
                     global_random_seed=global_random_seed,
                     _model_client=gen_model_client,
                     _test_fn=test_fn,
+                    post_policy_control=post_policy_control,
                 )
                 call_idx += 1
 
@@ -856,10 +891,40 @@ def accept_reject_sample_and_get_likelihoods(
             batch_df["accepted"] = accepted_curr
             all_proposal_dfs.append(batch_df)
 
-            accepted_unconstrained_dfs.append(gen_liks_df[:n_evaluated][accepted_curr])
-            accepted_constrained_dfs.append(
-                constrained_liks_df[:n_evaluated][accepted_curr]
-            )
+            accepted_unconstrained_curr_df = gen_liks_df[:n_evaluated][accepted_curr]
+            accepted_constrained_curr_df = constrained_liks_df[:n_evaluated][accepted_curr]
+
+            accepted_unconstrained_dfs.append(accepted_unconstrained_curr_df)
+            accepted_constrained_dfs.append(accepted_constrained_curr_df)
+
+
+            logger.info(f"Accepted {sum(accepted_curr)} samples in current sampling round for {proposal} proposal")
+            ## Record samples accepted in current sampling round for tracking acceptance progress
+            if sum(accepted_curr) > 0:
+                base_output_name = f"alpha{cfg.conformal_policy_control.alpha}_gens_likelihood_{cfg.iterative_generation.args.sample_size}sample_{cfg.iterative_generation.args.max_iterations}iter_temp{temps[-1]}_{cfg.generation_sampling_num_return_sequences}seqs.jsonl"
+
+                curr_accepted_unconstrained_fp = os.path.join(
+                    os.path.dirname(gen_liks_fp),
+                    f"curr_accepted_uLiks_cn{call_idx}_{proposal}Prop_{base_output_name}",
+                )
+                curr_accepted_constrained_fp = os.path.join(
+                    os.path.dirname(gen_liks_fp),
+                    f"curr_accepted_cLiks_cn{call_idx}_{proposal}Prop_{base_output_name}",
+                )
+
+                if cfg.overwrite_ig or not fs.exists(curr_accepted_unconstrained_fp):
+                    accepted_unconstrained_curr_df.to_json(
+                        curr_accepted_unconstrained_fp, orient="records", lines=True
+                    )
+
+                if cfg.overwrite_ig or not fs.exists(curr_accepted_constrained_fp):
+                    accepted_constrained_curr_df.to_json(
+                        curr_accepted_constrained_fp, orient="records", lines=True
+                    )
+                    
+            ## If still no samples accepted after max(20% of planned AR calls, 1) of planned AR calls, go ahead and switch to IMH sampling
+            if n_accepted == 0 and call_idx >= max(0.2 * cfg.conformal_policy_control.num_AR_before_MH, 1):
+                call_idx = cfg.conformal_policy_control.num_AR_before_MH
 
     elif proposal == "mixture":
         accepted_curr_dict: dict[str, list[bool]] = {"safe": [], "unconstrained": []}
@@ -929,6 +994,7 @@ def accept_reject_sample_and_get_likelihoods(
                         global_random_seed=global_random_seed,
                         _model_client=mix_model_client,
                         _test_fn=test_fn,
+                        post_policy_control=post_policy_control,
                     )
                     call_idx += 1
 
@@ -1025,9 +1091,10 @@ def accept_reject_sample_and_get_likelihoods(
 
                 ## Select proposal from the mixture
                 u_mix = np.random.uniform()
-                if u_mix < safe_prop_mix_weight or (
-                    n_accepted == 0 and safe_prop_mix_weight > 0.5
-                ):
+                if u_mix < safe_prop_mix_weight:
+                    #  or (
+                    #     n_accepted == 0 and safe_prop_mix_weight > 0.5
+                    # ):
                     proposal_curr = "safe"
                 else:
                     proposal_curr = "unconstrained"
@@ -1132,16 +1199,45 @@ def accept_reject_sample_and_get_likelihoods(
                     batch_df["accepted"] = accepted_curr_dict[proposal_curr]
                     all_proposal_dfs.append(batch_df)
 
-                accepted_unconstrained_dfs.append(
-                    gen_liks_df_dict[proposal_curr][
-                        : len(accepted_curr_dict[proposal_curr])
-                    ][accepted_curr_dict[proposal_curr]]
-                )
-                accepted_constrained_dfs.append(
-                    constrained_liks_df_dict[proposal_curr][
-                        : len(accepted_curr_dict[proposal_curr])
-                    ][accepted_curr_dict[proposal_curr]]
-                )
+
+                accepted_unconstrained_curr_df = gen_liks_df_dict[proposal_curr][
+                                                    : len(accepted_curr_dict[proposal_curr])
+                                                ][accepted_curr_dict[proposal_curr]]
+                accepted_constrained_curr_df = constrained_liks_df_dict[proposal_curr][
+                                                    : len(accepted_curr_dict[proposal_curr])
+                                                ][accepted_curr_dict[proposal_curr]]
+
+                accepted_unconstrained_dfs.append(accepted_unconstrained_curr_df)
+                accepted_constrained_dfs.append(accepted_constrained_curr_df)
+
+                logger.info(f"Accepted {sum(accepted_curr_dict[proposal_curr])} samples in current sampling round for {proposal_curr} proposal (in mixture)")
+
+                ## Record samples accepted in current sampling round for tracking acceptance progress
+                if sum(accepted_curr_dict[proposal_curr]) > 0:
+                    base_output_name = f"alpha{cfg.conformal_policy_control.alpha}_gens_likelihood_{cfg.iterative_generation.args.sample_size}sample_{cfg.iterative_generation.args.max_iterations}iter_temp{temps[-1]}_{cfg.generation_sampling_num_return_sequences}seqs.jsonl"
+
+                    curr_accepted_unconstrained_fp = os.path.join(
+                        os.path.dirname(gen_liks_fp_dict[proposal_curr]),
+                        f"curr_accepted_uLiks_cn{call_idx}_{proposal_curr}Prop_{base_output_name}",
+                    )
+                    curr_accepted_constrained_fp = os.path.join(
+                        os.path.dirname(gen_liks_fp_dict[proposal_curr]),
+                        f"curr_accepted_cLiks_cn{call_idx}_{proposal_curr}Prop_{base_output_name}",
+                    )
+
+                    if cfg.overwrite_ig or not fs.exists(curr_accepted_unconstrained_fp):
+                        accepted_unconstrained_curr_df.to_json(
+                            curr_accepted_unconstrained_fp, orient="records", lines=True
+                        )
+
+                    if cfg.overwrite_ig or not fs.exists(curr_accepted_constrained_fp):
+                        accepted_constrained_curr_df.to_json(
+                            curr_accepted_constrained_fp, orient="records", lines=True
+                        )
+
+            ## If still no samples accepted after max(20% of planned AR calls, 1) of planned AR calls, go ahead and switch to IMH sampling
+            if n_accepted == 0 and call_idx >= max(0.2 * cfg.conformal_policy_control.num_AR_before_MH, 1):
+                call_idx = cfg.conformal_policy_control.num_AR_before_MH
 
     else:
         raise ValueError(f"Unknown proposal name : {proposal}")
