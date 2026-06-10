@@ -820,7 +820,7 @@ def cpc_beta_search(
                 )
                 constrained_liks_df_beta_hat_fp = os.path.join(
                     os.path.dirname(constrained_gen_liks_fp),
-                    f"prop_likBeta{beta_t:.3g}_psiS{psi_hat_intersection_safe}_psiU{psi_hat_intersection_unconstrained}_mixProp{switch_to_mixture_proposal}_{os.path.basename(constrained_gen_liks_fp)}",
+                    f"prop_likBeta{beta_t:.4g}_psiS{psi_hat_intersection_safe:.4g}_psiU{psi_hat_intersection_unconstrained:.4g}_mixProp{switch_to_mixture_proposal}_{os.path.basename(constrained_gen_liks_fp)}",
                 )
 
                 if cfg.overwrite_ig or not fs.exists(constrained_liks_df_beta_hat_fp):

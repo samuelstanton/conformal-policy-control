@@ -152,6 +152,30 @@ def generate_sample_batch(
     """
     gen_fp = None
     if _is_direct_mode(cfg):
+        ## Mirror the SLURM-mode output filename built in run_iterative_generation,
+        ## so that direct mode checkpoints (and restarts) the same way.
+        output_filename_prefix = (
+            f"alpha{cfg.conformal_policy_control.alpha}_postPC{post_policy_control}"
+            f"_model{model_idx}_cn{call_idx}_gens_likelihood_"
+            f"{cfg.iterative_generation.args.sample_size}sample_"
+            f"{cfg.iterative_generation.args.max_iterations}iter"
+        )
+        gen_fp = os.path.join(
+            output_dir,
+            f"{output_filename_prefix}_temp{temp}_"
+            f"{cfg.generation_sampling_num_return_sequences}seqs.jsonl",
+        )
+        if not cfg.overwrite_ig and fs.exists(gen_fp):
+            logger.info(f"{gen_fp} already exists. Loading instead of regenerating...")
+            try:
+                gen_df = pd.read_json(gen_fp, orient="records", lines=True)
+            except ValueError:
+                ## Empty/corrupt checkpoint file: treat as a round with no samples
+                gen_df = pd.DataFrame()
+            if len(gen_df) == 0:
+                return None, gen_fp
+            return gen_df, gen_fp
+
         gen_df = _generate_inmemory(
             cfg,
             seeds_fp,
@@ -165,6 +189,8 @@ def generate_sample_batch(
             random_seed,
             n_target=n_target,
         )
+        ## Persist generated proposals so a restarted run resumes with the same samples
+        gen_df.to_json(gen_fp, orient="records", lines=True)
     else:
         _, iter_gen_outputs_list, _hd = run_iterative_generation(
             cfg,
@@ -223,7 +249,24 @@ def compute_batch_likelihoods(
         model_indices = list(range(len(model_dir_list)))
 
     if _is_direct_mode(cfg):
-        return _compute_liks_all_models_inmemory(
+        ## Mirror SLURM-mode checkpointing: if the target file on disk already
+        ## contains likelihood columns for all requested models, load it instead
+        ## of recomputing.
+        if target_fp and not cfg.overwrite_cmp_lik_all and fs.exists(target_fp):
+            try:
+                target_on_disk = pd.read_json(target_fp, orient="records", lines=True)
+            except ValueError:
+                target_on_disk = pd.DataFrame()
+            if len(target_on_disk) > 0 and all(
+                lik_col(m) in target_on_disk.columns for m in model_indices
+            ):
+                logger.info(
+                    f"target_fp {target_fp} already exists with likelihoods computed. "
+                    "Skipping likelihoods computation..."
+                )
+                return target_on_disk
+
+        liks_df = _compute_liks_all_models_inmemory(
             cfg,
             target_df,
             seeds_fp_list,
@@ -231,6 +274,11 @@ def compute_batch_likelihoods(
             model_indices,
             _lik_model_clients=_lik_model_clients,
         )
+        ## Persist likelihoods to the target file (as the SLURM subprocess does)
+        ## so a restarted run can skip recomputation.
+        if target_fp:
+            liks_df.to_json(target_fp, orient="records", lines=True)
+        return liks_df
     else:
         gen_liks_fp_list, _hd = run_compute_liks_all_models_and_cal_data(
             cfg,
