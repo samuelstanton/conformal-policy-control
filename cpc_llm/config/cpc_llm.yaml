@@ -26,7 +26,9 @@ overwrite_dpo: False #True # If False, will only run remaining jobs (that don't 
 
 
 ## Modify this string for different settings
-setting_str: 20260609_refactor
+setting_str: 20260610_0.1dpoB_1e-7dpoLR_20gen_2seedsFromInit_128nTarget_0.2calFrac
+#20260608_0.1dpoB_1e-7dpoLR_20gen_2seedsFromInit_100nTarget_0.2calFrac
+#20260609_refactor
 #20260608_0.1dpoB_1e-7dpoLR_20gen_2seedsFromInit_overlap0.5
 
 
@@ -73,7 +75,7 @@ random_seed: 0 ## For train/cal set splits
 
 ## For how to split cal vs train sets
 split:
-  cal_frac: 0.3333 #0.05 ## Fraction of generated outputs to place in calibration data (rather than training) at each time
+  cal_frac: 0.2 #0.3333 #0.05 ## Fraction of generated outputs to place in calibration data (rather than training) at each time
   train_frac_from_non_cal: 1.0 ## Fraction of *non-cal, deduplicated* generated outputs to place in training data (rather than calibration) at each time
   train_sampling_method: "best_scoring" # "best_scoring", "uniform"
   num_cal_per_step: 10
@@ -86,7 +88,7 @@ temperature_init: 1.0 #1.0 #0.8 #1.0
 temperature: 1.0 #1.0
 
 # Note: each num_*_rounds runs N-1 policy improvement iterations (round 0 is initial SFT)
-num_dpo_rounds: 16
+num_dpo_rounds: 20
 num_init_sft_rounds: 1 #5 #10
 num_sft_rounds: 0 #10
 num_marge_rounds: 0 #10
@@ -447,7 +449,7 @@ conformal_policy_control:
   accept_reject:
     max_total_AR_calls: 20 #15 #30 #40
     n_target_pre_cpc: 500 # 1000
-    n_target_post_cpc: 200 # 1000
+    n_target_post_cpc: 128 # 1000
     iwmci_intersect_thresh: 0.5
     n_opt_prop_calls_pre_cpc_quarter_check: 5
     env_const_scale_emp_max: 1.0 #1.0 #1.05 ## Factor by which to scale the empirical maximum likelihood ratio for estimating envelope constant
