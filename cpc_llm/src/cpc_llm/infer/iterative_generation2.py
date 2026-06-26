@@ -210,13 +210,13 @@ def run_iterative_generation(
         # to use as seeds for generation
         # df = df.drop_duplicates(subset=[cfg.lower_score_particle_field])
         logger.info(f"sample_size : {cfg.sample_size}")
-        if cfg.sampling_method == "best_scoring" and not cfg.first_iter:
+        if cfg.sampling_method == "best_scoring": # and not cfg.first_iter:
             ## Only use best_scoring if is not first iteration
             logger.info("sampling_method : best_scoring")
             df = df.sort_values(by=[cfg.lower_score_field], ascending=True)[
                 : cfg.sample_size
             ]
-        elif cfg.sampling_method == "uniform" or cfg.first_iter:
+        elif cfg.sampling_method == "uniform": # or cfg.first_iter:
             ## Always use "uniform" for first iteration, for a safe initial policy
             logger.info("sampling_method : uniform")
             df = df.sample(n=min(len(df), cfg.sample_size), random_state=cfg.seed)

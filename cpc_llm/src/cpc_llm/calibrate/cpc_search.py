@@ -481,6 +481,7 @@ def cpc_beta_search(
 
     # Metrics tracking
     last_w_test = 0.0
+    last_w_infeasible_normalized = 0.0
     last_switch_to_mixture = False
     last_switch_to_optimized = False
 
@@ -566,6 +567,7 @@ def cpc_beta_search(
                     * psi_hat_intersection_safe
                     < psi_hat_intersection_unconstrained
                     and cfg.conformal_policy_control.alpha < 1.0
+                    and beta_t > cfg.conformal_policy_control.min_beta_mix_prop
                 )
             )
 
@@ -578,6 +580,7 @@ def cpc_beta_search(
                     * psi_hat_intersection_safe
                     < psi_hat_intersection_unconstrained
                     and cfg.conformal_policy_control.alpha < 1.0
+                    and beta_t > cfg.conformal_policy_control.min_beta_mix_prop
                 )
             )
 
@@ -777,10 +780,10 @@ def cpc_beta_search(
                 np.sum(w_cal_normalized[cal_infeasible_indicators]) + w_test_normalized
             )
 
-            # Track metrics for this grid position
-            last_w_test = w_test_normalized #float(w_test) ## Track normalized test point weight instead of raw test point weight
-            last_switch_to_mixture = switch_to_mixture_proposal
-            last_switch_to_optimized = switch_to_optimized_proposal
+            # # Track metrics for this grid position
+            # last_w_test = w_test_normalized #float(w_test) ## Track normalized test point weight instead of raw test point weight
+            # last_switch_to_mixture = switch_to_mixture_proposal
+            # last_switch_to_optimized = switch_to_optimized_proposal
 
             if cfg.conformal_policy_control.randomized_cpc:
                 w_infeasible_normalized *= np.random.uniform()
@@ -791,6 +794,12 @@ def cpc_beta_search(
                 or adjusted_alpha >= 1.0
             ):
                 ## Stopping condition: (1) First uncontrolled risk, return previous beta_t where risk is controlled, (2) Last beta_t (np.inf) and risk is controlled there, (3) Running uncontrolled
+                
+                # If candidate passes, track metrics for this grid position
+                last_w_test = w_test_normalized #float(w_test) ## Track normalized test point weight instead of raw test point weight
+                last_w_infeasible_normalized = w_infeasible_normalized
+                last_switch_to_mixture = switch_to_mixture_proposal
+                last_switch_to_optimized = switch_to_optimized_proposal
 
                 ## If running with risk control, return previous beta_t where risk is controlled
                 if adjusted_alpha < 1.0:
@@ -898,7 +907,7 @@ def cpc_beta_search(
                     psi_hat_t=float(psi_hat_t),
                     grid_size=len(G),
                     grid_position_selected=max(b - 1, 0),
-                    risk_margin=float(adjusted_alpha - w_infeasible_normalized),
+                    risk_margin=float(adjusted_alpha - last_w_infeasible_normalized),
                     w_test=last_w_test,
                     proposal_selected=proposal,
                     switch_to_mixture=last_switch_to_mixture,
@@ -924,8 +933,14 @@ def cpc_beta_search(
                 )
 
             else:
-                ## Reject null hypothesis for beta_t, record it as the current candidate
+                ## beta_t appears safe, record it as the current candidate
                 beta_hat_t_curr = beta_t
+                # psi_hat_t_curr = psi_hat_t
+                # psi_hat_intersection_safe_curr = psi_hat_intersection_safe
+                # psi_hat_intersection_unconstrained_curr = psi_hat_intersection_unconstrained
+                # envelope_const_constrained_over_proposal_curr = envelope_const_constrained_over_proposal
+                # safe_prop_mix_weight_curr = safe_prop_mix_weight
+
 
     ## If does not find a risk-controlling policy:
     logger.info(

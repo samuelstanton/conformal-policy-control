@@ -9,6 +9,7 @@ import threading
 import time
 import uuid
 
+
 from typing import IO, Callable, List, Optional, Tuple
 
 # Optional hook called after each direct subprocess completes.
@@ -121,7 +122,7 @@ def submit_cmd_to_slurm(
         '[ -f "$HOME/.env.slurm" ] && source "$HOME/.env.slurm"'
     ),
     path_to_repo: Optional[str] = None,
-    nodes_to_exclude_str: str = 'ai4dd-b200-st-comp-48xl-51, ai4dd-b200-st-comp-48xl-69, ai4dd-b200-st-comp-48xl-68, ai4dd-b200-st-comp-48xl-82, ai4dd-b200-st-comp-48xl-7', #None,  ## Example: 'b200-st-b200-2-4,b200-st-b200-2-1'
+    nodes_to_exclude_str: str = 'ai4dd-b200-st-comp-48xl-51,ai4dd-b200-st-comp-48xl-69,ai4dd-b200-st-comp-48xl-68,ai4dd-b200-st-comp-48xl-82,ai4dd-b200-st-comp-48xl-7', #None,  ## Example: 'b200-st-b200-2-4,b200-st-b200-2-1'
     **slurm_kwargs,
 ) -> Tuple[subprocess.Popen, str]:
     if path_to_repo is None:
@@ -197,6 +198,7 @@ def submit_cmd_direct(
     os.makedirs(dump_dir, exist_ok=True)
     log_path = os.path.join(dump_dir, f"direct_{uuid.uuid1()}.log")
     logging.info(f"Running directly: {py_cmd}")
+    logging.info(f"Log path: {log_path}")
 
     log_file = open(log_path, "wb")  # noqa: SIM115
     p = subprocess.Popen(

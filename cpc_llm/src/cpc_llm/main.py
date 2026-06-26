@@ -141,11 +141,17 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
             range(cfg.num_init_sft_rounds), desc="SFT Initialization Iterations"
         ):
             n = cfg.num_labels_after_first_round if i > 0 else None
+
+            if cfg.retrain_initial_sft_each_trial:
+                filename_prefix = f"sft_init_seed{random_seed}_r{i}_"
+            else:
+                filename_prefix = f"sft_init_r{i}_"
+
             sft_dataset_fp = create_propen_sft_dataset(
                 cfg,
                 file_client,
                 prev_round_outputs_fp,
-                filename_prefix=f"sft_init_r{i}_",
+                filename_prefix=filename_prefix,
                 n=n,
                 initial_sft=True,
             )
@@ -160,12 +166,17 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                 cfg, "initial_model_config"
             )
 
+            if cfg.retrain_initial_sft_each_trial:
+                initial_sft_run_name = f"sft_init_seed{random_seed}_r{i}"
+            else:
+                initial_sft_run_name = f"sft_init_r{i}"
+
             sft_dir = train_initial_sft(
                 cfg,
                 file_client,
                 sft_dataset_fp,  # combined_sft_dataset_fp, ## Only training on most recently generated data
                 ga_data_dir,
-                initial_sft_run_name=f"{cfg.run_name}_sft_init_r{i}",
+                initial_sft_run_name=initial_sft_run_name,
                 model_dir=all_model_paths[-1],
                 train_from_scratch=train_from_scratch,
             )
@@ -876,6 +887,7 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                 * psi_hat_intersection_safe
                 < psi_hat_intersection_unconstrained
                 and cfg.conformal_policy_control.alpha < 1.0
+                and beta_t > cfg.conformal_policy_control.min_beta_mix_prop
             ):
                 proposal = "mixture"
 
@@ -1224,6 +1236,7 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                 * psi_hat_intersection_safe
                 < psi_hat_intersection_unconstrained
                 and cfg.conformal_policy_control.alpha < 1.0
+                and beta_t > cfg.conformal_policy_control.min_beta_mix_prop
             ):
                 proposal = "mixture"
 
@@ -1339,6 +1352,7 @@ _CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".
 
 @hydra.main(config_path=_CONFIG_PATH, config_name="pipeline")
 def main(cfg: DictConfig):
+    import sys; print("cpc-llm: process started, initializing...", file=sys.stderr, flush=True)
     run_pipeline(cfg)
 
 
