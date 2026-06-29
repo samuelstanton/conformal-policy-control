@@ -5,7 +5,7 @@ import logging
 import sys
 import os
 
-from typing import List
+from typing import List, Optional
 from omegaconf import DictConfig
 
 from ..infrastructure.file_handler import LocalOrS3Client
@@ -56,12 +56,18 @@ def cpc_beta_search(
     higher_score_field: str = HIGHER_SCORE,
     lower_score_field: str = LOWER_SCORE,
     global_random_seed: int = 0,
-) -> CPCSearchResult:
+) -> Optional[CPCSearchResult]:
     """Runs conformal policy control.
 
     Returns:
         A ``CPCSearchResult`` containing the selected beta, psi, constrained
         likelihood DataFrames/filepaths, proposal info, and search metrics.
+
+        Returns ``None`` when no proposal produced any samples this round (e.g.
+        every ``gen_df`` was ``None``/empty, which can happen when
+        ``cfg.conformal_policy_control.alpha >= 1.0``). Callers should treat a
+        ``None`` result as "skip this round and reuse the previous round's model
+        and data" rather than crashing.
     """
 
     ## Load calibration data into one dataframe
@@ -217,6 +223,7 @@ def cpc_beta_search(
             cfg.conformal_policy_control.alpha
         )  ## Fixed sequence testing, no multistart correction
 
+
     lik_ratios_unconstrained_over_safe_cal_and_prop_dict = {}
     lik_ratios_unconstrained_over_safe_dict = {}
 
@@ -286,10 +293,12 @@ def cpc_beta_search(
             )
 
 
-            if gen_df is None and proposal == "unconstrained":
+            if gen_df is None and proposal == "unconstrained" and cfg.conformal_policy_control.alpha < 1.0:
                 policy_names = ["safe"]
                 continue
-            if gen_df is None:
+
+
+            if gen_df is None or len(gen_df) == 0:
                 continue
             
             logger.info(f"_is_direct_mode(cfg) : {_is_direct_mode(cfg)}")
@@ -422,6 +431,20 @@ def cpc_beta_search(
         if use_inmemory:
             cleanup_model_clients(lik_model_clients, gen_model_client)
 
+    ## Edge case: no proposal produced any samples this round (every gen_df was
+    ## None/empty). This can occur when alpha >= 1.0, where policy_names only
+    ## contains "unconstrained" and the alpha < 1.0 fallback above does not apply.
+    ## Rather than crashing on the empty dict below, signal the caller to fall
+    ## back gracefully (reuse the previous round's model and data).
+    if not lik_ratios_unconstrained_over_safe_cal_and_prop_dict:
+        logger.warning(
+            "CPC beta search produced no proposal samples (all generations were "
+            f"empty/None) for alpha={cfg.conformal_policy_control.alpha}; returning "
+            "None so the pipeline can reuse the previous round's model and data."
+        )
+        return None
+
+
     lik_ratios_unconstrained_over_safe_cal_and_prop_arr = np.array(
         lik_ratios_unconstrained_over_safe_cal_and_prop_dict[policy_names[0]]
     )
@@ -482,8 +505,18 @@ def cpc_beta_search(
     # Metrics tracking
     last_w_test = 0.0
     last_w_infeasible_normalized = 0.0
-    last_switch_to_mixture = False
-    last_switch_to_optimized = False
+    last_switch_to_mixture_proposal = False
+    last_switch_to_optimized_proposal = False
+    last_psi_hat_t = sys.float_info.min
+    last_psi_hat_t_unconstrained = 1.0
+    last_psi_hat_t_safe = sys.float_info.min
+    last_psi_hat_intersection_safe = 1.0
+    last_psi_hat_intersection_unconstrained = 0.0
+    # last_envelope_const_constrained_over_proposal = 1.0
+
+    G_original = G.copy()
+    beta_position_in_G_original = 0
+    last_proposal = policy_names[0]
 
     for i, proposal in enumerate(policy_names):
         unconstrained_df = unconstrained_df_dict[proposal]
@@ -512,6 +545,11 @@ def cpc_beta_search(
         cal_infeasible_indicators = np.isnan(cal_scores) | np.isinf(cal_scores)
 
         for b, beta_t in enumerate(G):
+
+
+            # if cfg.conformal_policy_control.alpha == 0.8 and global_random_seed == 0 and len(model_dir_list) in [20, 21]\
+            #     and beta_t >= 3.06441459e-039:
+            #     breakpoint()
             ## Estimate normalization constant via IWMCI
             psi_hat_t = importance_weighted_monte_carlo_integration(
                 lik_ratios_unconstrained_over_safe, beta_t, proposal
@@ -658,6 +696,50 @@ def cpc_beta_search(
                         ],
                         ignore_index=True,
                     )
+                    
+                    prop_data_t0_safe_and_t_unconstrained_liks = np.vstack(
+                        (
+                            prop_data_t0_safe_and_t_unconstrained_liks_dict["safe"].loc[
+                                constrained_liks_df_safe.index
+                            ],
+                            prop_data_t0_safe_and_t_unconstrained_liks_dict[
+                                "unconstrained"
+                            ].loc[
+                                constrained_liks_df_unconstrained.index
+                            ],
+                        )
+                    )
+
+                    prop_mixture_constrained_density = np.concatenate(
+                        (
+                            prop_mixture_constrained_density_dict["safe"].loc[
+                                constrained_liks_df_safe.index
+                            ],
+                            prop_mixture_constrained_density_dict["unconstrained"].loc[
+                                constrained_liks_df_unconstrained.index
+                            ],
+                        )
+                    )
+                    safe_liks = np.concatenate(
+                        (
+                            safe_liks_dict["safe"].loc[
+                                constrained_liks_df_safe.index
+                            ],
+                            safe_liks_dict["unconstrained"].loc[
+                                constrained_liks_df_unconstrained.index
+                            ],
+                        )
+                    )
+                    unconstrained_liks = np.concatenate(
+                        (
+                            unconstrained_liks_dict["safe"].loc[
+                                constrained_liks_df_safe.index
+                            ],
+                            unconstrained_liks_dict["unconstrained"].loc[
+                                constrained_liks_df_unconstrained.index
+                            ],
+                        )
+                    )
                 else:
                     constrained_liks_df = pd.concat(
                         [
@@ -678,41 +760,41 @@ def cpc_beta_search(
                         ignore_index=True,
                     )
 
-                prop_data_t0_safe_and_t_unconstrained_liks = np.vstack(
-                    (
-                        prop_data_t0_safe_and_t_unconstrained_liks_dict["safe"][
-                            :n_safe_prop_include
-                        ],
-                        prop_data_t0_safe_and_t_unconstrained_liks_dict[
-                            "unconstrained"
-                        ][:n_unconstrained_prop_include],
+                    prop_data_t0_safe_and_t_unconstrained_liks = np.vstack(
+                        (
+                            prop_data_t0_safe_and_t_unconstrained_liks_dict["safe"][
+                                :n_safe_prop_include
+                            ],
+                            prop_data_t0_safe_and_t_unconstrained_liks_dict[
+                                "unconstrained"
+                            ][:n_unconstrained_prop_include],
+                        )
                     )
-                )
 
-                prop_mixture_constrained_density = np.concatenate(
-                    (
-                        prop_mixture_constrained_density_dict["safe"][
-                            :n_safe_prop_include
-                        ],
-                        prop_mixture_constrained_density_dict["unconstrained"][
-                            :n_unconstrained_prop_include
-                        ],
+                    prop_mixture_constrained_density = np.concatenate(
+                        (
+                            prop_mixture_constrained_density_dict["safe"][
+                                :n_safe_prop_include
+                            ],
+                            prop_mixture_constrained_density_dict["unconstrained"][
+                                :n_unconstrained_prop_include
+                            ],
+                        )
                     )
-                )
-                safe_liks = np.concatenate(
-                    (
-                        safe_liks_dict["safe"][:n_safe_prop_include],
-                        safe_liks_dict["unconstrained"][:n_unconstrained_prop_include],
+                    safe_liks = np.concatenate(
+                        (
+                            safe_liks_dict["safe"][:n_safe_prop_include],
+                            safe_liks_dict["unconstrained"][:n_unconstrained_prop_include],
+                        )
                     )
-                )
-                unconstrained_liks = np.concatenate(
-                    (
-                        unconstrained_liks_dict["safe"][:n_safe_prop_include],
-                        unconstrained_liks_dict["unconstrained"][
-                            :n_unconstrained_prop_include
-                        ],
+                    unconstrained_liks = np.concatenate(
+                        (
+                            unconstrained_liks_dict["safe"][:n_safe_prop_include],
+                            unconstrained_liks_dict["unconstrained"][
+                                :n_unconstrained_prop_include
+                            ],
+                        )
                     )
-                )
 
             else:
                 safe_prop_mix_weight = 1.0 if proposal == "safe" else 0.0
@@ -785,6 +867,7 @@ def cpc_beta_search(
             # last_switch_to_mixture = switch_to_mixture_proposal
             # last_switch_to_optimized = switch_to_optimized_proposal
 
+
             if cfg.conformal_policy_control.randomized_cpc:
                 w_infeasible_normalized *= np.random.uniform()
 
@@ -796,18 +879,40 @@ def cpc_beta_search(
                 ## Stopping condition: (1) First uncontrolled risk, return previous beta_t where risk is controlled, (2) Last beta_t (np.inf) and risk is controlled there, (3) Running uncontrolled
                 
                 # If candidate passes, track metrics for this grid position
-                last_w_test = w_test_normalized #float(w_test) ## Track normalized test point weight instead of raw test point weight
-                last_w_infeasible_normalized = w_infeasible_normalized
-                last_switch_to_mixture = switch_to_mixture_proposal
-                last_switch_to_optimized = switch_to_optimized_proposal
+                # last_w_test = w_test_normalized #float(w_test) ## Track normalized test point weight instead of raw test point weight
+                # last_switch_to_mixture = switch_to_mixture_proposal
+                # last_switch_to_optimized = switch_to_optimized_proposal
 
                 ## If running with risk control, return previous beta_t where risk is controlled
                 if adjusted_alpha < 1.0:
                     beta_t = beta_hat_t_curr
 
-                psi_hat_t = importance_weighted_monte_carlo_integration(
-                    lik_ratios_unconstrained_over_safe, beta_t, proposal
-                )
+                # psi_hat_t = importance_weighted_monte_carlo_integration(
+                #     lik_ratios_unconstrained_over_safe, beta_t, proposal
+                # )
+                psi_hat_t = last_psi_hat_t
+                psi_hat_t_unconstrained = last_psi_hat_t_unconstrained
+                psi_hat_t_safe = last_psi_hat_t_safe
+                psi_hat_intersection_safe = last_psi_hat_intersection_safe
+                psi_hat_intersection_unconstrained = last_psi_hat_intersection_unconstrained
+                proposal = last_proposal
+                switch_to_mixture_proposal = last_switch_to_mixture_proposal
+                switch_to_optimized_proposal = last_switch_to_optimized_proposal
+
+                if beta_t > sys.float_info.min and cfg.conformal_policy_control.alpha < 1.0:
+                    prop_constrained_liks_curr = last_prop_constrained_liks
+                    prop_mixture_constrained_density = last_prop_mixture_constrained_density
+                    safe_liks = last_safe_liks
+                    unconstrained_liks = last_unconstrained_liks
+                    unconstrained_liks_dict = last_unconstrained_liks_dict
+                    safe_liks_dict = last_safe_liks_dict
+                    constrained_liks_df_dict = last_constrained_liks_df_dict
+                    unconstrained_df_dict = last_unconstrained_df_dict
+                    prop_data_t0_safe_and_t_unconstrained_liks_dict = last_prop_data_t0_safe_and_t_unconstrained_liks_dict
+                    prop_mixture_constrained_density_dict = last_prop_mixture_constrained_density_dict
+                    constrained_liks_df = last_constrained_liks_df
+                    unconstrained_df = last_unconstrained_df
+                # envelope_const_constrained_over_proposal = last_envelope_const_constrained_over_proposal
 
                 logger.info(f"Selected beta_t = {beta_t}, psi_hat_t = {psi_hat_t}")
                 logger.info(
@@ -846,6 +951,8 @@ def cpc_beta_search(
                 # ):
                 # logger.info(f"switch_to_mixture_proposal: {switch_to_mixture_proposal}")
                 # logger.info(f"proposal {proposal}")
+
+            
 
                 if switch_to_mixture_proposal:
                     if cfg.conformal_policy_control.alpha >= 1.0:
@@ -890,9 +997,13 @@ def cpc_beta_search(
                     raise ValueError(f"Invalid proposal: {proposal}")
 
                 envelope_const_constrained_over_proposal = (
-                    max(lik_ratios_constrained_over_proposal)
-                    * cfg.conformal_policy_control.accept_reject.env_const_scale_emp_max
+                    max(lik_ratios_constrained_over_proposal
+                    * cfg.conformal_policy_control.accept_reject.env_const_scale_emp_max)
                 )
+
+                # if envelope_const_constrained_over_proposal != last_envelope_const_constrained_over_proposal and beta_t > sys.float_info.min:
+                #     breakpoint()
+                #     raise ValueError(f"Error: Not using proper env constant from last iter")
 
                 if cfg.overwrite_ig or not fs.exists(unconstrained_gen_liks_fp):
                     unconstrained_df.to_json(
@@ -905,13 +1016,13 @@ def cpc_beta_search(
                 search_metrics = CPCSearchMetrics(
                     beta_t=float(beta_t),
                     psi_hat_t=float(psi_hat_t),
-                    grid_size=len(G),
-                    grid_position_selected=max(b - 1, 0),
+                    grid_size=len(G_original),
+                    grid_position_selected=beta_position_in_G_original, #max(b - 1, 0),
                     risk_margin=float(adjusted_alpha - last_w_infeasible_normalized),
                     w_test=last_w_test,
-                    proposal_selected=proposal,
-                    switch_to_mixture=last_switch_to_mixture,
-                    switch_to_optimized=last_switch_to_optimized,
+                    proposal_selected="mixture" if switch_to_mixture_proposal else proposal,
+                    switch_to_mixture=switch_to_mixture_proposal,
+                    switch_to_optimized=switch_to_optimized_proposal,
                     psi_hat_intersection_safe=float(psi_hat_intersection_safe),
                     psi_hat_intersection_unconstrained=float(
                         psi_hat_intersection_unconstrained
@@ -925,7 +1036,7 @@ def cpc_beta_search(
                     constrained_liks_fp=constrained_liks_df_beta_hat_fp,
                     unconstrained_df=unconstrained_df,
                     unconstrained_liks_fp=unconstrained_gen_liks_fp,
-                    proposal=proposal,
+                    proposal="mixture" if switch_to_mixture_proposal else proposal,
                     psi_hat_intersection_safe=psi_hat_intersection_safe,
                     psi_hat_intersection_unconstrained=psi_hat_intersection_unconstrained,
                     envelope_const=envelope_const_constrained_over_proposal,
@@ -934,7 +1045,32 @@ def cpc_beta_search(
 
             else:
                 ## beta_t appears safe, record it as the current candidate
+                beta_position_in_G_original += 1
+                last_w_test = w_test_normalized #float(w_test) ## Track normalized test point weight instead of raw test point weight
+                last_w_infeasible_normalized = w_infeasible_normalized
+
                 beta_hat_t_curr = beta_t
+                last_psi_hat_t = psi_hat_t
+                last_psi_hat_t_unconstrained = psi_hat_t_unconstrained
+                last_psi_hat_t_safe = psi_hat_t_safe
+                last_psi_hat_intersection_safe = psi_hat_intersection_safe
+                last_psi_hat_intersection_unconstrained = psi_hat_intersection_unconstrained
+                last_proposal = proposal
+                last_switch_to_mixture_proposal = switch_to_mixture_proposal
+                last_switch_to_optimized_proposal = switch_to_optimized_proposal
+                last_prop_constrained_liks = prop_constrained_liks_curr
+                last_prop_mixture_constrained_density = prop_mixture_constrained_density
+                last_safe_liks = safe_liks
+                last_unconstrained_liks = unconstrained_liks
+                last_unconstrained_liks_dict = unconstrained_liks_dict
+                last_safe_liks_dict = safe_liks_dict
+                last_constrained_liks_df_dict = constrained_liks_df_dict
+                last_unconstrained_df_dict = unconstrained_df_dict
+                last_prop_data_t0_safe_and_t_unconstrained_liks_dict = prop_data_t0_safe_and_t_unconstrained_liks_dict
+                last_prop_mixture_constrained_density_dict = prop_mixture_constrained_density_dict
+                last_constrained_liks_df = constrained_liks_df
+                last_unconstrained_df = unconstrained_df
+                # last_envelope_const_constrained_over_proposal = envelope_const_constrained_over_proposal
                 # psi_hat_t_curr = psi_hat_t
                 # psi_hat_intersection_safe_curr = psi_hat_intersection_safe
                 # psi_hat_intersection_unconstrained_curr = psi_hat_intersection_unconstrained
@@ -983,8 +1119,8 @@ def cpc_beta_search(
         risk_margin=float("nan"),  # risk not controlled
         w_test=last_w_test,
         proposal_selected=proposal,
-        switch_to_mixture=last_switch_to_mixture,
-        switch_to_optimized=last_switch_to_optimized,
+        switch_to_mixture=last_switch_to_mixture_proposal,
+        switch_to_optimized=last_switch_to_optimized_proposal,
         psi_hat_intersection_safe=float(psi_hat_intersection_safe),
         psi_hat_intersection_unconstrained=float(psi_hat_intersection_unconstrained),
         envelope_const=float(envelope_const_constrained_over_proposal),

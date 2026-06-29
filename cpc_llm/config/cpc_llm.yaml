@@ -33,8 +33,11 @@ overwrite_dpo: False #True # If False, will only run remaining jobs (that don't 
 retrain_initial_sft_each_trial: True ## If True, will retrain the initial SFT for each trial (seed)
 
 ## Modify this string for different settings
-setting_str: 20260625_10KGA_reInit_1KPreCPC_200PostCPC_0.25calFrac_0.2oldSeed_1.5e-7lr
+setting_str: 20260629_200PostCPC_0.333calFrac_0.2oldSeed_1.5e-7lr_fft0.001_minBetaMix1e-80_CPCfix
+#20260627_10KGA_reInit_200PostCPC_0.333calFrac_0.3oldSeed_1.5e-7lr_fft0.001_subsampMix
+#20260626_10KGA_reInit_25MaxIter_2KPreCPC_200PostCPC_0.333calFrac_0.3oldSeed_1.5e-7lr_fft0.002
 
+#20260625_10KGA_reInit_1KPreCPC_200PostCPC_0.25calFrac_0.2oldSeed_1.5e-7lr
 
 initial_seed: 0
 last_seed: 1
@@ -78,14 +81,14 @@ random_seed: 0 ## For train/cal set splits
 
 ## For how to split cal vs train sets
 split:
-  cal_frac: 0.25 #3333 #0.25 #0.2 #0.1 #0.3333 #0.05 ## Fraction of generated outputs to place in calibration data (rather than training) at each time
+  cal_frac: 0.333 #0.333 #3333 #0.25 #0.2 #0.1 #0.3333 #0.05 ## Fraction of generated outputs to place in calibration data (rather than training) at each time
   train_frac_from_non_cal: 1.0 ## Fraction of *non-cal, deduplicated* generated outputs to place in training data (rather than calibration) at each time
   train_sampling_method: "best_scoring" # "best_scoring", "uniform"
   num_cal_per_step: 10
   num_train_per_step: 40
 
 ## If using ranked FFT for selecting seeds, top fraction of particles to construct library from
-ranked_fft_top_fraction: 0.005 #0.01
+ranked_fft_top_fraction: 0.001 #0.01
 # ranked_fft_top_n: 100 ## top number of particles to construct library from
 
 temperature_init: 1.0 #1.0 #0.8 #1.0
@@ -346,8 +349,8 @@ iterative_generation:
   init_args:
     ## init args just for first iteration:
     sample_size: 20 #20 #100 #20
-    max_iterations: 20 #100 #120 #200 #50 #100 #200
-    sampling_method: "best_scoring" #"best_scoring" #"uniform"
+    max_iterations: 25 #100 #120 #200 #50 #100 #200
+    sampling_method: "ranked_fft" #"best_scoring" #"best_scoring" #"uniform"
     seed: 0
   args:
     sanity_check: False
@@ -356,7 +359,7 @@ iterative_generation:
     test_fn_type: "ehrlich"  # [ehrlich, mt_fuji]
     subsample_seeds: True ## Whether to subsample input seeds (with replacement), or to iterate through all of them
     sample_size: 10 #10 #100 #200  # initial number of seeds to use for iterative generation
-    max_iterations: 20 #60 #120 #120 #50 #100 #10
+    max_iterations: 25 #60 #120 #120 #50 #100 #10
     sampling_method: "best_scoring" ## Method for selecting seeds # "uniform", "combination", "best_scoring"
     generation_config:
       max_new_tokens: 256
@@ -382,10 +385,10 @@ conformal_policy_control:
   num_starts_beta_search: 1
   mixture_proposal: True #True #True ## Whether to do mixture proposal in place of optimized proposal (else use safe and then optimized proposal)
   mixture_proposal_factor: 0.25 # 0.25 #0.05 ## Do mixture proposal if mixture_proposal_factor * overlap_coef_{safe} < overlap_coef_{unconstrained}. So, 0 or -1 does nothing
-  mixture_proposal_subsample_cpc: False #True
+  mixture_proposal_subsample_cpc: False #False #True
   optimized_proposal_factor: 1 #1 ## Do optimized proposal if optimized_proposal_factor *overlap_coef_{safe} < overlap_coef_{unconstrained}. So, 0 or -1 does nothing
   min_safe_mix_weight: "adaptive" #0.1 ## When set to "adaptive", will use (1 - alpha) ** 4 as the minimum weight on safe proposals
-  min_beta_mix_prop: 1e-25
+  min_beta_mix_prop: 1e-80
   ind_metropolis_hastings: False #False
   num_AR_before_MH: 10 #10 ## Number of AR generation iterations to try before switching to IMH sampling (only runs IMH if less than max_total_AR_calls)
   constrain_against: "init" ## "init" or "last": whether to constrain against the initial safe policy, or the last/most recent safe policy
@@ -396,7 +399,7 @@ conformal_policy_control:
     n_grid: 200 ## Approx size of grid to search over for lik-ratio bound    
   accept_reject:
     max_total_AR_calls: 20 #15 #30 #40
-    n_target_pre_cpc: 1000 #1000
+    n_target_pre_cpc: 2000 #1000
     n_target_post_cpc: 200 #200 #150 # 1000
     iwmci_intersect_thresh: 0.5
     n_opt_prop_calls_pre_cpc_quarter_check: 5
