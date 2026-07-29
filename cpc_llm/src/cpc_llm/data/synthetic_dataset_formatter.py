@@ -419,8 +419,13 @@ def find_preference_pairs(cfg: DictConfig, df: pd.DataFrame) -> List[Dict[str, A
     filtered = library
     filtered_scores = ranking_scores
     filtered = filtered.numpy()
-    # Pre-convert scores to numpy for fast scalar access in triple-finding loop
+    # Pre-convert scores to numpy for fast scalar access in triple-finding loop.
+    # NaN (e.g. from a +inf score round-tripped through pandas.to_json, which
+    # silently serializes +/-inf and NaN as JSON null) must become +inf here —
+    # comparisons against NaN are always False, which would silently produce
+    # zero pairs instead of treating the particle as worst-possible.
     scores_np = filtered_scores.numpy()
+    scores_np = np.where(np.isnan(scores_np), np.inf, scores_np)
     pynn_transformer = PyNNDescentTransformer(
         n_neighbors=cfg.n_neighbors, metric=cfg.distance_metric
     ).fit(filtered)

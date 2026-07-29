@@ -796,6 +796,17 @@ def train_dpo(
         **slurm_kwargs,
     )
     return_path = s3_output_dir if cfg.parent_output_dir is not None else output_dir
+    if model_already_trained(cfg, fs, s3_output_dir, output_dir) is None:
+        # The training subprocess can exit 0 without saving a model, e.g. when
+        # it skips training because the preference dataset was empty. Fail
+        # loudly here instead of letting downstream steps load `return_path`
+        # as if it were a real checkpoint.
+        raise RuntimeError(
+            f"DPO training for run '{run_name}' exited successfully but no "
+            f"model checkpoint was found in {return_path}. Check the training "
+            f"log in {slurm_dump_dir} — this often means the preference "
+            f"dataset was empty."
+        )
     return return_path
 
 

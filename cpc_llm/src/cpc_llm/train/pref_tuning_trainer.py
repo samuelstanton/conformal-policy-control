@@ -119,7 +119,9 @@ class DPOTrainerWithLogging(DPOTrainer):
                 num_repeated_input += 1
             particle = torch.FloatTensor(particle).unsqueeze(0)
             score = self.test_fn(particle).item()
-            if score < input_scores[i]:
+            if input_scores[i] is None and score != float("inf"):
+                num_decreased_score += 1
+            elif input_scores[i] is not None and score < input_scores[i]:
                 num_decreased_score += 1
             if score == float("inf"):
                 all_scores_including_nulls.append(None)

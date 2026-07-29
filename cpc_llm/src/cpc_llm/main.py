@@ -71,6 +71,13 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
         )
         logger.setLevel(cfg.log_level.upper())
         logger.info(OmegaConf.to_yaml(cfg, resolve=True))
+        if cfg.local_output_dir is not None:
+            os.makedirs(cfg.local_output_dir, exist_ok=True)
+        if cfg.parent_output_dir is not None and not str(cfg.parent_output_dir).startswith(
+            "s3://"
+        ):
+            os.makedirs(cfg.parent_output_dir, exist_ok=True)
+            os.makedirs(os.path.join(cfg.parent_output_dir, cfg.run_name), exist_ok=True)
         use_s3 = cfg.parent_output_dir is not None
         file_client_args = {"init_s3": use_s3}
         if use_s3:

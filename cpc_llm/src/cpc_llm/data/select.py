@@ -78,6 +78,8 @@ def get_seeds_from_training_data(
         return output_fp
 
     else:
+        if not output_dir.startswith("s3://"):
+            os.makedirs(output_dir, exist_ok=True)
         if not first_iter:
             ## If not first iteration: read, prepare, and get new sample sizes for historical data
             prev_seeds_df = pd.read_json(prev_seeds_fp, orient="records", lines=True)

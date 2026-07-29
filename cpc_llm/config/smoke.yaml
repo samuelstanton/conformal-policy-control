@@ -17,6 +17,10 @@ evol_dataset_gen:
 
 iterative_generation:
   num_jobs: 1
+  # Tiny, minimally-trained smoke model rarely completes a full-length particle;
+  # a strict 1.0 threshold scores every generation as infeasible (+inf), leaving
+  # no score variation to build preference pairs from.
+  min_rel_len_feasible_particle: 0.1
   init_args:
     sample_size: 20
     max_iterations: 10
