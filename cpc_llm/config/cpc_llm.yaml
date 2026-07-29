@@ -1,22 +1,23 @@
 log_level: info
-run_name: smaller_pythia #smaller_pythia_0.25dist_0.1maxinf_50gen
-parent_output_dir: /cv/data/ai4dd/data/prinstea/conformal-policy-control/cpc_llm/parent_output_20260625_bestScoreSafe
-#/cv/data/ai4dd/data/prinstea/conformal-policy-control/cpc_llm/parent_output_20260624_bestScoreSafe
-#/cv/data/ai4dd/data/prinstea/conformal-policy-control/cpc_llm/parent_output_20260623_bestScoreSafe
-#/cv/data/ai4dd/data/prinstea/conformal-policy-control/cpc_llm/parent_output_20260530_bestScoreSafe
+run_name: smaller_pythia 
 
-local_output_dir: /cv/scratch/u/prinstea/conformal-policy-control/cpc_llm/local_output_20260625_bestScoreSafe
-#/cv/data/ai4dd/data/prinstea/conformal-policy-control/cpc_llm/local_output_20260624_bestScoreSafe
-#/cv/data/ai4dd/data/prinstea/conformal-policy-control/cpc_llm/local_output_20260623_bestScoreSafe
-#/cv/data/ai4dd/data/prinstea/conformal-policy-control/cpc_llm/local_output_20260530_bestScoreSafe
+## Make sure to update these paths to your own local and storage (parent) paths for output directories!
+local_output_dir: /cv/scratch/u/prinstea/conformal-policy-control/cpc_llm/local_output_replication
+parent_output_dir: /cv/data/ai4dd/data/prinstea/conformal-policy-control/cpc_llm/parent_output_replication
 
+## Modify this string for saving different experimental settings
+setting_str: cpc_llm_replication
+
+## Global random seeds to loop over for different replication trials
+initial_seed: 0
+last_seed: 1 ## Inclusive, so if initial_seed = 0 and last_seed = 1, will run seeds 0 and 1 (2 trials total)
+
+
+## Overwrite flags for each job type. If False, will only run the job if the output file does not already exist.
 overwrite_ga: False ## If False, will only run genetic algorithm when output file does not already exist.
 overwrite_initial_sft: False ## If False, will only run SFT when output file does not already exist.
 overwrite_init_sft_formatter: False
-
 overwrite_initg: False #False ## If False, will only run initial generation when output file does not already exist.
-
-
 overwrite_seeds_flag: False
 overwrite_split_init: False
 overwrite_sft: False ## If False, will only run SFT when output file does not already exist.
@@ -32,19 +33,9 @@ overwrite_dpo: False #True # If False, will only run remaining jobs (that don't 
 
 retrain_initial_sft_each_trial: True ## If True, will retrain the initial SFT for each trial (seed)
 
-## Modify this string for different settings
-setting_str: 20260629_200PostCPC_0.333calFrac_0.2oldSeed_1.5e-7lr_fft0.001_minBetaMix1e-80_CPCfix
-#20260627_10KGA_reInit_200PostCPC_0.333calFrac_0.3oldSeed_1.5e-7lr_fft0.001_subsampMix
-#20260626_10KGA_reInit_25MaxIter_2KPreCPC_200PostCPC_0.333calFrac_0.3oldSeed_1.5e-7lr_fft0.002
 
-#20260625_10KGA_reInit_1KPreCPC_200PostCPC_0.25calFrac_0.2oldSeed_1.5e-7lr
-
-initial_seed: 0
-last_seed: 1
-
-
+## Run flags for different parts of the pipeline (default)
 run_conformal_policy_control: True
-
 run_evol_dataset_gen: True
 run_propen_sft_dataset_formatting: True
 run_initial_sft: True
@@ -52,17 +43,18 @@ run_sft: True
 run_init_gen: True ## Whether to run initial generation
 run_iter_gen: True
 run_compute_liks_all_models_and_cal_data: True ## Whether to run likelihood computation for all models (for policy control)
-run_contrast_gen: True #False ## Whether to run contrastive generation
-
 run_propen_dpo_dataset_formatting: True
+
 init_generation_sampling_num_return_sequences: 10 #10 ## Number of sequences to sample at each intialization generation stage
 generation_sampling_num_return_sequences: 10 #20 #10 ## Number of sequences to sample at each iterative generation (policy improvement) stage
-unconditional_sampling_num_return_sequences: 10 ## Number of sequences to sample from density model, for initial CP cal
+# unconditional_sampling_num_return_sequences: 10 ## Number of sequences to sample from density model, for initial CP cal
 
 num_labels_after_first_round: 2000 # num. of labels to use in all rounds after the first
+
+## Parameters for carrying over some amount of old data or seeds into current round
 proportion_of_old_data: 0.2 #0.3333 #1.0 #0.0  # proportion of old training data to include in the running "combined" dataset (used for selecting seeds)
 min_num_data_old: 50 #100 ## If proportion_of_old_data > 0.0, min number of old data samples to include in training
-proportion_of_old_seeds: 0.2 #0.2 #0.5 ## proportion of seeds from previous training data to use in current optimized policy (rest are from most recent round)
+proportion_of_old_seeds: 0.2 #0.5 ## proportion of seeds from previous training data to use in current optimized policy (rest are from most recent round)
 select_old_seeds_from: "init" #"last" ## "last" or "init"
 
 seed: 0
@@ -81,7 +73,7 @@ random_seed: 0 ## For train/cal set splits
 
 ## For how to split cal vs train sets
 split:
-  cal_frac: 0.333 #0.333 #3333 #0.25 #0.2 #0.1 #0.3333 #0.05 ## Fraction of generated outputs to place in calibration data (rather than training) at each time
+  cal_frac: 0.333  ## Fraction of generated outputs to place in calibration data (rather than training) at each time
   train_frac_from_non_cal: 1.0 ## Fraction of *non-cal, deduplicated* generated outputs to place in training data (rather than calibration) at each time
   train_sampling_method: "best_scoring" # "best_scoring", "uniform"
   num_cal_per_step: 10
@@ -99,6 +91,36 @@ num_dpo_rounds: 25
 num_init_sft_rounds: 1 #5 #10
 num_sft_rounds: 0 #10
 num_marge_rounds: 0 #10
+
+
+
+## Primary config parameters for conformal policy control (CPC) algorithm. See paper for details.
+conformal_policy_control:
+  alpha: 0.8  ### *** IMPORTANT: This is the main parameter to change for different CPC alpha levels ***
+  mixture_proposal: True ## Whether to do mixture proposal in place of optimized proposal (else use safe and then optimized proposal)
+  mixture_proposal_factor: 0.25 #0.05 ## Do mixture proposal if mixture_proposal_factor * overlap_coef_{safe} < overlap_coef_{unconstrained}. So, 0 or -1 does nothing
+  mixture_proposal_subsample_cpc: False # For each beta, whether to subsample when re-computing candidate's normalization constant
+  optimized_proposal_factor: 1 #1 ## Do optimized proposal if optimized_proposal_factor *overlap_coef_{safe} < overlap_coef_{unconstrained}. So, 0 or -1 does nothing
+  min_safe_mix_weight: "adaptive" #0.1 ## When set to "adaptive", will use (1 - alpha) ** 4 as the minimum weight on safe proposals
+  min_beta_mix_prop: 1e-80
+  ind_metropolis_hastings: False ## Whether to only use independence MH sampling (rather than try rejection sampling first)
+  num_AR_before_MH: 10 ## Number of AR generation iterations to try before switching to IMH sampling (only runs IMH if less than max_total_AR_calls)
+  constrain_against: "init" ## "init" or "last": whether to constrain against the initial safe policy, or the last/most recent safe policy. Paper's theory assumes init
+  use_overlap_mix_weight: True ## Whether to use overlap coefficient mixture weight; else, use 1 / (1 + beta)
+  randomized_cpc: False # Keep this False
+  test_pt_scale_factor: 1.0 #25
+  num_starts_beta_search: 1
+  args:
+    n_grid: 200 ## Approx size of grid to search over for lik-ratio bound    
+  accept_reject:
+    max_total_AR_calls: 20 #15 #30 #40
+    n_target_pre_cpc: 2000 ## Pre-CPC calibration, how many samples from safe/optimized policy to estimate normalization constants, overlap coefficients, etc.
+    n_target_post_cpc: 200 ## Post-CPC calibration, how many samples to target drawing during rejection sampling, to then be split next round's train/cal data.
+    iwmci_intersect_thresh: 0.5
+    n_opt_prop_calls_pre_cpc_quarter_check: 5
+    env_const_scale_emp_max: 1.0 #1.0 #1.05 ## Factor by which to scale the empirical maximum likelihood ratio for estimating envelope constant
+
+
 
 evol_dataset_gen:
   args:
@@ -341,7 +363,10 @@ sft:
 
 
 
-
+## Config parameters for generation jobs (initial and iterative)
+## Note: An initial generation job will generate (iterative_generation.init_args.sample_size * iterative_generation.init_args.max_iterations * sampling_gen_batch_size) samples.
+##       Similarly, a later iteration generation job will generate (iterative_generation.args.sample_size * iterative_generation.args.max_iterations * sampling_gen_batch_size) samples.
+##       However, these later iteration generation jobs are mainly used as proposals to rejection sampling, so fewer samples are actually used for adding to train/cal.
 iterative_generation:
   num_jobs: 6  # number of generation jobs to parallelize this over
   permissive_parsing: True #False #True #False
@@ -350,9 +375,10 @@ iterative_generation:
     ## init args just for first iteration:
     sample_size: 20 #20 #100 #20
     max_iterations: 25 #100 #120 #200 #50 #100 #200
-    sampling_method: "ranked_fft" #"best_scoring" #"best_scoring" #"uniform"
+    sampling_method: "ranked_fft" #"best_scoring" #"uniform"
     seed: 0
   args:
+    ## Args for after first iteration:
     sanity_check: False
     log_level: info
     seed: 0
@@ -378,32 +404,6 @@ iterative_generation:
     gres: "gpu:b200:1"
     # nodelist: "b200-st-b200-[2-10,13-15,23,40-41],b200-st-b200-2-[2-3,9,65,69-83]" #"b200-st-b200-41"
 
-
-
-conformal_policy_control:
-  alpha: 0.8 #0.5 #1.0 #0.25 #0.5 #0.3 #1.0 #0.5
-  num_starts_beta_search: 1
-  mixture_proposal: True #True #True ## Whether to do mixture proposal in place of optimized proposal (else use safe and then optimized proposal)
-  mixture_proposal_factor: 0.25 # 0.25 #0.05 ## Do mixture proposal if mixture_proposal_factor * overlap_coef_{safe} < overlap_coef_{unconstrained}. So, 0 or -1 does nothing
-  mixture_proposal_subsample_cpc: False #False #True
-  optimized_proposal_factor: 1 #1 ## Do optimized proposal if optimized_proposal_factor *overlap_coef_{safe} < overlap_coef_{unconstrained}. So, 0 or -1 does nothing
-  min_safe_mix_weight: "adaptive" #0.1 ## When set to "adaptive", will use (1 - alpha) ** 4 as the minimum weight on safe proposals
-  min_beta_mix_prop: 1e-80
-  ind_metropolis_hastings: False #False
-  num_AR_before_MH: 10 #10 ## Number of AR generation iterations to try before switching to IMH sampling (only runs IMH if less than max_total_AR_calls)
-  constrain_against: "init" ## "init" or "last": whether to constrain against the initial safe policy, or the last/most recent safe policy
-  use_overlap_mix_weight: True  #True ## Whether to use overlap coefficient mixture weight; else, use 1 / (1 + beta)
-  randomized_cpc: False #True
-  test_pt_scale_factor: 1.0 #25
-  args:
-    n_grid: 200 ## Approx size of grid to search over for lik-ratio bound    
-  accept_reject:
-    max_total_AR_calls: 20 #15 #30 #40
-    n_target_pre_cpc: 2000 #1000
-    n_target_post_cpc: 200 #200 #150 # 1000
-    iwmci_intersect_thresh: 0.5
-    n_opt_prop_calls_pre_cpc_quarter_check: 5
-    env_const_scale_emp_max: 1.0 #1.0 #1.05 ## Factor by which to scale the empirical maximum likelihood ratio for estimating envelope constant
 
 
 

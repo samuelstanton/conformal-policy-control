@@ -30,6 +30,7 @@ from .infrastructure.orchestration import (
     train_marge,
     train_sft,
 )
+from .infrastructure.pipeline_lock import shared_init_stage
 from .data.combine_and_split import (
     combine_new_with_old_datasets,
     train_cal_split_gen_outputs,
@@ -115,226 +116,228 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
         else:
             raise ValueError("Must have at least one optimization round")
 
-        ## Genetic algorithm to gather initial training data
-        ga_data_dir = generate_ga_dataset(cfg, file_client)
-        logger.info(f"GA dataset dir: {ga_data_dir}")
+        init_lock_dir = os.path.join(cfg.local_output_dir, cfg.run_name, "_locks", setting or "init")
+        with shared_init_stage(init_lock_dir):
+            ## Genetic algorithm to gather initial training data
+            ga_data_dir = generate_ga_dataset(cfg, file_client)
+            logger.info(f"GA dataset dir: {ga_data_dir}")
 
-        ## Running list of all model paths
-        all_model_paths = []
+            ## Running list of all model paths
+            all_model_paths = []
 
-        all_model_paths.append(cfg.initial_model)
-        logger.info(f"Initial model dir: {all_model_paths[-1]}")
+            all_model_paths.append(cfg.initial_model)
+            logger.info(f"Initial model dir: {all_model_paths[-1]}")
 
-        ## (Abandoned this step, due to issues with unconditional sampling)
-        ## Sample conformal calibration sequences unconditionally from GPT model
-        # uncon_gen_outputs, hd = run_unconditional_generation(
-        #     cfg,
-        #     file_client,
-        #     # combined_marge_dataset_fp,
-        #     ga_data_dir,
-        #     ga_data_dir,
-        #     model_dir=all_model_paths[-1],
-        #     particle_field="particle",
-        #     score_field="score",
-        #     temps=[1.0],
-        # )
+            ## (Abandoned this step, due to issues with unconditional sampling)
+            ## Sample conformal calibration sequences unconditionally from GPT model
+            # uncon_gen_outputs, hd = run_unconditional_generation(
+            #     cfg,
+            #     file_client,
+            #     # combined_marge_dataset_fp,
+            #     ga_data_dir,
+            #     ga_data_dir,
+            #     model_dir=all_model_paths[-1],
+            #     particle_field="particle",
+            #     score_field="score",
+            #     temps=[1.0],
+            # )
 
-        """Initialization: SFT pre-training, where generation has uniformly selected seeds to improve pretrained model"""
-        all_prev_sft_datasets = []
-        prev_round_outputs_fp = f"{ga_data_dir}/plain_pairs.jsonl"  ## TO DO: Update this to samples from GPT model
-        prev_hd = None
+            """Initialization: SFT pre-training, where generation has uniformly selected seeds to improve pretrained model"""
+            all_prev_sft_datasets = []
+            prev_round_outputs_fp = f"{ga_data_dir}/plain_pairs.jsonl"  ## TO DO: Update this to samples from GPT model
+            prev_hd = None
 
-        for i in tqdm(
-            range(cfg.num_init_sft_rounds), desc="SFT Initialization Iterations"
-        ):
-            n = cfg.num_labels_after_first_round if i > 0 else None
+            for i in tqdm(
+                range(cfg.num_init_sft_rounds), desc="SFT Initialization Iterations"
+            ):
+                n = cfg.num_labels_after_first_round if i > 0 else None
 
-            if cfg.retrain_initial_sft_each_trial:
-                filename_prefix = f"sft_init_seed{random_seed}_r{i}_"
+                if cfg.retrain_initial_sft_each_trial:
+                    filename_prefix = f"sft_init_seed{random_seed}_r{i}_"
+                else:
+                    filename_prefix = f"sft_init_r{i}_"
+
+                sft_dataset_fp = create_propen_sft_dataset(
+                    cfg,
+                    file_client,
+                    prev_round_outputs_fp,
+                    filename_prefix=filename_prefix,
+                    n=n,
+                    initial_sft=True,
+                )
+
+                combined_sft_dataset_fp = combine_new_with_old_datasets(
+                    cfg, file_client, all_prev_sft_datasets, sft_dataset_fp, random_seed
+                )
+                logger.info(f"SFT dataset path: {combined_sft_dataset_fp}")
+                all_prev_sft_datasets.append(sft_dataset_fp)
+
+                train_from_scratch = all_model_paths[-1] == cfg.initial_model and hasattr(
+                    cfg, "initial_model_config"
+                )
+
+                if cfg.retrain_initial_sft_each_trial:
+                    initial_sft_run_name = f"sft_init_seed{random_seed}_r{i}"
+                else:
+                    initial_sft_run_name = f"sft_init_r{i}"
+
+                sft_dir = train_initial_sft(
+                    cfg,
+                    file_client,
+                    sft_dataset_fp,  # combined_sft_dataset_fp, ## Only training on most recently generated data
+                    ga_data_dir,
+                    initial_sft_run_name=initial_sft_run_name,
+                    model_dir=all_model_paths[-1],
+                    train_from_scratch=train_from_scratch,
+                )
+
+                if i == 0:
+                    seeds_fp = ""
+
+                seeds_fp = get_seeds_from_training_data(
+                    cfg,
+                    file_client,
+                    prev_seeds_fp=seeds_fp,
+                    curr_training_data_fp=sft_dataset_fp,
+                    output_dir=sft_dir,
+                    sample_size=cfg.iterative_generation.init_args.sample_size,
+                    sampling_method=cfg.iterative_generation.init_args.sampling_method,
+                    pi_optimizer_name=pi_optimizer_name,
+                    setting=setting
+                    if i == cfg.num_init_sft_rounds - 1
+                    else "",  ## Only include setting string if is last SFT round and will use seeds for policy improvement (or if changing overall config)
+                    # random_seed = cfg.iterative_generation.init_args.seed, ## Use fixed random seed in initial SFT training
+                    random_seed=random_seed,
+                    first_iter=i == 0,
+                )
+
+                logger.info(f"Trained initial SFT model: {sft_dir}")
+                all_model_paths.append(sft_dir)
+
+                if on_round_complete is not None:
+                    try:
+                        on_round_complete()
+                    except Exception:  # callback is opaque; don't abort pipeline on failure
+                        logger.warning("on_round_complete callback failed", exc_info=True)
+
+            if pi_optimizer_name == "dpo":
+                higher_score_particle_field = PROMPT
+                lower_score_particle_field = CHOSEN
+                higher_score_field = "prompt_score"
+                lower_score_field = "chosen_score"
             else:
-                filename_prefix = f"sft_init_r{i}_"
+                higher_score_particle_field = HIGHER_SCORE_PARTICLE
+                lower_score_particle_field = LOWER_SCORE_PARTICLE
+                higher_score_field = HIGHER_SCORE
+                lower_score_field = LOWER_SCORE
 
-            sft_dataset_fp = create_propen_sft_dataset(
+            ## Generate examples from initial safe policy
+            iter_gen_outputs_combined, iter_gen_outputs_list, hd = run_iterative_generation(
                 cfg,
                 file_client,
-                prev_round_outputs_fp,
-                filename_prefix=filename_prefix,
-                n=n,
-                initial_sft=True,
-            )
-
-            combined_sft_dataset_fp = combine_new_with_old_datasets(
-                cfg, file_client, all_prev_sft_datasets, sft_dataset_fp, random_seed
-            )
-            logger.info(f"SFT dataset path: {combined_sft_dataset_fp}")
-            all_prev_sft_datasets.append(sft_dataset_fp)
-
-            train_from_scratch = all_model_paths[-1] == cfg.initial_model and hasattr(
-                cfg, "initial_model_config"
-            )
-
-            if cfg.retrain_initial_sft_each_trial:
-                initial_sft_run_name = f"sft_init_seed{random_seed}_r{i}"
-            else:
-                initial_sft_run_name = f"sft_init_r{i}"
-
-            sft_dir = train_initial_sft(
-                cfg,
-                file_client,
-                sft_dataset_fp,  # combined_sft_dataset_fp, ## Only training on most recently generated data
+                seeds_fp,  # combined_sft_dataset_fp,
                 ga_data_dir,
-                initial_sft_run_name=initial_sft_run_name,
-                model_dir=all_model_paths[-1],
-                train_from_scratch=train_from_scratch,
-            )
-
-            if i == 0:
-                seeds_fp = ""
-
-            seeds_fp = get_seeds_from_training_data(
-                cfg,
-                file_client,
-                prev_seeds_fp=seeds_fp,
-                curr_training_data_fp=sft_dataset_fp,
-                output_dir=sft_dir,
-                sample_size=cfg.iterative_generation.init_args.sample_size,
-                sampling_method=cfg.iterative_generation.init_args.sampling_method,
-                pi_optimizer_name=pi_optimizer_name,
-                setting=setting
-                if i == cfg.num_init_sft_rounds - 1
-                else "",  ## Only include setting string if is last SFT round and will use seeds for policy improvement (or if changing overall config)
-                # random_seed = cfg.iterative_generation.init_args.seed, ## Use fixed random seed in initial SFT training
-                random_seed=random_seed,
-                first_iter=i == 0,
-            )
-
-            logger.info(f"Trained initial SFT model: {sft_dir}")
-            all_model_paths.append(sft_dir)
-
-            if on_round_complete is not None:
-                try:
-                    on_round_complete()
-                except Exception:  # callback is opaque; don't abort pipeline on failure
-                    logger.warning("on_round_complete callback failed", exc_info=True)
-
-        if pi_optimizer_name == "dpo":
-            higher_score_particle_field = PROMPT
-            lower_score_particle_field = CHOSEN
-            higher_score_field = "prompt_score"
-            lower_score_field = "chosen_score"
-        else:
-            higher_score_particle_field = HIGHER_SCORE_PARTICLE
-            lower_score_particle_field = LOWER_SCORE_PARTICLE
-            higher_score_field = HIGHER_SCORE
-            lower_score_field = LOWER_SCORE
-
-        ## Generate examples from initial safe policy
-        iter_gen_outputs_combined, iter_gen_outputs_list, hd = run_iterative_generation(
-            cfg,
-            file_client,
-            seeds_fp,  # combined_sft_dataset_fp,
-            ga_data_dir,
-            sft_dir,
-            higher_score_particle_field=higher_score_particle_field,
-            lower_score_particle_field=lower_score_particle_field,
-            higher_score_field=higher_score_field,
-            lower_score_field=lower_score_field,
-            temps=[cfg.temperature_init],
-            first_iter=True,
-            setting=setting,
-            global_random_seed=random_seed,
-        )
-
-        ## Check that initial model is empirically safe
-        init_gen_outputs_df = pd.read_json(
-            iter_gen_outputs_list[0], orient="records", lines=True
-        )
-        if SCORE not in init_gen_outputs_df.columns or init_gen_outputs_df.empty:
-            logger.warning(
-                "No parsable outputs from initial generation — the model may be "
-                "too small or untrained to produce valid particles. Skipping "
-                "remaining pipeline stages for this seed."
-            )
-            continue
-        init_gen_scores = init_gen_outputs_df[SCORE].to_numpy()
-        np.isnan(init_gen_scores) | np.isinf(init_gen_scores)
-
-        ## Initialize lists of models and seeds for policy improvement loop
-        pi_model_fp_list = [all_model_paths[-1]]
-        pi_seeds_filepaths_list = [seeds_fp]
-
-        # ## Compute likelihoods for all initial generated data
-        # gen_liks_fp, hd = run_compute_liks_all_models_and_cal_data(
-        #     cfg,
-        #     file_client,
-        #     seeds_fp_list=pi_seeds_filepaths_list,
-        #     prev_cal_data_fp_list=[],
-        #     model_dir_list=pi_model_fp_list,
-        #     target_fp=iter_gen_outputs_list[-1],
-        #     temps=[cfg.temperature],
-        # )
-        # gen_liks_df = pd.read_json(gen_liks_fp, orient="records", lines=True)
-
-        """Split last batch of generated outputs into training and calibration data"""
-        cal_df, cal_unconstrained_output_path, train_df, train_output_path = (
-            train_cal_split_gen_outputs(
-                cfg,
-                file_client,
-                iter_gen_outputs_list[0],
                 sft_dir,
+                higher_score_particle_field=higher_score_particle_field,
+                lower_score_particle_field=lower_score_particle_field,
+                higher_score_field=higher_score_field,
+                lower_score_field=lower_score_field,
+                temps=[cfg.temperature_init],
                 first_iter=True,
                 setting=setting,
-                random_seed=random_seed,
-            )
-        )  # , sample_num_cal=cfg.num_cal_per_step, sample_num_train=cfg.num_train_per_step)
-        prev_round_outputs_fp = train_output_path  ## Hereon, prev_round_outputs_fp will only contain training data
-        # cal_data_fp_list.append(cal_output_path)
-        logger.info(
-            f"cal_r0 (n_cal{i}={len(cal_df)}) output path: {cal_unconstrained_output_path}"
-        )
-        logger.info(
-            f"train_r0 (n_tr{i}={len(train_df)}) output path: {train_output_path}"
-        )
-
-        ## Compute likelihoods for all initial generated data
-        cal_unconstrained_output_path_list, hd = (
-            run_compute_liks_all_models_and_cal_data(
-                cfg,
-                file_client,
-                seeds_fp_list=pi_seeds_filepaths_list,
-                prev_cal_data_fp_list=[],
-                model_dir_list=pi_model_fp_list,
-                target_fp=cal_unconstrained_output_path,
-                temps=[cfg.temperature],
-            )
-        )
-        cal_unconstrained_output_path = cal_unconstrained_output_path_list[0]
-
-        ## Keep track of calibration data with *unconstrained* liklihoods
-        cal_data_unconstrained_fp_list = [cal_unconstrained_output_path]
-
-        cal_df = pd.read_json(
-            cal_unconstrained_output_path_list[0], orient="records", lines=True
-        )
-        ## Save initial calibration data with constrained likelihoods
-        cal_constrained_liks_df = cal_df.copy(deep=True)
-        cal_constrained_liks_df = cal_constrained_liks_df[[PARTICLE, SCORE, lik_col(0)]]
-        cal_constrained_liks_df = cal_constrained_liks_df.rename(
-            columns={lik_col(0): con_lik_col(0)}
-        )
-        cal_constrained_output_path = os.path.join(
-            os.path.dirname(cal_unconstrained_output_path),
-            f"constrained_{os.path.basename(cal_unconstrained_output_path)}",
-        )
-        if cfg.overwrite_split_init or not file_client.exists(
-            cal_constrained_output_path
-        ):
-            cal_constrained_liks_df.to_json(
-                cal_constrained_output_path, orient="records", lines=True
+                global_random_seed=random_seed,
             )
 
-        ## Keep track of calibration data with *constrained* liklihoods
-        cal_data_constrained_fp_list = [cal_constrained_output_path]
+            ## Check that initial model is empirically safe
+            init_gen_outputs_df = pd.read_json(
+                iter_gen_outputs_list[0], orient="records", lines=True
+            )
+            if SCORE not in init_gen_outputs_df.columns or init_gen_outputs_df.empty:
+                logger.warning(
+                    "No parsable outputs from initial generation — the model may be "
+                    "too small or untrained to produce valid particles. Skipping "
+                    "remaining pipeline stages for this seed."
+                )
+                continue
+            init_gen_scores = init_gen_outputs_df[SCORE].to_numpy()
+            np.isnan(init_gen_scores) | np.isinf(init_gen_scores)
+
+            ## Initialize lists of models and seeds for policy improvement loop
+            pi_model_fp_list = [all_model_paths[-1]]
+            pi_seeds_filepaths_list = [seeds_fp]
+
+            # ## Compute likelihoods for all initial generated data
+            # gen_liks_fp, hd = run_compute_liks_all_models_and_cal_data(
+            #     cfg,
+            #     file_client,
+            #     seeds_fp_list=pi_seeds_filepaths_list,
+            #     prev_cal_data_fp_list=[],
+            #     model_dir_list=pi_model_fp_list,
+            #     target_fp=iter_gen_outputs_list[-1],
+            #     temps=[cfg.temperature],
+            # )
+            # gen_liks_df = pd.read_json(gen_liks_fp, orient="records", lines=True)
+
+            """Split last batch of generated outputs into training and calibration data"""
+            cal_df, cal_unconstrained_output_path, train_df, train_output_path = (
+                train_cal_split_gen_outputs(
+                    cfg,
+                    file_client,
+                    iter_gen_outputs_list[0],
+                    sft_dir,
+                    first_iter=True,
+                    setting=setting,
+                    random_seed=random_seed,
+                )
+            )  # , sample_num_cal=cfg.num_cal_per_step, sample_num_train=cfg.num_train_per_step)
+            prev_round_outputs_fp = train_output_path  ## Hereon, prev_round_outputs_fp will only contain training data
+            # cal_data_fp_list.append(cal_output_path)
+            logger.info(
+                f"cal_r0 (n_cal{i}={len(cal_df)}) output path: {cal_unconstrained_output_path}"
+            )
+            logger.info(
+                f"train_r0 (n_tr{i}={len(train_df)}) output path: {train_output_path}"
+            )
+
+            ## Compute likelihoods for all initial generated data
+            cal_unconstrained_output_path_list, hd = (
+                run_compute_liks_all_models_and_cal_data(
+                    cfg,
+                    file_client,
+                    seeds_fp_list=pi_seeds_filepaths_list,
+                    prev_cal_data_fp_list=[],
+                    model_dir_list=pi_model_fp_list,
+                    target_fp=cal_unconstrained_output_path,
+                    temps=[cfg.temperature],
+                )
+            )
+            cal_unconstrained_output_path = cal_unconstrained_output_path_list[0]
+
+            ## Keep track of calibration data with *unconstrained* liklihoods
+            cal_data_unconstrained_fp_list = [cal_unconstrained_output_path]
+
+            cal_df = pd.read_json(
+                cal_unconstrained_output_path_list[0], orient="records", lines=True
+            )
+            ## Save initial calibration data with constrained likelihoods
+            cal_constrained_liks_df = cal_df.copy(deep=True)
+            cal_constrained_liks_df = cal_constrained_liks_df[[PARTICLE, SCORE, lik_col(0)]]
+            cal_constrained_liks_df = cal_constrained_liks_df.rename(
+                columns={lik_col(0): con_lik_col(0)}
+            )
+            cal_constrained_output_path = os.path.join(
+                os.path.dirname(cal_unconstrained_output_path),
+                f"constrained_{os.path.basename(cal_unconstrained_output_path)}",
+            )
+            if cfg.overwrite_split_init or not file_client.exists(
+                cal_constrained_output_path
+            ):
+                cal_constrained_liks_df.to_json(
+                    cal_constrained_output_path, orient="records", lines=True
+                )
+
+            ## Keep track of calibration data with *constrained* liklihoods
+            cal_data_constrained_fp_list = [cal_constrained_output_path]
 
         betas_list = [np.inf]
         psis_list = [1.0]
