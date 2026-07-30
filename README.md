@@ -1,18 +1,33 @@
 # Conformal Policy Control
 
-Code for "Conformal Policy Control" — a framework for enabling AI agents to automatically determine their zone of competence using conformal risk-control guarantees.
+Code for ["Conformal Policy Control"](https://arxiv.org/abs/2603.02196) (ICML 2026 spotlight paper): a framework for enabling AI agents to automatically determine their own "zone of competence," where we can guarantee their behavior will respect a user's risk tolerance, $\alpha$.
 
 By Drew Prinster, Clara Fannjiang, Ji Won Park, Kyunghyun Cho, Anqi Liu, Suchi Saria, and Samuel Stanton.
 
+### Citation
+
+If you use this code, please our paper:
+```bibtex
+@inproceedings{prinster2026conformal,
+  title={Conformal Policy Control},
+  author={Prinster, Drew and Fannjiang, Clara and Park, Ji Won and Cho, Kyunghyun and Liu, Anqi and Saria, Suchi and Stanton, Samuel Don},
+  booktitle={Forty-third International Conference on Machine Learning},
+  year={2026}
+}
+```
+
 ## Overview
 
-This project develops **Conformal Policy Control (CPC)**: a method for iteratively improving a language model policy while maintaining formal guarantees on the risk (e.g., rate of infeasible outputs) over time. The key idea is to constrain the policy's likelihood ratios relative to a safe baseline, with the constraint level calibrated via conformal prediction so that risk stays below a user-specified level alpha.
+This project develops **Conformal Policy Control (CPC)**: a method for iteratively improving a language model policy while maintaining formal guarantees on the risk (e.g., rate of infeasible or unsafe outputs) over time. The key idea is to constrain each optimized policy's likelihood ratios relative to a safe reference policy, with the constraint level calibrated via conformal prediction so that risk stays below a user-specified level alpha.
 
-The repository contains three sets of experiments:
+![CPC animation: search and sampling](visuals/Animation_alpha0.5_betaHat10.400000_CPCsearchTrue_samplingTrue_proposalsTrue.gif)
 
-- **`cpc_llm/`** — The main CPC pipeline for LLMs, applied to the Ehrlich protein motif discovery task. Iteratively generates sequences, scores them, calibrates policy bounds, and trains improved policies (SFT, DPO, or MARGE).
-- **`constrained_AL/`** — Conformal prediction for constrained active learning with Gaussian process surrogates, applied to tabular regression benchmarks.
-- **`QA_expts/`** — Generalized conformal risk control for LLM fact-checking, controlling false discovery rate on medical QA subclaim factuality.
+The repository contains four sets of experiments:
+
+- **`cpc_llm/`** : The main CPC pipeline for LLMs, applied to the Ehrlich function protein discovery task ([Chen, et al. 2025](https://arxiv.org/abs/2410.22296)). Pre-trains a LM on data from a genetic algorithm, then iteratively generates and scores new samples, trains optimized policies (SFT, DPO, or MARGE), and uses CPC to ensure the improved policies satisfy safety constraints.
+- **`cbo/`** : Constrained Bayesian optimization experiments (in paper appendix). Compares CPC to classic conservative optimization. Simplest initial entrypoint to CPC, runs on single CPU.
+- **`constrained_AL/`** : CPC constrained active learning with Gaussian process surrogates, applied to tabular regression benchmarks. 
+- **`QA_expts/`** : Generalized conformal risk control (gCRC) for LLM factuality, controlling false discovery rate (a non-monotonic loss) on medical QA dataset of GPT-3.5-Turbo responses.
 
 ## Setup
 
@@ -30,13 +45,16 @@ The pipeline is configured via [Hydra](https://hydra.cc/). Configs live in `cpc_
 
 ```bash
 # Smoke test (~5 min, tiny model)
-cpc-llm --config-name=smoke local_output_dir=/path/to/output
+cpc-llm --config-name=smoke local_output_dir=/path/to/local_output parent_output_dir=/path/to/parent_output
 
-# Full run with S3 storage
+# Full single run with S3 storage (CPC alpha=0.6):
 cpc-llm --config-name=cpc_llm \
+  conformal_policy_control.alpha=0.6 initial_seed=0 last_seed=0 \
   local_output_dir=/path/to/local \
   parent_output_dir=s3://bucket/path
 ```
+
+
 
 ### Key config parameters
 

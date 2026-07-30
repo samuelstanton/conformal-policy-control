@@ -49,7 +49,7 @@ from .data_contracts import (
     lik_col,
 )
 from .infer.generation_utils import get_temperatures
-from .metrics import DatasetSizes, RoundSummary, StageTiming
+from .metrics import CPCSearchMetrics, CPCSearchResult, DatasetSizes, RoundSummary, StageTiming
 
 logger = logging.getLogger(__name__)
 
@@ -346,6 +346,42 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
         intersection_psis_unconstrained_list = [1.0]
         envelope_const_constrained_over_proposal_list = [1.0]
 
+        ## Most recent successful CPC result. Used to complete a round when the
+        ## current round's CPC search returns None (see edge-case handling below).
+        ## Seeded with a synthetic "round 0" result representing the safe,
+        ## pre-policy-improvement model, so even a round-1 failure has a real
+        ## fallback and every round still gets one set of results.
+        prev_cpc_result = CPCSearchResult(
+            beta_t=betas_list[0],
+            psi_hat_t=psis_list[0],
+            constrained_liks_df=pd.read_json(
+                cal_data_constrained_fp_list[0], orient="records", lines=True
+            ),
+            constrained_liks_fp=cal_data_constrained_fp_list[0],
+            unconstrained_df=pd.read_json(
+                cal_data_unconstrained_fp_list[0], orient="records", lines=True
+            ),
+            unconstrained_liks_fp=cal_data_unconstrained_fp_list[0],
+            proposal=proposals_list[0],
+            psi_hat_intersection_safe=intersection_psis_safe_list[0],
+            psi_hat_intersection_unconstrained=intersection_psis_unconstrained_list[0],
+            envelope_const=envelope_const_constrained_over_proposal_list[0],
+            search_metrics=CPCSearchMetrics(
+                beta_t=betas_list[0],
+                psi_hat_t=psis_list[0],
+                grid_size=1,
+                grid_position_selected=0,
+                risk_margin=0.0,
+                w_test=0.0,
+                proposal_selected=proposals_list[0],
+                switch_to_mixture=False,
+                switch_to_optimized=False,
+                psi_hat_intersection_safe=intersection_psis_safe_list[0],
+                psi_hat_intersection_unconstrained=intersection_psis_unconstrained_list[0],
+                envelope_const=envelope_const_constrained_over_proposal_list[0],
+            ),
+        )
+
         """SFT Policy Improvement Outer Loop, with Policy Control Inner Loop"""
         for i in tqdm(
             range(1, cfg.num_sft_rounds), desc="SFT Policy Improvement Iterations"
@@ -450,6 +486,26 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                 global_random_seed=random_seed,
             )
             cpc_search_s = time.perf_counter() - t0
+
+            if cpc_result is None:
+                ## Edge case (alpha >= 1.0): the optimized policy produced no
+                ## parsable proposal sequences this round, so CPC beta search
+                ## has nothing to calibrate against. Copy the previous round's
+                ## model and seeds into this round's directories so every
+                ## downstream reference (sft_dir, pi_model_fp_list,
+                ## round_summary_fp, ...) stays consistent -- effectively
+                ## repeating the previous round as a checkpoint.
+                logger.warning(
+                    f"CPC beta search returned no result at round {i} "
+                    f"(alpha={cfg.conformal_policy_control.alpha}); reusing the "
+                    f"previous round's model and seeds to complete this round."
+                )
+                file_client.copy(pi_model_fp_list[-2], sft_dir)
+                file_client.copy(pi_seeds_filepaths_list[-2], seeds_fp)
+                cpc_result = prev_cpc_result
+
+            prev_cpc_result = cpc_result
+
             beta_t = cpc_result.beta_t
             psi_hat_t = cpc_result.psi_hat_t
             constrained_liks_df_beta_hat = cpc_result.constrained_liks_df
@@ -760,6 +816,26 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                 global_random_seed=random_seed,
             )
             cpc_search_s = time.perf_counter() - t0
+
+            if cpc_result is None:
+                ## Edge case (alpha >= 1.0): the optimized policy produced no
+                ## parsable proposal sequences this round, so CPC beta search
+                ## has nothing to calibrate against. Copy the previous round's
+                ## model and seeds into this round's directories so every
+                ## downstream reference (dpo_dir, pi_model_fp_list,
+                ## round_summary_fp, ...) stays consistent -- effectively
+                ## repeating the previous round as a checkpoint.
+                logger.warning(
+                    f"CPC beta search returned no result at round {i} "
+                    f"(alpha={cfg.conformal_policy_control.alpha}); reusing the "
+                    f"previous round's model and seeds to complete this round."
+                )
+                file_client.copy(pi_model_fp_list[-2], dpo_dir)
+                file_client.copy(pi_seeds_filepaths_list[-2], seeds_fp)
+                cpc_result = prev_cpc_result
+
+            prev_cpc_result = cpc_result
+
             beta_t = cpc_result.beta_t
             psi_hat_t = cpc_result.psi_hat_t
             constrained_liks_df_beta_hat = cpc_result.constrained_liks_df
@@ -1111,6 +1187,26 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                 global_random_seed=random_seed,
             )
             cpc_search_s = time.perf_counter() - t0
+
+            if cpc_result is None:
+                ## Edge case (alpha >= 1.0): the optimized policy produced no
+                ## parsable proposal sequences this round, so CPC beta search
+                ## has nothing to calibrate against. Copy the previous round's
+                ## model and seeds into this round's directories so every
+                ## downstream reference (marge_dir, pi_model_fp_list,
+                ## round_summary_fp, ...) stays consistent -- effectively
+                ## repeating the previous round as a checkpoint.
+                logger.warning(
+                    f"CPC beta search returned no result at round {i} "
+                    f"(alpha={cfg.conformal_policy_control.alpha}); reusing the "
+                    f"previous round's model and seeds to complete this round."
+                )
+                file_client.copy(pi_model_fp_list[-2], marge_dir)
+                file_client.copy(pi_seeds_filepaths_list[-2], seeds_fp)
+                cpc_result = prev_cpc_result
+
+            prev_cpc_result = cpc_result
+
             beta_t = cpc_result.beta_t
             psi_hat_t = cpc_result.psi_hat_t
             constrained_liks_df_beta_hat = cpc_result.constrained_liks_df

@@ -63,6 +63,39 @@ class LocalOrS3Client:
             else:
                 shutil.copy2(lpath, rpath)
 
+    def copy(self, src, dst, **kwargs):
+        """Copy a file or directory from src to dst, replacing dst's contents.
+
+        Supports all combinations of local and S3 paths. If dst already
+        exists it is removed first, so dst ends up an exact copy of src
+        rather than a merge of the two.
+        """
+        src_is_s3 = src.startswith("s3://")
+        dst_is_s3 = dst.startswith("s3://")
+
+        if not src_is_s3 and not dst_is_s3:
+            if os.path.isdir(src):
+                if os.path.exists(dst):
+                    shutil.rmtree(dst)
+                shutil.copytree(src, dst)
+            else:
+                os.makedirs(os.path.dirname(dst) or ".", exist_ok=True)
+                if os.path.exists(dst):
+                    os.remove(dst)
+                shutil.copy2(src, dst)
+        elif src_is_s3 and dst_is_s3:
+            if self.fs.exists(dst):
+                self.fs.rm(dst, recursive=True)
+            self.fs.copy(src, dst, recursive=True, **kwargs)
+        elif src_is_s3 and not dst_is_s3:
+            if os.path.exists(dst):
+                shutil.rmtree(dst) if os.path.isdir(dst) else os.remove(dst)
+            self.fs.get(src, dst, recursive=True, **kwargs)
+        else:  # local src, S3 dst
+            if self.fs.exists(dst):
+                self.fs.rm(dst, recursive=True)
+            self.fs.put(src, dst, recursive=True, **kwargs)
+
     def open(self, fp, mode="rb", **kwargs):
         if fp.startswith("s3://"):
             return self.fs.open(fp, mode=mode, **kwargs)
