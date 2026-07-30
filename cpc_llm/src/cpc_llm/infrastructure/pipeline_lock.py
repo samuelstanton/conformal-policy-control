@@ -1,6 +1,7 @@
 import contextlib
 import logging
 import os
+import signal
 import threading
 import time
 
@@ -28,13 +29,21 @@ def shared_init_stage(
     own `overwrite_*=False` / file-exists checks are unchanged, so the follower
     just finds the artifacts already on disk and skips straight through.
 
-    If the leader dies before finishing (crash, OOM-kill, preemption, ...), its
-    heartbeat goes stale. Once a follower observes no heartbeat for more than
-    `stale_after_s`, it atomically steals the claim and becomes the new leader,
-    so the pipeline doesn't hang forever waiting on a process that's gone.
-    Staleness is judged by heartbeat recency rather than total elapsed time, so
-    a leader that's simply running long (queueing, slow disk, ...) never gets
-    its claim stolen out from under it.
+    If the leader dies before finishing (crash, OOM-kill, hard node failure,
+    ...) with no chance to clean up, its heartbeat goes stale. Once a follower
+    observes no heartbeat for more than `stale_after_s`, it atomically steals
+    the claim and becomes the new leader, so the pipeline doesn't hang forever
+    waiting on a process that's gone. Staleness is judged by heartbeat recency
+    rather than total elapsed time, so a leader that's simply running long
+    (queueing, slow disk, ...) never gets its claim stolen out from under it.
+
+    Two failure modes are handled faster than waiting out `stale_after_s`:
+    - A `SIGTERM` (e.g. a Slurm preemption or cancellation) makes the leader
+      release its claim immediately before exiting, so a follower can take
+      over right away instead of waiting out the full staleness timeout.
+    - If the wrapped code raises an exception, the claim is released (not
+      marked done) before the exception propagates, so a genuinely failed
+      init stage is retried rather than being mistaken for a successful one.
     """
     os.makedirs(lock_dir, exist_ok=True)
     claim_fp = os.path.join(lock_dir, "leader.claim")
@@ -74,13 +83,43 @@ def shared_init_stage(
         daemon=True,
     )
     heartbeat_thread.start()
+
+    def _release_claim_on_terminate(signum, frame):
+        logger.warning(
+            f"Received signal {signum} while leading the shared init stage; "
+            f"releasing claim ({claim_fp}) so another run can take over, "
+            "then exiting."
+        )
+        stop_heartbeat.set()
+        try:
+            os.remove(claim_fp)
+        except FileNotFoundError:
+            pass
+        signal.signal(signum, signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
+
+    prev_handler = signal.signal(signal.SIGTERM, _release_claim_on_terminate)
     try:
         yield
-    finally:
+    except BaseException:
+        logger.warning(
+            f"Shared init stage raised an exception; releasing claim "
+            f"({claim_fp}) so another run can retry it, without marking it done."
+        )
+        stop_heartbeat.set()
+        heartbeat_thread.join()
+        try:
+            os.remove(claim_fp)
+        except FileNotFoundError:
+            pass
+        raise
+    else:
         stop_heartbeat.set()
         heartbeat_thread.join()
         with open(done_fp, "w"):
             pass
+    finally:
+        signal.signal(signal.SIGTERM, prev_handler)
 
 
 def _heartbeat_loop(claim_fp: str, interval_s: float, stop_event: threading.Event):

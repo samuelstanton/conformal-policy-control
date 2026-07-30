@@ -8,6 +8,7 @@ parent_output_dir: /cv/data/ai4dd/data/prinstea/conformal-policy-control/cpc_llm
 ## Modify this string for saving different experimental settings
 setting_str: cpc_llm_replication
 
+
 ## Global random seeds to loop over for different replication trials
 initial_seed: 0
 last_seed: 1 ## Inclusive, so if initial_seed = 0 and last_seed = 1, will run seeds 0 and 1 (2 trials total)
@@ -87,7 +88,7 @@ temperature_init: 1.0 #1.0 #0.8 #1.0
 temperature: 1.0 #1.0
 
 # Note: each num_*_rounds runs N-1 policy improvement iterations (round 0 is initial SFT)
-num_dpo_rounds: 25
+num_dpo_rounds: 20
 num_init_sft_rounds: 1 #5 #10
 num_sft_rounds: 0 #10
 num_marge_rounds: 0 #10
