@@ -119,6 +119,27 @@ class DPOTrainerWithLogging(DPOTrainer):
                 num_repeated_input += 1
             particle = torch.FloatTensor(particle).unsqueeze(0)
             score = self.test_fn(particle).item()
+
+            ## Note on DPO scoring for infeasible prompt sequences:
+            ## The following if statement patches a NaN/None handling bug caused by inf scores
+            ## (for infeasible sequences) being recorded as NaN/None. The original intention was to increment 
+            ## num_decreased_score also in the case that the prompt was infeasible (i.e., input_scores[i]
+            ## is None or inf) and the response was feasible (i.e., score is not None nor inf). However, the 
+            ## current implemented behavior does *not* increment in this case, which essentially makes the
+            ## DPO training more "unsafe" / less incentivized to avoid infeasible outputs, which makes
+            ## for a setting where the effect of CPC "reining in" an unsafe model can be demonstrated. 
+            ## That is, this "bug" makes for a less standard DPO training, but does *not* invalidate
+            ## the experiments, so it is left as-is for reproducibility. The following commented-out
+            ## code could be used for intended DPO behavior, but then to reproduce the paper's qualitative 
+            ## reward findings (where CPC could improve reward), additional hyperparameter tuning may be required,
+            ## for instance increasing DPO learning rate to make it a bit overly aggressively optimized. 
+            ## In addition to this line, the commented-out line "scores_np = np.where(np.isnan(scores_np), np.inf, scores_np)"
+            ## in ../data/synthetic_dataset_formatter.py should also be incorporated.
+
+            # if input_scores[i] is None and (score is not None and score != float("inf")):
+            #     num_decreased_score += 1
+            # elif input_scores[i] is not None and score < input_scores[i]:
+
             if (input_scores[i] is not None and score is not None) and score < input_scores[i]:
                 num_decreased_score += 1
             if score == float("inf"):
