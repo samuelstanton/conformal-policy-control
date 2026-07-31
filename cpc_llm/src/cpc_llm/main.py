@@ -500,7 +500,7 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                     f"(alpha={cfg.conformal_policy_control.alpha}); reusing the "
                     f"previous round's model and seeds to complete this round."
                 )
-                file_client.copy(pi_model_fp_list[-2], sft_dir)
+                file_client.copy_model_checkpoint(pi_model_fp_list[-2], sft_dir)
                 file_client.copy(pi_seeds_filepaths_list[-2], seeds_fp)
                 cpc_result = prev_cpc_result
 
@@ -830,7 +830,7 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                     f"(alpha={cfg.conformal_policy_control.alpha}); reusing the "
                     f"previous round's model and seeds to complete this round."
                 )
-                file_client.copy(pi_model_fp_list[-2], dpo_dir)
+                file_client.copy_model_checkpoint(pi_model_fp_list[-2], dpo_dir)
                 file_client.copy(pi_seeds_filepaths_list[-2], seeds_fp)
                 cpc_result = prev_cpc_result
 
@@ -1201,7 +1201,7 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
                     f"(alpha={cfg.conformal_policy_control.alpha}); reusing the "
                     f"previous round's model and seeds to complete this round."
                 )
-                file_client.copy(pi_model_fp_list[-2], marge_dir)
+                file_client.copy_model_checkpoint(pi_model_fp_list[-2], marge_dir)
                 file_client.copy(pi_seeds_filepaths_list[-2], seeds_fp)
                 cpc_result = prev_cpc_result
 

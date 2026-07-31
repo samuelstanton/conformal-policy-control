@@ -602,7 +602,7 @@ def accept_reject_sample_and_get_likelihoods(
             )
 
             n_prop = len(gen_liks_df)
-            n_proposals_total += n_prop
+            # n_proposals_total += n_prop
 
             ## Accept or reject each proposal
 
@@ -616,6 +616,7 @@ def accept_reject_sample_and_get_likelihoods(
 
             batch_acc_probs = []
             for i in range(n_prop):
+                n_proposals_total += 1
                 u = np.random.uniform()
 
                 ## Initial state for MH sampling
@@ -867,7 +868,7 @@ def accept_reject_sample_and_get_likelihoods(
                 )
 
             n_prop = len(gen_liks_df)
-            n_proposals_total += n_prop
+            # n_proposals_total += n_prop
 
             ## Arbitrary way of standardizing random seeds so that is consistent when rerunning from checkpoint (but uses different random seed for each call)
             ar_random_seed = call_idx if not post_policy_control else 1000 + call_idx
@@ -876,6 +877,7 @@ def accept_reject_sample_and_get_likelihoods(
             ## Accept or reject each proposal
             batch_acc_probs = []
             for i in range(n_prop):
+                n_proposals_total += 1
                 u = np.random.uniform()
 
                 ## Initial state for MH sampling
@@ -1114,7 +1116,7 @@ def accept_reject_sample_and_get_likelihoods(
                     N_prop_dict[proposal_curr] = len(
                         gen_liks_df_dict[proposal_curr]
                     )  ## Reset number of available proposals
-                    n_proposals_total += N_prop_dict[proposal_curr]
+                    # n_proposals_total += N_prop_dict[proposal_curr]
                     n_proposed_dict[proposal_curr] = (
                         0  ## Reset number of used proposals to 0
                     )
@@ -1131,6 +1133,8 @@ def accept_reject_sample_and_get_likelihoods(
                 n_proposed_dict["safe"] < N_prop_dict["safe"]
                 and n_proposed_dict["unconstrained"] < N_prop_dict["unconstrained"]
             ):
+                n_proposals_total += 1
+                
                 ## Arbitrary way of standardizing random seeds so that is consistent when rerunning from checkpoint (but uses different random seed for each call)
                 ar_random_seed = (
                     call_idx if not post_policy_control else 1000 + call_idx

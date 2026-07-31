@@ -96,6 +96,50 @@ class LocalOrS3Client:
                 self.fs.rm(dst, recursive=True)
             self.fs.put(src, dst, recursive=True, **kwargs)
 
+    _MODEL_CHECKPOINT_FILENAMES = frozenset({
+        "config.json",
+        "generation_config.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "vocab.json",
+        "merges.txt",
+        "special_tokens_map.json",
+        "added_tokens.json",
+        "model.safetensors",
+        "model.safetensors.index.json",
+        "pytorch_model.bin",
+        "pytorch_model.bin.index.json",
+        "optimizer.pt",
+        "scheduler.pt",
+        "rng_state.pth",
+        "trainer_state.json",
+        "training_args.bin",
+    })
+    _MODEL_CHECKPOINT_PREFIXES = ("model-", "pytorch_model-")  # sharded checkpoints
+
+    def copy_model_checkpoint(self, src_dir, dst_dir):
+        """Copy only the HF model/tokenizer checkpoint files from src_dir into
+        dst_dir, leaving everything else in dst_dir untouched.
+
+        Round directories double as both a model checkpoint location and the
+        working directory for that round's own generation/likelihood/AR-sampling
+        outputs, many of which use round-invariant filenames with "skip if
+        already exists" checkpointing. A wholesale directory copy (``copy()``)
+        would therefore also drag in the *previous* round's own pipeline
+        outputs, silently short-circuiting the current round's fresh writes.
+        This copies only the checkpoint files needed to load the model.
+        """
+        for name in self.ls(src_dir):
+            basename = os.path.basename(name)
+            is_checkpoint_file = basename in self._MODEL_CHECKPOINT_FILENAMES or (
+                basename.startswith(self._MODEL_CHECKPOINT_PREFIXES)
+                and (basename.endswith(".safetensors") or basename.endswith(".bin"))
+            )
+            if is_checkpoint_file:
+                self.copy(
+                    os.path.join(src_dir, basename), os.path.join(dst_dir, basename)
+                )
+
     def open(self, fp, mode="rb", **kwargs):
         if fp.startswith("s3://"):
             return self.fs.open(fp, mode=mode, **kwargs)

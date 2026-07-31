@@ -103,7 +103,7 @@ cpc_llm/                  # Main CPC-LLM package (installable)
 cbo/                      # Constrained Bayesian optimization experiments
 constrained_AL/           # Active learning experiments
 QA_expts/                 # Medical QA experiments
-notebooks/                # Visualization notebooks
+visuals/                  # Visuals and visualization notebooks
 tests/                    # Unit tests
 ```
 
