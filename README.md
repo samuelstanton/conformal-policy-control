@@ -89,22 +89,23 @@ uv run pytest tests/ -v
 ## Project structure
 
 ```
-cpc_llm/                  # Main CPC-LLM package (installable)
-  config/                 # Hydra configs for pipeline variants
+cpc_llm/                      # Main CPC-LLM package (installable)
+  config/                     # Hydra configs for pipeline variants
   src/cpc_llm/
-    main.py               # Entry point
-    calibrate/            # CPC algorithm (beta search, likelihood constraining)
-    core/                 # Model inference, likelihood computation
-    data/                 # Dataset generation, formatting, splitting
-    infer/                # Sequence generation, acceptance-rejection sampling
-    infrastructure/       # File handling (local/S3), orchestration, SLURM
-    train/                # SFT, DPO, MARGE training
-    test_functions/       # Ehrlich benchmark utilities
-cbo/                      # Constrained Bayesian optimization experiments
-constrained_AL/           # Active learning experiments
-QA_expts/                 # Medical QA experiments
-visuals/                  # Visuals and visualization notebooks
-tests/                    # Unit tests
+    main.py                   # Entry point
+    calibrate/                # CPC algorithm (beta search, likelihood constraining)
+    core/                     # Model inference, likelihood computation
+    data/                     # Dataset generation, formatting, splitting
+    infer/                    # Sequence generation, acceptance-rejection sampling
+    infrastructure/           # File handling (local/S3), orchestration, SLURM
+    train/                    # SFT, DPO, MARGE training
+    test_functions/           # Ehrlich benchmark utilities
+cbo/                          # Constrained Bayesian optimization experiments
+constrained_AL/               # Active learning experiments
+QA_expts/                     # Medical QA experiments
+visuals/                      # Visuals and visualization notebooks
+  plot_cpc_llm_results.ipynb  # Main visualization notebook for cpc_llm pipeline
+tests/                        # Unit tests
 ```
 
 ## License

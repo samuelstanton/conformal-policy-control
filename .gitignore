@@ -19,3 +19,5 @@ build/
 outputs/
 slurm_outputs/
 .sweep_runs/
+# Weights & Biases offline run directories
+wandb/
