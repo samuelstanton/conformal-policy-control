@@ -4,6 +4,11 @@ defaults:
   - cpc_llm
   - _self_
 
+# Smoke outputs live under their own run_name: every stage is cached by path and
+# reused when overwrite_* is False, so sharing "smaller_pythia" with the full
+# pipeline would let a smoke-sized model or dataset stand in for a real one.
+run_name: smoke_smaller_pythia
+
 last_seed: 0
 num_dpo_rounds: 2  # runs num_dpo_rounds - 1 policy improvement iterations (round 0 is initial SFT)
 num_marge_rounds: 0
@@ -28,19 +33,37 @@ iterative_generation:
     sample_size: 10
     max_iterations: 10
 
-# Relax filtering so small datasets produce enough preference pairs
+# Relax filtering so small datasets produce enough preference pairs.
+# The smoke model produces only a handful of feasible generations per round, and
+# the few that score differently are far apart in Hamming space, so PropEn's
+# locality constraint (dist_x_threshold) and the approximate neighbor search
+# (n_neighbors) would otherwise leave no (prompt, chosen, rejected) triple at
+# all: a strictly-better generation never lands in any other generation's
+# neighbor list. Pair against the whole (small) candidate pool instead.
 propen_dataset_formatting_preference:
   args:
-    dist_x_threshold: 0.5
+    dist_x_threshold: 1.0
+    n_neighbors: 100
     filter_by_likelihood: False
 
+# A single epoch leaves pythia-14m unable to reproduce the particle format: it
+# emits EOS almost immediately, so nearly every generation is too short to score
+# and the round has no feasible particles to build preference pairs from. A few
+# more epochs (~1 min on one GPU) is what makes the smoke test deterministic
+# enough to finish.
 initial_sft:
   args:
     training_args:
-      num_train_epochs: 1
+      num_train_epochs: 5
 
 dpo:
   args:
     dpo_config:
       num_train_epochs: 1
       per_device_train_batch_size: 4
+      # Bound the stage: the relaxed pairing above can yield >100k preference
+      # pairs once the model generates well, which is far more than a smoke
+      # test needs to exercise the DPO path.
+      max_steps: 20
+      eval_steps: 0.5
+      save_steps: 0.5

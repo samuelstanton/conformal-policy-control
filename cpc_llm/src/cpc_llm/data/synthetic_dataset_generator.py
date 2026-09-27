@@ -8,9 +8,8 @@ import random
 from . import synthetic_dataset_lib
 import sys
 import torch
-import wandb
 from botorch.test_functions import SyntheticTestFunction
-from holo.logging import wandb_setup
+from ..infrastructure.wandb_utils import wandb_log, wandb_setup
 from holo.test_functions.closed_form import Ehrlich, RoughMtFuji
 from itertools import product
 from omegaconf import DictConfig, OmegaConf
@@ -152,7 +151,7 @@ def train_optimizer(
 
         stop = simple_regret_best == 0
         if t_idx % cfg.log_interval == 0 or stop:
-            wandb.log(metrics)
+            wandb_log(metrics)
             logger.info(f"Step {t_idx}: Loss {loss}")
 
         if stop:
@@ -167,7 +166,7 @@ def main(cfg: DictConfig):
         cfg.optimizer.mutation_prob = 1.1 / cfg.test_function.dim
     if cfg.optimizer.recombine_prob is None:
         cfg.optimizer.recombine_prob = 1.1 / cfg.test_function.dim
-    wandb_setup(cfg)
+    wandb_setup(cfg, default_project="sherpa")
     random.seed(cfg.random_seed)
     # np.random.seed(cfg.random_seed)
     # torch.manual_seed(cfg.random_seed)

@@ -19,6 +19,7 @@ dpo_config:  # trl.DPOConfig
   gradient_accumulation_steps: 16
   learning_rate: 1e-6
   num_train_epochs: 2
+  max_steps: -1  # -1 trains for num_train_epochs; set >0 to cap the run (smoke test)
   load_best_model_at_end: True
   eval_strategy: "steps"
   eval_steps: 0.05

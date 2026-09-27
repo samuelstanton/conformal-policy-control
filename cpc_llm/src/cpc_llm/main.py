@@ -31,6 +31,7 @@ from .infrastructure.orchestration import (
     train_sft,
 )
 from .infrastructure.pipeline_lock import shared_init_stage
+from .infrastructure.run_config_guard import check_config_matches_record
 from .data.combine_and_split import (
     combine_new_with_old_datasets,
     train_cal_split_gen_outputs,
@@ -94,6 +95,11 @@ def run_pipeline(cfg: DictConfig, on_round_complete: Callable[[], None] | None =
         )
         if not use_s3:
             os.makedirs(f"{cfg.local_output_dir}/{cfg.run_name}", exist_ok=True)
+        # Stages are cached by path, so refuse to run on top of outputs recorded
+        # under a different config (e.g. a smoke run sharing these directories).
+        # Checked even when cfg.overwrite is set: stages with their own overwrite_*
+        # flags (GA, initial SFT, generation) would still be reused.
+        check_config_matches_record(cfg, file_client, cfg_fp)
         if not cfg.overwrite and file_client.exists(cfg_fp):
             logger.info(f"{cfg_fp} already exists. Not overwiting.")
         else:
@@ -1458,7 +1464,7 @@ _CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".
 
 @hydra.main(config_path=_CONFIG_PATH, config_name="pipeline")
 def main(cfg: DictConfig):
-    import sys; print("cpc-llm: process started, initializing...", file=sys.stderr, flush=True)
+    print("cpc-llm: process started, initializing...", file=sys.stderr, flush=True)
     run_pipeline(cfg)
 
 

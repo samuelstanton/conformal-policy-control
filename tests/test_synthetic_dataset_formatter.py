@@ -1,3 +1,5 @@
+import logging
+
 import pandas as pd
 
 from omegaconf import OmegaConf
@@ -270,3 +272,56 @@ class TestFindPreferencePairs:
         assert len(outputs) == len(expected_outputs)
         for o in expected_outputs:
             assert o in outputs, f"Cannot find {o} in outputs:\n{outputs}"
+
+
+class TestFindPreferencePairsNeighborhood:
+    """Pairing is gated by the approximate neighbor search, not just distance.
+
+    A strictly-better particle that is an outlier in edit space never enters any
+    other particle's ``n_neighbors`` list, so no (prompt, chosen, rejected)
+    triple can form even with a permissive ``dist_x_threshold``. This is what
+    empties the preference dataset at smoke-test scale, where only a handful of
+    generations are feasible.
+    """
+
+    @staticmethod
+    def _df():
+        library = [
+            [1, 1, 1, 1, 1, 1, 1, 1],
+            [1, 1, 1, 1, 1, 1, 1, 2],
+            [1, 1, 1, 1, 1, 1, 2, 2],
+            [1, 1, 1, 1, 1, 2, 2, 2],
+            [9, 9, 9, 9, 9, 9, 9, 9],  # only better score, far from everything
+        ]
+        scores = [0.2, 0.2, 0.2, 0.2, 0.1]
+        return pd.DataFrame({PARTICLE: library, SCORE: scores})
+
+    @staticmethod
+    def _cfg(n_neighbors: int, dist_x_threshold: float):
+        return OmegaConf.create(
+            {
+                "score_lower_threshold": None,
+                "n": None,
+                "n_neighbors": n_neighbors,
+                "distance_metric": "hamming",
+                "dist_x_threshold": dist_x_threshold,
+                "max_proportion_infeasible": None,
+                "seed": 0,
+            }
+        )
+
+    def test_outlier_best_particle_yields_no_pairs(self, caplog):
+        with caplog.at_level(logging.WARNING):
+            outputs = find_preference_pairs(self._cfg(3, 1.0), self._df())
+        assert outputs == []
+        assert "No preference pairs found" in caplog.text
+
+    def test_full_neighborhood_recovers_pairs(self):
+        outputs = find_preference_pairs(self._cfg(5, 1.0), self._df())
+        assert len(outputs) > 0
+        assert all(o[CHOSEN_SCORE] == "0.100" for o in outputs)
+
+    def test_distance_threshold_still_applies(self):
+        # Neighbor list covers everything, but the outlier is further away than
+        # the threshold allows, so it is still excluded.
+        assert find_preference_pairs(self._cfg(5, 0.5), self._df()) == []

@@ -1,6 +1,13 @@
 log_level: info
 run_name: smaller_pythia 
 
+## Weights & Biases logging (optional). One of:
+##   "disabled" - no wandb at all
+##   "offline"  - log to local wandb/ dirs, no account or API key needed
+##   "online"   - sync to wandb.ai (needs `wandb login` or WANDB_API_KEY;
+##                falls back to offline if no key is found)
+wandb_mode: offline
+
 ## Make sure to update these paths to your own local and storage (parent) paths for output directories!
 local_output_dir: /cv/scratch/u/prinstea/conformal-policy-control/cpc_llm/local_output_replication
 parent_output_dir: /cv/data/ai4dd/data/prinstea/conformal-policy-control/cpc_llm/parent_output_replication
@@ -125,7 +132,7 @@ conformal_policy_control:
 
 evol_dataset_gen:
   args:
-    wandb_mode: offline
+    wandb_mode: ${wandb_mode}
     optimizer:
       num_particles: 10000 #10000 #1000
       mutation_prob: 0.05 #0.01 #0.05 #0.005
@@ -289,7 +296,7 @@ initial_sft:
 
     # instrumentation
     log_level: "info"
-    wandb_mode: "offline"
+    wandb_mode: ${wandb_mode}
     project_name: "finetune_ehrlich"
     exp_name: "sft_smaller_pythia"
   slurm_args:
@@ -345,7 +352,7 @@ sft:
 
     # instrumentation
     log_level: "info"
-    wandb_mode: "offline"
+    wandb_mode: ${wandb_mode}
     project_name: "finetune_ehrlich"
     exp_name: "sft_smaller_pythia"
   slurm_args:
@@ -434,6 +441,7 @@ compute_likelihooods_all_models:
 
 dpo:
   args:
+    wandb_mode: ${wandb_mode}
     dpo_config:
       learning_rate: 1.5e-7
       beta: 0.1 #0.4 ## Switched to using default regularization level from DPO paper
@@ -471,6 +479,7 @@ dpo:
 
 marge:
   args:
+    wandb_mode: ${wandb_mode}
     marge_config:
       learning_rate: 1e-6
       alpha: 1.0

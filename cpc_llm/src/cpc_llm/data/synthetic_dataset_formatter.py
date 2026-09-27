@@ -396,6 +396,30 @@ def filter_infeasible_examples(
     return output_data
 
 
+def _log_no_pairs_diagnostics(cfg: DictConfig, scores: np.ndarray) -> None:
+    """Explain why no preference triples could be formed.
+
+    Args:
+        cfg: Formatting config, for the thresholds that gate pairing.
+        scores: Per-particle scores, where NaN marks an infeasible particle.
+    """
+    feasible = scores[np.isfinite(scores)]
+    distinct = np.unique(feasible)
+    logging.warning(
+        "No preference pairs found: %d of %d particles are feasible, with %d "
+        "distinct score(s) %s. A pair needs a better- and a worse-scoring "
+        "particle that are both within dist_x_threshold=%s of a shared prompt "
+        "*and* among its n_neighbors=%s approximate nearest neighbors. Raise "
+        "dist_x_threshold / n_neighbors, or generate more samples.",
+        len(feasible),
+        len(scores),
+        len(distinct),
+        np.array2string(distinct[:5], precision=4),
+        cfg.dist_x_threshold,
+        cfg.n_neighbors,
+    )
+
+
 def find_preference_pairs(cfg: DictConfig, df: pd.DataFrame) -> List[Dict[str, Any]]:
     random.seed(cfg.seed)
     df = df.drop_duplicates(subset=[PARTICLE])
@@ -425,9 +449,9 @@ def find_preference_pairs(cfg: DictConfig, df: pd.DataFrame) -> List[Dict[str, A
     # comparisons against NaN are always False, which would silently produce
     # zero pairs instead of treating the particle as worst-possible.
     scores_np = filtered_scores.numpy()
-    
-    ## Note on DPO scoring for infeasible prompt sequences: 
-    ## The following commented out line "scores_np = np.where(np.isnan(scores_np), np.inf, scores_np)" 
+
+    ## Note on DPO scoring for infeasible prompt sequences:
+    ## The following commented out line "scores_np = np.where(np.isnan(scores_np), np.inf, scores_np)"
     ## relates to the "Note on DPO scoring for infeasible prompt sequences" in ../train/pref_tuning_trainer.py.
     ## Please see the note in that file.
 
@@ -461,6 +485,8 @@ def find_preference_pairs(cfg: DictConfig, df: pd.DataFrame) -> List[Dict[str, A
             elif second_score < curr_score and first_score >= curr_score:
                 idx_triples.add((i, pair_idx[1], pair_idx[0]))
     idx_triples = list(idx_triples)
+    if not idx_triples:
+        _log_no_pairs_diagnostics(cfg, scores_np)
     # Pre-format all scores as strings to avoid repeated Tensor.__format__ calls
     formatted_scores = [f"{x:.3f}" for x in scores_np]
     outputs = []

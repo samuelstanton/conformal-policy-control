@@ -7,13 +7,12 @@ import s3fs
 import torch
 import torch.utils
 import torch.utils.data
-import wandb
 import ast
 import re
 
 from botorch.test_functions import SyntheticTestFunction
 from holo.test_functions.closed_form import Ehrlich, RoughMtFuji
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 from transformers import (
     EvalPrediction,
     PreTrainedTokenizer,
@@ -25,6 +24,8 @@ from transformers.trainer import (
     TRAINER_STATE_NAME,
 )
 from transformers.trainer_utils import PREFIX_CHECKPOINT_DIR
+
+from ..infrastructure.wandb_utils import wandb_setup as _wandb_setup
 
 from typing import (
     Any,
@@ -54,32 +55,19 @@ def maybe_log(logger: logging.Logger, msg: str, level: str = "info"):
     log_fn(msg)
 
 
-def wandb_setup(cfg: DictConfig):
+def wandb_setup(cfg: DictConfig) -> str:
+    """Initialize wandb logging for a finetuning job.
+
+    Thin wrapper over :func:`cpc_llm.infrastructure.wandb_utils.wandb_setup`,
+    kept here for backwards compatibility with existing imports.
+
+    Args:
+        cfg: Job config (see the wrapped function for recognized entries).
+
+    Returns:
+        The mode wandb was actually initialized in.
     """
-    Runs `wandb.init` and `wandb.login`.
-    The values in `cfg` are logged to the wandb run.
-    """
-    if not hasattr(cfg, "wandb_host") or cfg.wandb_host is None:
-        cfg["wandb_host"] = "https://api.wandb.ai"
-
-    if not hasattr(cfg, "wandb_mode") or cfg.wandb_mode is None:
-        cfg["wandb_mode"] = "online"
-
-    if not hasattr(cfg, "project_name") or cfg.project_name is None:
-        cfg["project_name"] = "finetune_ehrlich"
-
-    if not hasattr(cfg, "exp_name") or cfg.exp_name is None:
-        cfg["exp_name"] = "default_group"
-
-    wandb.login(host=cfg.wandb_host)
-
-    wandb.init(
-        project=cfg.project_name,
-        mode=cfg.wandb_mode,
-        group=cfg.exp_name,
-        name=cfg.job_name,
-        config=OmegaConf.to_container(cfg),
-    )
+    return _wandb_setup(cfg, default_project="finetune_ehrlich")
 
 
 # Function `strtobool` copied and adapted from `distutils` (as deprected
@@ -463,7 +451,11 @@ def drop_pad_ints(particle: Iterable[Any], pad_int: int = -1) -> List[int]:
 
 
 def parse_particle_and_score_permissive(
-    input_str: str, test_fn: SyntheticTestFunction, cfg: DictConfig = None, logger: logging.Logger = None, pad_token: int = -1
+    input_str: str,
+    test_fn: SyntheticTestFunction,
+    cfg: DictConfig = None,
+    logger: logging.Logger = None,
+    pad_token: int = -1,
 ) -> Optional[Tuple[List[int], float]]:
     """
     Checks that <input_str> can be parsed into a list with test_fn.dim integer elements.
@@ -488,7 +480,7 @@ def parse_particle_and_score_permissive(
     if len(particle) == 0:
         return None
     len_original_particle = len(particle)
-    
+
     particle_for_scoring = (
         particle.copy()
     )  ## Will use this one for scoring (permissive score function)
@@ -514,10 +506,18 @@ def parse_particle_and_score_permissive(
                 (0, max(0, test_fn.dim - len(particle_for_scoring))),
                 mode="wrap",
             )[: test_fn.dim].tolist()
-            particle_for_scoring = np.clip(particle_for_scoring, a_min=0, a_max=test_fn.dim - 1)
-    score = test_fn(torch.LongTensor([particle_for_scoring])).item() if len_original_particle >= cfg.min_rel_len_feasible_particle * test_fn.dim else float("inf")
+            particle_for_scoring = np.clip(
+                particle_for_scoring, a_min=0, a_max=test_fn.dim - 1
+            )
+    score = (
+        test_fn(torch.LongTensor([particle_for_scoring])).item()
+        if len_original_particle >= cfg.min_rel_len_feasible_particle * test_fn.dim
+        else float("inf")
+    )
 
-    particle = np.clip(particle, a_min=-np.iinfo(np.int32).max, a_max=np.iinfo(np.int32).max)
+    particle = np.clip(
+        particle, a_min=-np.iinfo(np.int32).max, a_max=np.iinfo(np.int32).max
+    )
     return particle, score
 
 
