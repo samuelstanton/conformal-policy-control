@@ -6,7 +6,7 @@ By Drew Prinster, Clara Fannjiang, Ji Won Park, Kyunghyun Cho, Anqi Liu, Suchi S
 
 ### Citation
 
-If you use this code, please our paper:
+If you use this code, please cite our paper:
 ```bibtex
 @inproceedings{prinster2026conformal,
   title={Conformal Policy Control},
